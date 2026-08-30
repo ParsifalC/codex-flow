@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "codex-flow benchmark run",
+  "type": "object",
+  "required": ["schema_version", "task_id", "task_class", "model", "reasoning_effort", "passed", "input_tokens", "cached_input_tokens", "output_tokens", "repair_cycles"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "task_class": {"enum": ["routine", "complex", "critical"]},
+    "model": {"type": "string", "minLength": 1},
+    "reasoning_effort": {"enum": ["high", "xhigh", "max"]},
+    "passed": {"type": "boolean"},
+    "input_tokens": {"type": "integer", "minimum": 0},
+    "cached_input_tokens": {"type": "integer", "minimum": 0},
+    "output_tokens": {"type": "integer", "minimum": 0},
+    "repair_cycles": {"type": "integer", "minimum": 0},
+    "wall_seconds": {"type": "number", "minimum": 0},
+    "source_commit": {"type": "string"},
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": false
+}
