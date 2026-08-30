@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repetitions": 3,
+  "timeout_seconds": 1800,
+  "max_repair_cycles": 2,
+  "matrix": [
+    {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
+    {"model": "gpt-5.6-luna", "reasoning_effort": "xhigh"},
+    {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+    {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"}
+  ],
+  "tasks": [
+    {
+      "id": "example-localized-fix",
+      "class": "routine",
+      "source": "/absolute/path/to/frozen-benchmark-repo",
+      "base_ref": "0123456789abcdef0123456789abcdef01234567",
+      "prompt": "Implement the requested localized fix. Do not modify the verifier or weaken acceptance criteria.",
+      "verify": ["python3", "tests/verify_localized_fix.py"]
+    }
+  ]
+}
