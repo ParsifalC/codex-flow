@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "routine-query-normalization",
+      "class": "routine",
+      "description": "Localized bug fix with edge-case normalization and no API change.",
+      "prompt": "Fix search.normalize_query so leading/trailing whitespace is removed, internal whitespace runs collapse to one space, and Unicode text is preserved. Keep the public function name/signature unchanged. Add or update tests only if useful; do not modify anything outside the repository.",
+      "files": {
+        "search.py": "import re\n\ndef normalize_query(value: str) -> str:\n    # BUG: strips only ASCII spaces and does not collapse runs.\n    return value.strip(' ')\n",
+        "README.md": "# Query normalization\n\n`normalize_query` prepares user-entered search text while preserving Unicode content.\n"
+      },
+      "verifier": "from pathlib import Path\nimport importlib.util\nroot=Path.cwd()\nspec=importlib.util.spec_from_file_location('search', root/'search.py')\nm=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\ncases={\n '  hello   world  ':'hello world',\n '\\t hello\\nworld \\r':'hello world',\n '  微信   语音  ':'微信 语音',\n '':'',\n '   ':'',\n}\nfor raw,want in cases.items():\n    got=m.normalize_query(raw)\n    assert got==want,(raw,got,want)\nassert m.normalize_query.__name__=='normalize_query'\n"
+    },
+    {
+      "id": "routine-env-precedence",
+      "class": "routine",
+      "description": "Configuration precedence bug requiring exact fallback semantics.",
+      "prompt": "Fix config.resolve_endpoint. Explicit argument must win when non-empty; otherwise use SERVICE_ENDPOINT from the supplied env mapping when non-empty; otherwise return DEFAULT_ENDPOINT. Treat whitespace-only values as empty. Do not read os.environ implicitly and keep the existing public signature.",
+      "files": {
+        "config.py": "DEFAULT_ENDPOINT = 'https://api.example.test'\n\ndef resolve_endpoint(explicit, env):\n    # BUG: env always wins and whitespace values leak through.\n    return env.get('SERVICE_ENDPOINT') or explicit or DEFAULT_ENDPOINT\n"
+      },
+      "verifier": "from pathlib import Path\nimport importlib.util\nspec=importlib.util.spec_from_file_location('config',Path.cwd()/'config.py')\nm=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\nassert m.resolve_endpoint('https://explicit', {'SERVICE_ENDPOINT':'https://env'})=='https://explicit'\nassert m.resolve_endpoint(None, {'SERVICE_ENDPOINT':'https://env'})=='https://env'\nassert m.resolve_endpoint('', {'SERVICE_ENDPOINT':'https://env'})=='https://env'\nassert m.resolve_endpoint('   ', {'SERVICE_ENDPOINT':'  '})==m.DEFAULT_ENDPOINT\nassert m.resolve_endpoint(None, {})==m.DEFAULT_ENDPOINT\n"
+    },
+    {
+      "id": "complex-renew-provider-refactor",
+      "class": "complex",
+      "description": "Multi-file refactor adding provider dispatch while preserving legacy call sites.",
+      "prompt": "Refactor the renewal package to support provider-specific renewal handlers without breaking the existing renew(name) API. Add registration/dispatch for providers, preserve the legacy default provider behavior, and make unknown providers fail with a clear ValueError. Keep the implementation small and avoid global side effects beyond explicit registration.",
+      "files": {
+        "renew/__init__.py": "from .service import renew\n\n__all__ = ['renew']\n",
+        "renew/service.py": "from .legacy import renew_legacy\n\ndef renew(name):\n    return renew_legacy(name)\n",
+        "renew/legacy.py": "def renew_legacy(name):\n    return {'provider':'legacy','name':name,'status':'renewed'}\n",
+        "consumer.py": "from renew import renew\n\ndef run():\n    return renew('demo')\n"
+      },
+      "verifier": "from pathlib import Path\nimport sys\nsys.path.insert(0,str(Path.cwd()))\nimport renew\nfrom renew import service\nassert renew.renew('a')=={'provider':'legacy','name':'a','status':'renewed'}\nassert hasattr(service,'register_provider')\nassert hasattr(service,'renew_for')\nseen=[]\ndef handler(name): seen.append(name); return {'provider':'new','name':name,'status':'ok'}\nservice.register_provider('new',handler)\nassert service.renew_for('new','b')=={'provider':'new','name':'b','status':'ok'}\nassert seen==['b']\ntry:\n service.renew_for('missing','x')\nexcept ValueError as e:\n assert 'missing' in str(e)\nelse: raise AssertionError('unknown provider must fail')\nfrom consumer import run\nassert run()['provider']=='legacy'\n"
+    },
+    {
+      "id": "complex-config-migration",
+      "class": "complex",
+      "description": "Backward-compatible configuration migration across legacy and new shapes.",
+      "prompt": "Update settings.load_config to accept both the legacy flat configuration and the new nested schema. Legacy keys endpoint/token map to service.endpoint/service.token. New nested values take precedence when both forms are present. Preserve unrelated top-level keys in the returned mapping. Never mutate the input mapping. Missing endpoint/token should remain absent rather than becoming null values.",
+      "files": {
+        "settings.py": "def load_config(raw):\n    # Current implementation only understands the legacy flat shape.\n    result = dict(raw)\n    service = {}\n    if 'endpoint' in result:\n        service['endpoint'] = result.pop('endpoint')\n    if 'token' in result:\n        service['token'] = result.pop('token')\n    result['service'] = service\n    return result\n"
+      },
+      "verifier": "from pathlib import Path\nimport importlib.util,copy\nspec=importlib.util.spec_from_file_location('settings',Path.cwd()/'settings.py')\nm=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\nlegacy={'endpoint':'e1','token':'t1','feature':True}; before=copy.deepcopy(legacy)\nout=m.load_config(legacy); assert legacy==before; assert out=={'service':{'endpoint':'e1','token':'t1'},'feature':True}\nnew={'service':{'endpoint':'e2','token':'t2'},'feature':False}; before=copy.deepcopy(new)\nout=m.load_config(new); assert new==before; assert out==new\nmixed={'endpoint':'old','token':'oldt','service':{'endpoint':'new'},'x':1}\nout=m.load_config(mixed); assert out['service']=={'endpoint':'new','token':'oldt'}; assert out['x']==1; assert 'endpoint' not in out and 'token' not in out\nassert m.load_config({'x':1})=={'x':1,'service':{}} or m.load_config({'x':1})=={'x':1}\n"
+    },
+    {
+      "id": "complex-bounded-retry",
+      "class": "complex",
+      "description": "Retry semantics with precise attempt accounting and selective exception handling.",
+      "prompt": "Fix retry.call_with_retry. It must attempt at most max_attempts times, retry only RetryableError, return immediately on success, propagate non-retryable exceptions unchanged, and raise the final RetryableError after the budget is exhausted. max_attempts < 1 must raise ValueError before calling the function. Keep the API synchronous and do not add sleeps.",
+      "files": {
+        "retry.py": "class RetryableError(Exception):\n    pass\n\ndef call_with_retry(fn, max_attempts=3):\n    attempts = 0\n    while attempts <= max_attempts:\n        try:\n            return fn()\n        except Exception:\n            attempts += 1\n    return None\n"
+      },
+      "verifier": "from pathlib import Path\nimport importlib.util\nspec=importlib.util.spec_from_file_location('retry',Path.cwd()/'retry.py')\nm=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\ncount=[0]\ndef flaky():\n count[0]+=1\n if count[0]<3: raise m.RetryableError('later')\n return 'ok'\nassert m.call_with_retry(flaky,3)=='ok' and count[0]==3\ncount=[0]\ndef always(): count[0]+=1; raise m.RetryableError(str(count[0]))\ntry: m.call_with_retry(always,2)\nexcept m.RetryableError as e: assert str(e)=='2' and count[0]==2\nelse: raise AssertionError('must raise final retryable error')\ncount=[0]\ndef bad(): count[0]+=1; raise RuntimeError('fatal')\ntry: m.call_with_retry(bad,5)\nexcept RuntimeError as e: assert str(e)=='fatal' and count[0]==1\nelse: raise AssertionError('non-retryable must propagate')\ncount=[0]\ntry: m.call_with_retry(lambda: count.__setitem__(0,count[0]+1),0)\nexcept ValueError: assert count[0]==0\nelse: raise AssertionError('invalid budget must fail')\n"
+    },
+    {
+      "id": "critical-atomic-state-write",
+      "class": "critical",
+      "description": "Data-integrity change requiring atomic replacement and cleanup on failure.",
+      "prompt": "Harden state.save_json for crash-safe state replacement. Write JSON to a temporary file in the destination directory, flush and fsync it, then atomically replace the destination with os.replace. Ensure temporary files are cleaned up when serialization or write/replace fails. Existing destination contents must remain unchanged when failure happens before os.replace. Keep load_json behavior compatible.",
+      "files": {
+        "state.py": "import json\nfrom pathlib import Path\n\ndef load_json(path):\n    with open(path,'r',encoding='utf-8') as f:\n        return json.load(f)\n\ndef save_json(path, value):\n    # BUG: direct write can truncate valid state on failure/crash.\n    with open(path,'w',encoding='utf-8') as f:\n        json.dump(value,f,sort_keys=True)\n"
+      },
+      "verifier": "from pathlib import Path\nimport importlib.util,tempfile,os,json,unittest.mock as mock\nspec=importlib.util.spec_from_file_location('state',Path.cwd()/'state.py')\nm=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\nwith tempfile.TemporaryDirectory() as td:\n p=Path(td)/'state.json'; p.write_text('{\"old\":1}',encoding='utf-8')\n real_replace=os.replace; calls=[]\n def wrapped(src,dst): calls.append((Path(src),Path(dst))); return real_replace(src,dst)\n with mock.patch.object(os,'replace',wrapped): m.save_json(p,{'new':2})\n assert m.load_json(p)=={'new':2}; assert calls and calls[0][1]==p; assert calls[0][0].parent==p.parent\n assert not [x for x in p.parent.iterdir() if x!=p]\nwith tempfile.TemporaryDirectory() as td:\n p=Path(td)/'state.json'; p.write_text('{\"old\":1}',encoding='utf-8')\n class Bad: pass\n try: m.save_json(p,{'bad':Bad()})\n except (TypeError,ValueError): pass\n else: raise AssertionError('serialization should fail')\n assert p.read_text(encoding='utf-8')=='{\"old\":1}'\n assert not [x for x in p.parent.iterdir() if x!=p]\n"
+    }
+  ]
+}
