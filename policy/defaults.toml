@@ -6,6 +6,7 @@ schema_version = 2
 [models]
 parent_policy = "latest-capable"
 parent_min_model = "auto"
+parent_recommended_model = "gpt-5.6-sol"
 worker_policy = "latest-efficient"
 worker_model = "gpt-5.6-luna"
 
