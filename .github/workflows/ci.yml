@@ -9,13 +9,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Shell syntax
+      - name: Syntax
         run: |
           bash -n install.sh
           bash -n bin/codex-flow
           bash -n scripts/doctor
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
+          python3 -m py_compile scripts/check-recommendation.py
+      - name: Recommendation policy test
+        run: |
+          python3 scripts/check-recommendation.py \
+            --fixture tests/fixtures/models.json \
+            --json | tee /tmp/recommendation.json
+          grep -Fq '"parent_recommended_model": "gpt-5.6-sol"' /tmp/recommendation.json
+          grep -Fq '"worker_model": "gpt-5.6-luna"' /tmp/recommendation.json
+
+          cp policy/defaults.toml /tmp/defaults.toml
+          sed -i 's/worker_model = "gpt-5.6-luna"/worker_model = "gpt-5.6-terra"/' /tmp/defaults.toml
+          python3 scripts/check-recommendation.py \
+            --fixture tests/fixtures/models.json \
+            --defaults /tmp/defaults.toml \
+            --write --json >/tmp/recommendation-write.json
+          grep -Fq 'worker_model = "gpt-5.6-luna"' /tmp/defaults.toml
+          grep -Fq '"changed": true' /tmp/recommendation-write.json
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
 
