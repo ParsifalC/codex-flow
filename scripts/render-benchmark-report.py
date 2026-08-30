@@ -60,18 +60,20 @@ def main() -> int:
     lines = [
         f"# {args.title}",
         "",
+        "> Dollar figures are **API-equivalent reference costs** calculated from the pinned API price snapshot. They are not the actual charge against a ChatGPT/Codex subscription.",
+        "",
         "## Overall",
         "",
         f"- Runs completed: **{len(rows)}**",
         f"- Passed: **{passed}/{len(rows)} ({pct(passed, len(rows))})**",
         f"- Infrastructure/CLI failures: **{infra_failures}**",
         f"- Repair cycles: **{repairs}**",
-        f"- Estimated model cost: **${total_cost:.6f}**",
+        f"- API-equivalent reference cost: **${total_cost:.6f}**",
         f"- Tokens: input **{total_input:,}**, cached input **{total_cached:,}**, output **{total_output:,}**",
         "",
         "## Configuration results",
         "",
-        "| Model | Effort | Runs | Pass rate | Repairs | Estimated cost | Avg cost/run |",
+        "| Model | Effort | Runs | Pass rate | Repairs | API-equivalent cost | Avg reference cost/run |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
 
@@ -91,7 +93,7 @@ def main() -> int:
         if rec:
             lines.append(
                 f"- **{task_class}**: `{rec['model']}` / `{rec['reasoning_effort']}` — "
-                f"pass {rec['pass_rate']:.1%}, ${rec['average_cost_usd']:.6f}/run, n={rec['samples']}"
+                f"pass {rec['pass_rate']:.1%}, API-equivalent ${rec['average_cost_usd']:.6f}/run, n={rec['samples']}"
             )
         else:
             lines.append(f"- **{task_class}**: no tested configuration passed the evidence gate")
