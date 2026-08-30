@@ -35,13 +35,19 @@ cd codex-flow
 bash install.sh
 ```
 
+The management command is installed to `~/.local/bin/codex-flow` by default. If that directory is already on `PATH`, the command works immediately. Otherwise add it to `PATH` once.
+
 ### Windows PowerShell
 
 ```powershell
+git clone git@github.com:ParsifalC/codex-flow.git
+cd codex-flow
 .\install.ps1
 ```
 
-Restart Codex, then use it normally. No special prompt is required.
+The Windows command wrapper is installed under `~/.local/bin`. Add that directory to the user `PATH` once if it is not already present.
+
+Restart Codex after installation, then use Codex normally. No special prompt is required.
 
 ```text
 Refactor the renew workflow and keep backward compatibility.
@@ -52,6 +58,25 @@ Explicit invocation is also available:
 ```text
 Use $cost-aware-development and refactor the renew workflow.
 ```
+
+## Daily management
+
+After installation:
+
+```bash
+codex-flow status
+codex-flow doctor
+codex-flow update
+codex-flow uninstall
+```
+
+`status` shows the installed release, source checkout, parent policy, resolved worker model, and minimum reasoning levels.
+
+`update` performs a fast-forward `git pull` in the original checkout, preserves explicit user policy values, reruns the installer, then validates the result. Values left as `auto` are intentionally resolved again against the new release recommendations.
+
+That means a future model-generation update can move the default worker recommendation without overwriting a team that explicitly pinned its worker model or effort.
+
+Because this repository is private, updates intentionally reuse the original git checkout and the user's normal GitHub authentication instead of embedding credentials or private download URLs.
 
 ## Adaptive policy
 
@@ -122,6 +147,7 @@ CODEX_FLOW_WORKER_MODEL           default: auto
 CODEX_FLOW_WORKER_MIN_EFFORT      default: high
 CODEX_FLOW_MAX_THREADS            default: 4
 CODEX_FLOW_MAX_REPAIR_CYCLES      default: 2
+CODEX_FLOW_BIN_DIR                default: ~/.local/bin
 ```
 
 Teams can therefore pin a minimum generation/model when reproducibility matters, while normal installations stay future-facing.
@@ -132,12 +158,19 @@ Teams can therefore pin a minimum generation/model when reproducibility matters,
 ~/.codex/
 ├── config.toml
 ├── codex-flow.toml
+├── codex-flow/
+│   ├── source
+│   └── version
 ├── agents/
 │   ├── worker-explorer.toml
 │   └── worker-implementer.toml
 └── skills/
     └── cost-aware-development/
         └── SKILL.md
+
+~/.local/bin/
+└── codex-flow            # Unix
+# or codex-flow.cmd/.ps1   # Windows
 ```
 
 Repository policy data lives in:
@@ -147,20 +180,6 @@ policy/defaults.toml
 ```
 
 The installer backs up an existing `config.toml` before changing codex-flow-managed `[agents]` keys.
-
-## Verify
-
-```bash
-bash scripts/doctor
-```
-
-`doctor` checks the installed Skill/roles, policy schema, minimum effort guarantees, resolved worker model, and the actual Codex subagent baseline.
-
-## Uninstall
-
-```bash
-bash scripts/uninstall
-```
 
 ## Compatibility model
 
@@ -179,11 +198,20 @@ This deliberately avoids depending on one unstable runtime feature for correctne
 - Parent eligibility is a capability + minimum-effort threshold.
 - Prefer the latest suitable generation without permanently encoding its slug into workflow semantics.
 - `high` is the normal floor; `xhigh/max` are earned by complexity or evidence.
+- `auto` follows release recommendations; explicit pins survive updates.
 - Children receive compact task packets instead of irrelevant parent history.
 - Parent review checks diff + evidence instead of reimplementing.
 - Read-only exploration may run in parallel; overlapping writable workers should not.
 - Repair loops are bounded; repeated failure triggers reassessment/escalation.
 
+## CI
+
+The repository validates:
+
+- shell syntax for Unix installer/CLI/scripts
+- Unix install -> status/doctor -> override -> uninstall smoke flow
+- PowerShell syntax for the Windows installer/CLI/doctor/uninstall
+
 ## Status
 
-Private preview. Current Codex source exposes default subagent model/reasoning configuration and role layers, while some App/V2 releases still have model/effort override and custom-role regressions. codex-flow therefore favors adaptive behavior with a reliable baseline rather than assuming every runtime supports perfect dynamic routing.
+Private preview. The update mechanism is intentionally conservative: recommendation changes are automatic only for `auto` policy fields, while explicit user pins remain authoritative.
