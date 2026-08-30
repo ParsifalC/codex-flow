@@ -1,0 +1,10 @@
+{
+  "index": "<html><body>gpt-5.5-sol gpt-5.5-luna gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna</body></html>",
+  "models": {
+    "gpt-5.5-sol": "<html><body>Reasoning.effort supports: none low medium high xhigh max. Text tokens Input $5.00 Cached input $0.50 Output $30.00. Tools Apply patch Skills Hosted shell.</body></html>",
+    "gpt-5.5-luna": "<html><body>Reasoning.effort supports: none low medium high xhigh max. Text tokens Input $0.30 Cached input $0.03 Output $1.50. Tools Apply patch Skills Hosted shell.</body></html>",
+    "gpt-5.6-sol": "<html><body>Reasoning.effort supports: none low medium high xhigh max. Text tokens Input $4.00 Cached input $0.40 Output $20.00. Tools Apply patch Skills Hosted shell.</body></html>",
+    "gpt-5.6-terra": "<html><body>Reasoning.effort supports: none low medium high xhigh max. Text tokens Input $2.00 Cached input $0.20 Output $12.00. Tools Apply patch Skills Hosted shell.</body></html>",
+    "gpt-5.6-luna": "<html><body>Reasoning.effort supports: none low medium high xhigh max. Text tokens Input $0.20 Cached input $0.02 Output $1.20. Tools Apply patch Skills Hosted shell.</body></html>"
+  }
+}
