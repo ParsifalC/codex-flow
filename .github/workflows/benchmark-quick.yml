@@ -1,0 +1,106 @@
+name: benchmark quick
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type RUN QUICK 18 to confirm paid benchmark execution'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-quick
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm paid execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ '${{ inputs.confirm }}' == 'RUN QUICK 18' ]] || {
+            echo 'Confirmation did not match RUN QUICK 18.' >&2
+            exit 2
+          }
+          [[ -n "${OPENAI_API_KEY:-}" ]] || {
+            echo 'Repository secret OPENAI_API_KEY is required.' >&2
+            exit 2
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Codex CLI
+        run: |
+          npm install -g @openai/codex@latest
+          codex --version
+
+      - name: Materialize frozen quick corpus
+        run: |
+          python3 scripts/materialize-corpus.py \
+            --profile quick \
+            --output-dir "$RUNNER_TEMP/codex-flow-corpus" \
+            --manifest "$RUNNER_TEMP/manifest.json" \
+            > "$RUNNER_TEMP/materialize.json"
+          cat "$RUNNER_TEMP/materialize.json"
+          python3 scripts/run-benchmark.py \
+            --manifest "$RUNNER_TEMP/manifest.json" \
+            --output "$RUNNER_TEMP/results.jsonl" \
+            --dry-run \
+            > "$RUNNER_TEMP/plan.json"
+          grep -Fq '"planned_runs": 18' "$RUNNER_TEMP/plan.json"
+
+      - name: Run paid quick benchmark
+        run: |
+          python3 scripts/run-benchmark.py \
+            --manifest "$RUNNER_TEMP/manifest.json" \
+            --output "$RUNNER_TEMP/results.jsonl" \
+            --fail-fast-infrastructure
+
+      - name: Analyze benchmark
+        if: always() && hashFiles(format('{0}/results.jsonl', runner.temp)) != ''
+        run: |
+          python3 scripts/analyze-benchmark.py \
+            --results "$RUNNER_TEMP/results.jsonl" \
+            --prices benchmark/prices/gpt-5.6-2026-08-30.json \
+            --json \
+            > "$RUNNER_TEMP/analysis.json"
+          python3 scripts/render-benchmark-report.py \
+            --results "$RUNNER_TEMP/results.jsonl" \
+            --prices benchmark/prices/gpt-5.6-2026-08-30.json \
+            --analysis "$RUNNER_TEMP/analysis.json" \
+            --output "$RUNNER_TEMP/report.md" \
+            --title 'Codex quick benchmark'
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p benchmark-artifact
+          for f in materialize.json plan.json manifest.json results.jsonl analysis.json report.md; do
+            if [[ -f "$RUNNER_TEMP/$f" ]]; then
+              cp "$RUNNER_TEMP/$f" "benchmark-artifact/$f"
+            fi
+          done
+          cp benchmark/prices/gpt-5.6-2026-08-30.json benchmark-artifact/prices.json
+          printf '%s\n' "$(codex --version 2>/dev/null || true)" > benchmark-artifact/codex-version.txt
+          printf '%s\n' "$GITHUB_SHA" > benchmark-artifact/codex-flow-commit.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codex-flow-quick-benchmark-${{ github.run_id }}
+          path: benchmark-artifact
+          if-no-files-found: error
+          retention-days: 30
