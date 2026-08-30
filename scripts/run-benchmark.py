@@ -212,6 +212,14 @@ def execute_run(task: dict[str, Any], config: dict[str, str], root: Path, repeti
     }
 
 
+def no_usage(row: dict[str, Any]) -> bool:
+    return (
+        row["input_tokens"] == 0
+        and row["cached_input_tokens"] == 0
+        and row["output_tokens"] == 0
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
@@ -219,6 +227,11 @@ def main() -> int:
     parser.add_argument("--only-task")
     parser.add_argument("--only-model")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--fail-fast-infrastructure",
+        action="store_true",
+        help="stop the batch when codex exits non-zero before reporting any token usage",
+    )
     args = parser.parse_args()
 
     if not shutil.which("git"):
@@ -259,6 +272,12 @@ def main() -> int:
                         f"tokens={row['input_tokens'] + row['output_tokens']}",
                         file=sys.stderr,
                     )
+                    if args.fail_fast_infrastructure and row["codex_exit_code"] != 0 and no_usage(row):
+                        fail(
+                            "codex exited non-zero without reporting usage; stopping benchmark "
+                            f"after {row['task_id']} {row['model']}/{row['reasoning_effort']} "
+                            f"(exit={row['codex_exit_code']})"
+                        )
     return 0
 
 
