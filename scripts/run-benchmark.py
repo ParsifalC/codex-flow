@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +20,7 @@ from typing import Any
 
 VALID_CLASSES = {"routine", "complex", "critical"}
 VALID_EFFORTS = {"high", "xhigh", "max"}
+FULL_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 MAX_CAPTURE = 8000
 
 
@@ -37,6 +38,9 @@ def load_manifest(path: Path) -> dict[str, Any]:
         fail("manifest tasks must be a non-empty array")
     if not isinstance(matrix, list) or not matrix:
         fail("manifest matrix must be a non-empty array")
+    allow_floating = data.get("allow_floating_refs", False)
+    if not isinstance(allow_floating, bool):
+        fail("allow_floating_refs must be boolean")
 
     ids: set[str] = set()
     for task in tasks:
@@ -53,6 +57,15 @@ def load_manifest(path: Path) -> dict[str, Any]:
             fail(f"verify for {task['id']} must be a non-empty argv array")
         if not isinstance(task["prompt"], str) or not task["prompt"].strip():
             fail(f"prompt for {task['id']} must be non-empty")
+        if not isinstance(task["source"], str) or not task["source"].strip():
+            fail(f"source for {task['id']} must be non-empty")
+        if not isinstance(task["base_ref"], str) or not task["base_ref"].strip():
+            fail(f"base_ref for {task['id']} must be non-empty")
+        if not allow_floating and not FULL_COMMIT_RE.fullmatch(task["base_ref"]):
+            fail(
+                f"task {task['id']} base_ref must be a full 40-character commit SHA; "
+                "set allow_floating_refs=true only for exploratory runs"
+            )
 
     for config in matrix:
         if not isinstance(config.get("model"), str) or not config["model"]:
@@ -147,32 +160,37 @@ def execute_run(task: dict[str, Any], config: dict[str, str], root: Path, repeti
     commit = clone_source(task["source"], task["base_ref"], workdir)
     total_usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
     total_wall = 0.0
-    codex_exit = 0
 
-    exit_code, usage, diagnostic, elapsed = run_codex(
+    codex_exit, usage, diagnostic, elapsed = run_codex(
         workdir, config["model"], config["reasoning_effort"], task["prompt"], timeout
     )
-    codex_exit = exit_code
     total_wall += elapsed
     add_usage(total_usage, usage)
-
-    passed, verification, verify_elapsed = run_verify(workdir, task["verify"], timeout)
-    total_wall += verify_elapsed
     repair_cycles = 0
 
-    while not passed and repair_cycles < max_repairs:
+    if codex_exit == 0:
+        passed, verification, verify_elapsed = run_verify(workdir, task["verify"], timeout)
+        total_wall += verify_elapsed
+    else:
+        passed = False
+        verification = "benchmark verification skipped because codex exec exited non-zero"
+
+    while not passed and codex_exit == 0 and repair_cycles < max_repairs:
         repair_cycles += 1
         repair_prompt = (
             "The previous implementation did not pass the fixed benchmark verifier. "
             "Repair only the implementation needed to satisfy the original task; do not weaken, skip, or edit the verifier.\n\n"
             f"Original task:\n{task['prompt']}\n\nVerifier output:\n{verification}"
         )
-        exit_code, usage, diagnostic, elapsed = run_codex(
+        codex_exit, usage, diagnostic, elapsed = run_codex(
             workdir, config["model"], config["reasoning_effort"], repair_prompt, timeout
         )
-        codex_exit = exit_code
         total_wall += elapsed
         add_usage(total_usage, usage)
+        if codex_exit != 0:
+            passed = False
+            verification = "benchmark verification skipped because repair codex exec exited non-zero"
+            break
         passed, verification, verify_elapsed = run_verify(workdir, task["verify"], timeout)
         total_wall += verify_elapsed
 
