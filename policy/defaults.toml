@@ -1,0 +1,26 @@
+schema_version = 2
+
+# Release-time recommendations. `auto` policy values resolve through this file.
+# Keep workflow semantics model-agnostic; update only these recommendations as
+# Codex model generations change.
+[models]
+parent_policy = "latest-capable"
+parent_min_model = "auto"
+worker_policy = "latest-efficient"
+worker_model = "gpt-5.6-luna"
+
+[reasoning.parent]
+minimum = "high"
+routine = "high"
+complex = "xhigh"
+critical = "max"
+
+[reasoning.worker]
+minimum = "high"
+routine = "high"
+complex = "xhigh"
+critical = "max"
+
+[runtime]
+max_concurrent_threads = 4
+max_repair_cycles = 2
