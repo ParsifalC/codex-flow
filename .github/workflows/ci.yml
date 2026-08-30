@@ -5,15 +5,40 @@ on:
   pull_request:
 
 jobs:
-  smoke:
+  linux-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Shell syntax
         run: |
           bash -n install.sh
+          bash -n bin/codex-flow
           bash -n scripts/doctor
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
-      - name: Installer smoke test
+      - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
+
+  windows-syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell entrypoints
+        shell: pwsh
+        run: |
+          $files = @(
+            'install.ps1',
+            'bin/codex-flow.ps1',
+            'scripts/doctor.ps1',
+            'scripts/uninstall.ps1'
+          )
+          foreach ($file in $files) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file), [ref]$null, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "${file}: $($_.Message)" }
+              exit 1
+            }
+          }
