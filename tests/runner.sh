@@ -105,4 +105,40 @@ assert f['input_tokens'] == 0 and f['output_tokens'] == 0, f
 assert 'simulated infrastructure failure' in f['diagnostic_excerpt'], f
 PY
 
+cat > "$TMP/failfast.json" <<EOF
+{
+  "schema_version": 1,
+  "repetitions": 1,
+  "timeout_seconds": 30,
+  "max_repair_cycles": 2,
+  "matrix": [
+    {"model":"gpt-test-fail","reasoning_effort":"high"},
+    {"model":"gpt-test-worker","reasoning_effort":"high"}
+  ],
+  "tasks": [{
+    "id":"runner-failfast",
+    "class":"routine",
+    "source":"$REPO",
+    "base_ref":"$BASE",
+    "prompt":"Create answer.txt containing correct.",
+    "verify":["python3","verify.py"]
+  }]
+}
+EOF
+
+if python3 "$ROOT/scripts/run-benchmark.py" \
+  --manifest "$TMP/failfast.json" \
+  --output "$TMP/failfast-results.jsonl" \
+  --fail-fast-infrastructure; then
+  echo 'fail-fast benchmark unexpectedly succeeded' >&2
+  exit 1
+fi
+python3 - "$TMP/failfast-results.jsonl" <<'PY'
+import json, sys
+rows=[json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+assert len(rows) == 1, rows
+assert rows[0]['model'] == 'gpt-test-fail', rows
+assert rows[0]['codex_exit_code'] == 2, rows
+PY
+
 printf 'runner smoke test passed\n'
