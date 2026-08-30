@@ -46,6 +46,17 @@ jobs:
           branch="automation/model-recommendation"
           report="$(cat /tmp/recommendation.json)"
 
+          cat > /tmp/pr-body.md <<EOF
+          Automated recommendation update derived from OpenAI official model documentation.
+
+          The parent recommendation is metadata only and does not pin the active parent. The worker recommendation affects only users who keep \`worker.model = auto\u0060. Explicit pins remain unchanged.
+
+          Result:
+          \`\u0060\u0060json
+          ${report}
+          \`\u0060\u0060
+          EOF
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
@@ -59,7 +70,8 @@ jobs:
               --base main \
               --head "$branch" \
               --title "chore: update model recommendations" \
-              --body "Automated recommendation update derived from OpenAI official model documentation.\n\nThe parent recommendation is metadata only and does not pin the active parent. The worker recommendation affects only users who keep worker.model = auto. Explicit pins remain unchanged.\n\nResult:\n\`\`\`json\n${report}\n\`\`\`"
+              --body-file /tmp/pr-body.md
           else
+            gh pr edit "$existing" --body-file /tmp/pr-body.md
             echo "Recommendation PR #$existing refreshed."
           fi
