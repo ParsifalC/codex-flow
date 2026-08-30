@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "routine-local-fix",
+      "class": "routine",
+      "description": "Localized implementation change with explicit acceptance criteria and targeted tests.",
+      "weight": 1.0
+    },
+    {
+      "id": "complex-multifile-refactor",
+      "class": "complex",
+      "description": "Multi-file refactor requiring compatibility preservation, test updates, and bounded debugging.",
+      "weight": 1.5
+    },
+    {
+      "id": "critical-infra-change",
+      "class": "critical",
+      "description": "High-risk infrastructure or migration-style change with strict regression evidence.",
+      "weight": 2.0
+    }
+  ]
+}
