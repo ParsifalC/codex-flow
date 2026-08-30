@@ -15,15 +15,7 @@ COMPLEX    -> parent plans(high/xhigh) -> worker executes(high/xhigh) -> parent 
 CRITICAL   -> quality-first escalation; xhigh/max only when justified
 ```
 
-A parent qualifies by policy, not by name:
-
-- prefer the latest available high-capability model
-- minimum parent reasoning effort: `high`
-- `high`, `xhigh`, and `max` qualify
-- exact model floor: `auto` by default, configurable when a team needs a fixed minimum
-- worker model selection is independent and defaults to the current cost-efficient recommendation
-
-So `gpt-5.6-sol/xhigh` is a valid example, not a requirement.
+A parent qualifies by policy, not by name. The defaults prefer the latest available high-capability model, require parent reasoning `>= high`, keep the exact model floor configurable, and choose the worker independently. `gpt-5.6-sol/xhigh` is therefore a valid example, not a requirement.
 
 ## Install
 
@@ -35,8 +27,6 @@ cd codex-flow
 bash install.sh
 ```
 
-The management command is installed to `~/.local/bin/codex-flow` by default. If that directory is already on `PATH`, the command works immediately. Otherwise add it to `PATH` once.
-
 ### Windows PowerShell
 
 ```powershell
@@ -45,38 +35,20 @@ cd codex-flow
 .\install.ps1
 ```
 
-The Windows command wrapper is installed under `~/.local/bin`. Add that directory to the user `PATH` once if it is not already present.
-
-Restart Codex after installation, then use Codex normally. No special prompt is required.
-
-```text
-Refactor the renew workflow and keep backward compatibility.
-```
-
-Explicit invocation is also available:
-
-```text
-Use $cost-aware-development and refactor the renew workflow.
-```
+The management command is installed under `~/.local/bin`. Restart Codex after installation, then use Codex normally; no special prompt is required.
 
 ## Daily management
-
-After installation:
 
 ```bash
 codex-flow status
 codex-flow doctor
 codex-flow update
+codex-flow benchmark --help
+codex-flow benchmark-analyze --help
 codex-flow uninstall
 ```
 
-`status` shows the installed release, source checkout, parent policy, resolved worker model, and minimum reasoning levels.
-
-`update` performs a fast-forward `git pull` in the original checkout, preserves explicit user policy values, reruns the installer, then validates the result. Values left as `auto` are intentionally resolved again against the new release recommendations.
-
-That means a future model-generation update can move the default worker recommendation without overwriting a team that explicitly pinned its worker model or effort.
-
-Because this repository is private, updates intentionally reuse the original git checkout and the user's normal GitHub authentication instead of embedding credentials or private download URLs.
+`update` fast-forwards the original checkout, preserves explicit user pins, reruns installation, and resolves only `auto` values against the new release recommendations.
 
 ## Adaptive policy
 
@@ -109,13 +81,11 @@ max_concurrent_threads = 4
 max_repair_cycles = 2
 ```
 
-`model = "auto"` is intentionally different from a hardcoded architecture dependency. At install/update time it resolves through `policy/defaults.toml` to the current codex-flow recommendation. When the model generation changes, the recommendation can move without changing the workflow or agent roles.
+`model = "auto"` follows release recommendations; a concrete model remains pinned across updates. The concrete Codex `[agents]` baseline stays conservative because per-spawn model/effort overrides are not equally reliable across all Codex App/V2 versions.
 
-The concrete worker baseline is written into Codex `[agents]` because current Codex App/V2 builds do not expose perfectly reliable per-spawn model/effort overrides across all versions. The Skill requests higher effort dynamically where supported; otherwise the installed `high` baseline remains the safe fallback.
+## Reasoning selection
 
-## Effort selection
-
-The workflow chooses the **lowest sufficient qualifying effort**:
+The workflow chooses the lowest sufficient qualifying effort:
 
 | Task class | Parent | Worker |
 | --- | --- | --- |
@@ -124,19 +94,76 @@ The workflow chooses the **lowest sufficient qualifying effort**:
 | COMPLEX | `high`/`xhigh` | `high`/`xhigh` |
 | CRITICAL | `xhigh`/`max` | `xhigh`/`max` only when quality-first |
 
-`max` is never the universal default. Actual complexity, risk, or failed lower-effort attempts must justify escalation.
+`max` is never the universal default. Complexity, risk, or failed lower-effort attempts must justify escalation.
 
-## Configure at install time
+## Automatic model recommendations
 
-```bash
-CODEX_FLOW_PARENT_MIN_EFFORT=high \
-CODEX_FLOW_PARENT_MIN_MODEL=auto \
-CODEX_FLOW_WORKER_MODEL=auto \
-CODEX_FLOW_WORKER_MIN_EFFORT=high \
-bash install.sh
+`scripts/check-recommendation.py` and `.github/workflows/model-recommendation.yml` conservatively inspect OpenAI official model documentation and maintain release recommendations through reviewable PRs.
+
+The automation:
+
+- discovers the newest qualifying Sol/Terra/Luna generation
+- verifies `high`, `xhigh`, and `max` reasoning plus modern agent tooling
+- records the latest qualifying flagship only as `parent_recommended_model` metadata
+- chooses the lowest-cost qualifying Terra/Luna worker recommendation
+- changes nothing when parsing/capability verification is incomplete
+- never overwrites an installed user's explicit model pin
+
+The active parent remains policy-driven; recommendation metadata never hard-pins it.
+
+## Real benchmark runner
+
+v0.5 adds a real, reproducible Codex runner so routing can eventually be calibrated from measured task outcomes instead of price alone.
+
+Create a manifest based on `benchmark/manifest.example.json`, using a frozen repository and preferably a full 40-character commit SHA:
+
+```json
+{
+  "schema_version": 1,
+  "repetitions": 3,
+  "timeout_seconds": 1800,
+  "max_repair_cycles": 2,
+  "matrix": [
+    {"model":"gpt-5.6-luna","reasoning_effort":"high"},
+    {"model":"gpt-5.6-terra","reasoning_effort":"xhigh"}
+  ],
+  "tasks": [{
+    "id":"localized-fix-001",
+    "class":"routine",
+    "source":"/absolute/path/to/frozen-repo",
+    "base_ref":"<full-commit-sha>",
+    "prompt":"Implement the fixed task without modifying the verifier.",
+    "verify":["python3","tests/verify_task.py"]
+  }]
+}
 ```
 
-Useful overrides:
+Run the matrix:
+
+```bash
+codex-flow benchmark \
+  --manifest benchmark-real.json \
+  --output benchmark/results/run-001.jsonl
+```
+
+Every model/effort/repetition starts from a fresh temporary clone at the same commit. After the first implementation, a fixed verifier runs; failures may trigger bounded repair attempts with the same model/effort. Input, cached-input, and output usage are accumulated across the initial attempt and repairs, so the measured unit is **cost to finish the task**, not cost of the first call.
+
+Then analyze it with an immutable price snapshot:
+
+```bash
+codex-flow benchmark-analyze \
+  --results benchmark/results/run-001.jsonl \
+  --prices benchmark-prices.json \
+  --json
+```
+
+The analyzer applies quality gates first and compares dollar cost only among configurations that meet the required pass rate, sample count, and repair-cycle threshold. Benchmark conclusions are advisory only; `policy/benchmark.toml` keeps `auto_apply = false`.
+
+Current measurement boundaries are explicit: Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and it does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits. The runner also uses wall-clock timeout plus repair limits because deterministic agent-turn budgeting is not yet a stable `codex exec` capability.
+
+Full details: `docs/benchmark.md`.
+
+## Install-time overrides
 
 ```text
 CODEX_FLOW_PARENT_MODEL_POLICY    default: latest-capable
@@ -149,36 +176,6 @@ CODEX_FLOW_MAX_THREADS            default: 4
 CODEX_FLOW_MAX_REPAIR_CYCLES      default: 2
 CODEX_FLOW_BIN_DIR                default: ~/.local/bin
 ```
-
-Teams can therefore pin a minimum generation/model when reproducibility matters, while normal installations stay future-facing.
-
-## Automatic model recommendations
-
-`codex-flow` includes a conservative recommendation bot in `scripts/check-recommendation.py` and `.github/workflows/model-recommendation.yml`.
-
-The scheduled workflow reads only OpenAI's official model documentation. It discovers the newest Sol/Terra/Luna family, verifies that candidate models support `high`, `xhigh`, and `max` reasoning plus modern agent tooling, reads official token prices, and then:
-
-- records the newest qualifying Sol model as `parent_recommended_model` metadata
-- chooses the lowest-cost qualifying Terra/Luna model as the release worker recommendation
-- changes nothing if parsing or capability verification is incomplete
-- opens or refreshes a PR only when `policy/defaults.toml` would actually change
-
-The worker cost ranking uses a transparent heuristic (`70% input price + 30% output price`) only to compare qualifying worker tiers. It is not presented as a user's exact bill estimate.
-
-The parent recommendation is deliberately **metadata only**. It does not set the active parent model and does not weaken the policy rule that any qualifying high-capability parent with reasoning `>= high` may own planning/review.
-
-The worker recommendation affects only installations with:
-
-```toml
-[worker]
-model = "auto"
-```
-
-Explicit model pins remain authoritative across `codex-flow update`.
-
-For deterministic CI, recommendation logic is tested against `tests/fixtures/models.json`; live OpenAI documentation is contacted only by the scheduled/manual recommendation workflow.
-
-Current official GPT-5.6 guidance identifies Sol as flagship, Terra as balanced, and Luna as cost-sensitive/high-volume, with all three supporting `high`, `xhigh`, and `max`. The release recommendation therefore remains Luna until official data indicates a newer qualifying lower-cost worker.
 
 ## What gets installed
 
@@ -201,47 +198,20 @@ Current official GPT-5.6 guidance identifies Sol as flagship, Terra as balanced,
 # or codex-flow.cmd/.ps1   # Windows
 ```
 
-Repository policy data lives in:
-
-```text
-policy/defaults.toml
-```
-
-The installer backs up an existing `config.toml` before changing codex-flow-managed `[agents]` keys.
-
 ## Compatibility model
 
-Codex multi-agent behavior is still evolving, so codex-flow uses four layers:
+codex-flow deliberately uses several layers rather than depending on one unstable runtime feature:
 
-1. `codex-flow.toml` — model/effort policy, independent of historical model slugs.
-2. `policy/defaults.toml` — current release-time model recommendations used by `auto`.
-3. Codex `[agents]` — a stable high-effort, cost-efficient worker fallback.
-4. Skill + generic worker roles — task classification, compact delegation, adaptive escalation, evidence-based review, and bounded repair.
-
-This deliberately avoids depending on one unstable runtime feature for correctness.
-
-## Design principles
-
-- High-capability tokens are spent at decision gates, not implementation loops.
-- Parent eligibility is a capability + minimum-effort threshold.
-- Prefer the latest suitable generation without permanently encoding its slug into workflow semantics.
-- `high` is the normal floor; `xhigh/max` are earned by complexity or evidence.
-- `auto` follows release recommendations; explicit pins survive updates.
-- Recommendation automation fails closed and changes policy only through reviewable PRs.
-- Children receive compact task packets instead of irrelevant parent history.
-- Parent review checks diff + evidence instead of reimplementing.
-- Read-only exploration may run in parallel; overlapping writable workers should not.
-- Repair loops are bounded; repeated failure triggers reassessment/escalation.
+1. `codex-flow.toml` — model/effort policy.
+2. `policy/defaults.toml` — release-time `auto` recommendations.
+3. Codex `[agents]` — stable worker fallback.
+4. Skill + generic worker roles — classification, delegation, adaptive escalation, review, bounded repairs.
+5. Benchmark runner/analyzer — advisory evidence for future routing calibration.
 
 ## CI
 
-The repository validates:
-
-- shell/Python syntax for Unix installer, CLI, scripts, and recommendation checker
-- deterministic recommendation selection against offline fixtures
-- Unix install -> status/doctor -> override -> uninstall smoke flow
-- PowerShell syntax plus Windows install/status/doctor/uninstall smoke flow
+The repository validates shell/Python/PowerShell syntax, deterministic model recommendation fixtures, benchmark analyzer quality-first routing, benchmark runner isolation/repair/token aggregation with a fake Codex executable, Unix install/update flows, and Windows install/status/doctor/uninstall smoke behavior.
 
 ## Status
 
-Private preview. Recommendation updates are automatic only for release defaults and only through a reviewable PR. Installed users change behavior only when they run `codex-flow update`; explicit pins remain authoritative.
+Private preview, version 0.5.0. Model recommendation changes remain reviewable; benchmark routing remains advisory; installed users change behavior only through explicit update/install actions and explicit pins remain authoritative.
