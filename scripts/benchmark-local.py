@@ -80,7 +80,7 @@ def main() -> int:
     print(f"Planned real model runs: {planned}")
     print(f"Result file: {output}")
     if args.profile == "quick":
-        print("Expected upper planning budget: roughly <=5M total tokens; actual usage depends on repairs and Codex behavior.")
+        print("Expected upper planning budget: roughly <=15M total tokens; flow planning/review and repairs can increase usage.")
     else:
         print("WARNING: full profile contains 90 real runs and can consume substantial Codex quota.")
 
@@ -123,7 +123,7 @@ def main() -> int:
 
     meta = output.with_suffix(".meta.json")
     meta.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
         "profile": args.profile,
         "planned_runs": planned,
         "codex_cli_version": version,

@@ -1,22 +1,41 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "repetitions": 3,
   "timeout_seconds": 1800,
   "max_repair_cycles": 2,
   "matrix": [
-    {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
-    {"model": "gpt-5.6-luna", "reasoning_effort": "xhigh"},
-    {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-    {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"}
+    {"id": "luna-direct", "strategy": "direct", "model": "gpt-5.6-luna", "reasoning_effort": "high"},
+    {"id": "terra-direct", "strategy": "direct", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+    {"id": "sol-direct", "strategy": "direct", "model": "gpt-5.6-sol", "reasoning_effort": "high"},
+    {
+      "id": "codex-flow-high",
+      "strategy": "flow",
+      "reasoning_policy": "fixed",
+      "parent": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+      "worker": {"model": "gpt-5.6-luna", "reasoning_effort": "high"}
+    },
+    {
+      "id": "codex-flow-adaptive",
+      "strategy": "flow",
+      "reasoning_policy": "adaptive",
+      "parent": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": {"routine": "high", "complex": "xhigh", "critical": "max"}
+      },
+      "worker": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": {"routine": "high", "complex": "xhigh", "critical": "max"}
+      }
+    }
   ],
   "tasks": [
     {
-      "id": "example-localized-fix",
-      "class": "routine",
+      "id": "example-compatibility-refactor",
+      "class": "complex",
       "source": "/absolute/path/to/frozen-benchmark-repo",
       "base_ref": "0123456789abcdef0123456789abcdef01234567",
-      "prompt": "Implement the requested localized fix. Do not modify the verifier or weaken acceptance criteria.",
-      "verify": ["python3", "tests/verify_localized_fix.py"]
+      "prompt": "Implement the requested change without weakening acceptance criteria.",
+      "verify": ["python3", "/absolute/path/to/external-verifier.py"]
     }
   ]
 }

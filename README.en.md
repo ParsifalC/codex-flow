@@ -127,27 +127,27 @@ max_repair_cycles = 2
 
 ## Built-in benchmark corpus
 
-The deterministic six-task corpus covers localized bug fixing, configuration precedence, multi-file compatibility refactoring, configuration migration, bounded retry semantics, and crash-safe state persistence.
+The deterministic six-task corpus is balanced across two routine, two complex, and two critical tasks. It measures direct-model capability, fixed-effort flow value, and adaptive reasoning separately. It covers localized fixes, configuration precedence, registry compatibility refactoring, alias-safe configuration migration, resumable data migration, and crash-durable state persistence.
 
 Profiles:
 
 ```text
 quick
-  6 tasks × 3 configs × 1 repetition = 18 runs
-  Luna/high
-  Terra/xhigh
-  Sol/high
+  6 tasks × 5 strategies × 1 repetition = 30 runs
+  Luna direct/high
+  Terra direct/high
+  Sol direct/high
+  Flow fixed: Sol parent/high + Luna worker/high
+  Flow adaptive: routine=high, complex=xhigh, critical=max
 
 full
-  6 tasks × 5 configs × 3 repetitions = 90 runs
-  Luna/high
-  Luna/xhigh
-  Terra/high
-  Terra/xhigh
-  Sol/high
+  6 tasks × 5 strategies × 3 repetitions = 90 runs
+  the same five strategies as quick
 ```
 
-Every task gets a deterministic seed commit and an external verifier outside the writable task repository.
+The three direct strategies and fixed flow all use `high`, so model and workflow conclusions are not confounded by reasoning effort. Adaptive flow is analyzed separately. Flow explicitly executes `Sol read-only plan → Luna implementation → external verifier → Sol read-only review → Luna delta repair`, with parent and worker usage attributed separately. Every task gets a deterministic seed commit and an external verifier outside the writable task repository.
+
+Quick has only two samples per class and is observational. Full provides six samples per class/strategy and satisfies the default evidence threshold.
 
 ## Recommended real run: local Codex session
 
@@ -158,7 +158,7 @@ codex-flow update
 codex-flow benchmark-local quick
 ```
 
-The command checks git/Python/Codex, materializes the frozen quick corpus, validates 18 planned runs with a dry-run, shows a quota/token warning, requires the exact confirmation `RUN QUICK 18`, executes the real benchmark, fails fast on zero-usage infrastructure/authentication failures, analyzes the results, and renders a Markdown report.
+The command checks git/Python/Codex, materializes the frozen quick corpus, validates 30 planned runs with a dry-run, shows a quota/token warning, requires the exact confirmation `RUN QUICK 30`, executes the real benchmark, fails fast on zero-usage infrastructure/authentication failures, analyzes the results, and renders a Markdown report.
 
 By default it writes timestamped files under `benchmark/results/`:
 
@@ -169,13 +169,13 @@ quick-<timestamp>.report.md
 quick-<timestamp>.meta.json
 ```
 
-For the first quick run, budget roughly up to ~5M total tokens as a conservative planning ceiling. Actual use can be much lower or higher depending on tool loops and repair attempts.
+For the first quick run, budget roughly up to ~15M total tokens as a conservative planning ceiling. Flow planning/review and repair loops add usage, and actual consumption can differ substantially.
 
 ### Cost semantics
 
 When the benchmark is run through a ChatGPT/Codex subscription, dollar figures are **API-equivalent reference costs only**. They provide a normalized comparison using the pinned API price snapshot and are not the actual amount charged against the ChatGPT subscription.
 
-Primary measurements are pass rate, repair cycles, input/cached/output tokens, total token efficiency, wall time, and API-equivalent reference cost.
+Primary measurements are final and first-pass rates, repair/review cycles, input/cached/output tokens, total token efficiency, wall time, and API-equivalent reference cost. Flow cost includes both parent and worker usage.
 
 ## Lower-level benchmark commands
 
@@ -193,11 +193,11 @@ codex-flow benchmark-analyze \
   --json
 ```
 
-The analyzer applies quality gates before comparing reference cost. Benchmark conclusions remain advisory; `policy/benchmark.toml` keeps `auto_apply = false`.
+The analyzer reports same-effort Sol capability evidence, fixed-flow value versus Sol and Luna, and adaptive-flow value versus fixed flow before applying quality-first cost routing. Benchmark conclusions remain advisory; `policy/benchmark.toml` keeps `auto_apply = false`.
 
 ## Optional API-key GitHub Actions benchmark
 
-`.github/workflows/benchmark-quick.yml` remains available as an optional headless execution path for users with an OpenAI API key. It is manual `workflow_dispatch` only, requires `OPENAI_API_KEY` plus the exact confirmation `RUN QUICK 18`, exposes only the quick profile, and uploads result artifacts. Normal CI never invokes it.
+`.github/workflows/benchmark-quick.yml` remains available as an optional headless execution path for users with an OpenAI API key. It is manual `workflow_dispatch` only, requires `OPENAI_API_KEY` plus the exact confirmation `RUN QUICK 30`, exposes only the quick profile, and uploads result artifacts. Normal CI never invokes it.
 
 ## Automatic model recommendations
 

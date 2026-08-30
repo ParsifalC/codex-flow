@@ -19,10 +19,13 @@ python3 "$ROOT/scripts/render-benchmark-report.py" \
 
 grep -Fq '# Fixture benchmark' "$TMP/report.md"
 grep -Fq '## Overall' "$TMP/report.md"
-grep -Fq '## Configuration results' "$TMP/report.md"
+grep -Fq '## Strategy results' "$TMP/report.md"
+grep -Fq '## Sol capability evidence' "$TMP/report.md"
+grep -Fq '## Fixed-high flow evidence' "$TMP/report.md"
+grep -Fq '## Adaptive reasoning evidence' "$TMP/report.md"
 grep -Fq '## Advisory routing' "$TMP/report.md"
 grep -Fq 'gpt-5.6-luna' "$TMP/report.md"
 grep -Fq 'gpt-5.6-terra' "$TMP/report.md"
-grep -Fq 'Routing output is advisory only' "$TMP/report.md"
+grep -Fq 'Conclusions are advisory' "$TMP/report.md"
 
 printf 'report smoke test passed\n'

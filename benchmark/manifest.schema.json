@@ -4,7 +4,7 @@
   "type": "object",
   "required": ["schema_version", "tasks", "matrix"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "repetitions": {"type": "integer", "minimum": 1, "default": 1},
     "timeout_seconds": {"type": "integer", "minimum": 1, "default": 1800},
     "max_repair_cycles": {"type": "integer", "minimum": 0, "default": 2},
@@ -13,13 +13,51 @@
       "type": "array",
       "minItems": 1,
       "items": {
-        "type": "object",
-        "required": ["model", "reasoning_effort"],
-        "properties": {
-          "model": {"type": "string", "minLength": 1},
-          "reasoning_effort": {"enum": ["high", "xhigh", "max"]}
-        },
-        "additionalProperties": false
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["id", "strategy", "model", "reasoning_effort"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "strategy": {"const": "direct"},
+              "model": {"type": "string", "minLength": 1},
+              "reasoning_effort": {"enum": ["high", "xhigh", "max"]}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["id", "strategy", "reasoning_policy", "parent", "worker"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "strategy": {"const": "flow"},
+              "reasoning_policy": {"enum": ["fixed", "adaptive"]},
+              "parent": {"$ref": "#/$defs/actor"},
+              "worker": {"$ref": "#/$defs/actor"}
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"reasoning_policy": {"const": "fixed"}}},
+                "then": {
+                  "properties": {
+                    "parent": {"$ref": "#/$defs/fixed_actor"},
+                    "worker": {"$ref": "#/$defs/fixed_actor"}
+                  }
+                }
+              },
+              {
+                "if": {"properties": {"reasoning_policy": {"const": "adaptive"}}},
+                "then": {
+                  "properties": {
+                    "parent": {"$ref": "#/$defs/adaptive_actor"},
+                    "worker": {"$ref": "#/$defs/adaptive_actor"}
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
+          }
+        ]
       }
     },
     "tasks": {
@@ -34,15 +72,63 @@
           "source": {"type": "string", "minLength": 1},
           "base_ref": {"type": "string", "minLength": 1},
           "prompt": {"type": "string", "minLength": 1},
-          "verify": {
-            "type": "array",
-            "minItems": 1,
-            "items": {"type": "string"}
-          },
+          "verify": {"type": "array", "minItems": 1, "items": {"type": "string"}},
           "max_repair_cycles": {"type": "integer", "minimum": 0}
         },
         "additionalProperties": false
       }
+    }
+  },
+  "$defs": {
+    "actor": {
+      "type": "object",
+      "required": ["model", "reasoning_effort"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "reasoning_effort": {
+          "oneOf": [
+            {"enum": ["high", "xhigh", "max"]},
+            {
+              "type": "object",
+              "required": ["routine", "complex", "critical"],
+              "properties": {
+                "routine": {"enum": ["high", "xhigh", "max"]},
+                "complex": {"enum": ["high", "xhigh", "max"]},
+                "critical": {"enum": ["high", "xhigh", "max"]}
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixed_actor": {
+      "type": "object",
+      "required": ["model", "reasoning_effort"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "reasoning_effort": {"enum": ["high", "xhigh", "max"]}
+      },
+      "additionalProperties": false
+    },
+    "adaptive_actor": {
+      "type": "object",
+      "required": ["model", "reasoning_effort"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "reasoning_effort": {
+          "type": "object",
+          "required": ["routine", "complex", "critical"],
+          "properties": {
+            "routine": {"enum": ["high", "xhigh", "max"]},
+            "complex": {"enum": ["high", "xhigh", "max"]},
+            "critical": {"enum": ["high", "xhigh", "max"]}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

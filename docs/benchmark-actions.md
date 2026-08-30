@@ -1,8 +1,6 @@
 # Paid quick benchmark on GitHub Actions
 
-`codex-flow` v0.7 adds a manually dispatched GitHub Actions workflow for the built-in **quick** benchmark only.
-
-It is intentionally not scheduled and it cannot run from `push` or `pull_request`. The workflow requires an exact confirmation phrase before any Codex model call is made.
+The optional GitHub Actions workflow runs only the built-in 30-run `quick` profile. It is not scheduled and cannot run from `push` or `pull_request`; a user must manually dispatch it and provide the exact confirmation phrase before any model call.
 
 ## One-time setup
 
@@ -12,42 +10,38 @@ Create a repository Actions secret named:
 OPENAI_API_KEY
 ```
 
-The workflow passes this value only through the process environment. Current Codex CLI authentication code supports `OPENAI_API_KEY`; no interactive login or committed auth file is required.
-
-Use an API project/key with an intentionally bounded budget and only the model access needed for the benchmark.
+Use an API project/key with an intentionally bounded budget and only the model access needed for the benchmark. For comparisons across dates, pin the Codex npm version instead of using `latest`.
 
 ## Start a run
 
-In GitHub Actions, open **benchmark quick** and choose **Run workflow**.
-
-Inputs:
+Open the **benchmark quick** workflow and choose **Run workflow**:
 
 ```text
-confirm:            RUN QUICK 18
+confirm:            RUN QUICK 30
 codex_npm_version:  latest   # or a pinned npm version
 ```
 
-The confirmation must match exactly. The workflow validates the key is present before installing/running Codex.
-
-For comparisons across dates, pin `codex_npm_version` instead of using `latest`. Every artifact records both the requested npm version and the actual `codex --version` output.
+The key and exact confirmation are validated before execution.
 
 ## What runs
 
-The workflow materializes the deterministic `quick` corpus:
-
 ```text
-6 tasks × 3 configurations × 1 repetition = 18 runs
+6 tasks × 5 strategies × 1 repetition = 30 runs
 
-Luna / high
-Terra / xhigh
-Sol / high
+Luna direct / high
+Terra direct / high
+Sol direct / high
+Flow fixed / Sol parent high + Luna worker high
+Flow adaptive / routine high, complex xhigh, critical max
 ```
 
-Every run starts from the frozen corpus commit, uses the external verifier, and includes bounded repairs. The runner is invoked with `--fail-fast-infrastructure`: if Codex exits non-zero before reporting any token usage (for example bad credentials or an unavailable CLI/model), the batch stops instead of repeating the same infrastructure failure across the remaining configurations.
+The first four strategies are the controlled same-effort comparison. Adaptive flow is analyzed separately against fixed-high flow. Every run starts from a frozen corpus commit, uses an external verifier, and includes bounded repairs. Flow usage includes both parent and worker.
+
+`--fail-fast-infrastructure` stops the batch when Codex exits non-zero before reporting usage, avoiding repeated spend attempts after credentials, CLI, or model-access failures.
 
 ## Artifacts
 
-The workflow uploads a 30-day artifact containing the files that exist at the end of the run:
+The workflow uploads available files for 30 days:
 
 ```text
 materialize.json
@@ -62,20 +56,18 @@ codex-npm-version-requested.txt
 codex-flow-commit.txt
 ```
 
-A partial/failing run still uploads available diagnostics. If at least one result row exists, the workflow also renders the report into the GitHub Actions job summary.
+A partial run still uploads diagnostics. When results exist, the Markdown report is also written to the Actions job summary. It includes final/first-pass rates, repairs, parent reviews, tokens, wall time, mixed-model API-equivalent reference cost, and the three evidence comparisons.
 
-`report.md` contains overall pass rate, infrastructure failures, repair count, token totals, estimated cost, per-model/effort results, and advisory class routing.
+## Safety and interpretation
 
-## Cost and promotion boundaries
+The workflow spends real API/model quota and therefore has these boundaries:
 
-This workflow spends real API/model quota. It therefore has all of the following safeguards:
+- manual `workflow_dispatch` only;
+- exact `RUN QUICK 30` confirmation;
+- quick profile only, with 30 runs;
+- no automatic full/90-run workflow;
+- missing API key fails before execution;
+- infrastructure failures can stop the batch immediately;
+- results remain advisory and never rewrite routing automatically.
 
-- manual `workflow_dispatch` only
-- exact paid-run confirmation phrase
-- quick profile only (18 runs)
-- no automatic full/90-run workflow
-- missing API key fails before model execution
-- infrastructure failures can stop the batch immediately
-- routing output remains advisory (`auto_apply = false`)
-
-The 90-run `full` corpus remains available through local/manual `codex-flow benchmark` execution, but is deliberately not exposed as a GitHub Actions button until quick results justify the additional spend.
+`quick` has two samples per class and strategy, below the default formal evidence minimum of three. Use it for smoke/observational evidence. The 90-run `full` profile has six samples per class and strategy and remains available only through explicit local/manual execution.

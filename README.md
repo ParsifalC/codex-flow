@@ -152,34 +152,34 @@ default_subagent_reasoning_effort = "high"
 
 ## 内置 Benchmark
 
-项目提供一个确定性的六任务 Benchmark corpus，用真实工程结果而不是单纯模型价格来校准路由策略。覆盖：
+项目提供一个确定性的六任务 Benchmark corpus，按 2 routine / 2 complex / 2 critical 平衡分层。它同时测量 direct 模型能力、固定强度 Flow 增量，以及自适应推理强度的价值。覆盖：
 
 - 局部 Bug 修复
 - 配置优先级
 - 多文件兼容性重构
 - 配置迁移
-- 有界重试语义
-- 崩溃安全的状态持久化
+- 可恢复且幂等的数据迁移
+- 具有权限与目录持久化语义的原子状态写入
 
 当前 profiles：
 
 ```text
 quick
-  6 tasks × 3 configs × 1 repetition = 18 runs
-  Luna/high
-  Terra/xhigh
-  Sol/high
+  6 tasks × 5 strategies × 1 repetition = 30 runs
+  Luna direct/high
+  Terra direct/high
+  Sol direct/high
+  Flow fixed: Sol parent/high + Luna worker/high
+  Flow adaptive: routine=high, complex=xhigh, critical=max
 
 full
-  6 tasks × 5 configs × 3 repetitions = 90 runs
-  Luna/high
-  Luna/xhigh
-  Terra/high
-  Terra/xhigh
-  Sol/high
+  6 tasks × 5 strategies × 3 repetitions = 90 runs
+  与 quick 使用相同五组策略
 ```
 
-每个任务都会生成确定性的 seed commit，并使用位于可写任务仓库之外的外部 verifier，避免模型通过修改测试本身“通过”验收。
+三组 direct 与固定 Flow 全部使用 `high`，确保模型与策略结论不会混入 reasoning 差异；自适应 Flow 单列分析。Flow 由 runner 显式执行 `Sol 只读规划 → Luna 实现 → 外部 verifier → Sol 只读复核 → Luna 定向修复`，并分别记录 parent/worker usage。每个任务都会生成确定性的 seed commit，并使用位于可写任务仓库之外的外部 verifier。
+
+`quick` 每个类别只有 2 个样本，用于烟雾观察；`full` 每策略每类别有 6 个样本，才满足默认正式证据门槛。
 
 ## 推荐真实 Benchmark：本地 Codex 登录态
 
@@ -200,14 +200,14 @@ codex-flow benchmark-local quick
         ↓
 生成冻结的 quick corpus
         ↓
-dry-run 验证 18 个计划执行
+dry-run 验证 30 个计划执行
         ↓
 显示 quota / token 提示
         ↓
 要求输入确认：
-RUN QUICK 18
+RUN QUICK 30
         ↓
-执行 18 次真实 Codex 任务
+执行 30 次真实 Codex 策略任务
         ↓
 认证/CLI 等零 usage 基础设施失败时立即停止
         ↓
@@ -227,7 +227,7 @@ quick-<timestamp>.meta.json
 
 metadata 会记录 Codex CLI 版本、codex-flow commit、本地认证执行模式、manifest 路径以及结果/报告路径。
 
-第一次 `quick` 建议按**最多约 500 万总 token**作为保守预算上限。实际消耗可能明显低于或高于这个估算，取决于工具循环和 repair 次数。
+第一次 `quick` 建议按**最多约 1500 万总 token**作为保守预算上限。Flow 的规划/复核以及 repair 会增加 usage；实际消耗可能明显不同。
 
 ### 成本含义
 
@@ -240,7 +240,9 @@ metadata 会记录 Codex CLI 版本、codex-flow commit、本地认证执行模�
 套餐用户更应该关注：
 
 - 任务通过率
+- 首轮通过率
 - repair cycles
+- parent review cycles
 - input / cached input / output tokens
 - 总 token 效率
 - wall time
@@ -264,7 +266,7 @@ codex-flow benchmark-analyze \
   --json
 ```
 
-Analyzer 会先应用质量门槛，再比较参考成本。更便宜但达不到通过率或 repair 阈值的配置不能成为推荐配置。Benchmark 结论保持 advisory；`policy/benchmark.toml` 默认 `auto_apply = false`。
+Analyzer 会分别输出 Sol 同强度能力证据、固定 Flow 相对 Sol/Luna 的增量证据、自适应 Flow 相对固定 Flow 的证据，再在质量门槛后比较总参考成本。Flow 成本包含 parent 与 worker。Benchmark 结论保持 advisory；`policy/benchmark.toml` 默认 `auto_apply = false`。
 
 ## 可选：API Key + GitHub Actions Benchmark
 
@@ -274,8 +276,8 @@ Analyzer 会先应用质量门槛，再比较参考成本。更便宜但达不�
 
 - 仅支持手动 `workflow_dispatch`
 - 需要 repository secret `OPENAI_API_KEY`
-- 需要精确确认 `RUN QUICK 18`
-- 只开放 18-run `quick` profile
+- 需要精确确认 `RUN QUICK 30`
+- 只开放 30-run `quick` profile
 - 正常 CI 永远不会自动调用付费模型
 - 会上传原始结果、analysis、report 和相关 metadata
 

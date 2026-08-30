@@ -1,24 +1,62 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "profiles": {
     "quick": {
-      "description": "Low-cost smoke comparison before spending on a full corpus run.",
+      "description": "One repetition across three high direct models, fixed-high flow, and adaptive-effort flow.",
       "repetitions": 1,
       "matrix": [
-        {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
-        {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
-        {"model": "gpt-5.6-sol", "reasoning_effort": "high"}
+        {"id": "luna-direct", "strategy": "direct", "model": "gpt-5.6-luna", "reasoning_effort": "high"},
+        {"id": "terra-direct", "strategy": "direct", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        {"id": "sol-direct", "strategy": "direct", "model": "gpt-5.6-sol", "reasoning_effort": "high"},
+        {
+          "id": "codex-flow-high",
+          "strategy": "flow",
+          "reasoning_policy": "fixed",
+          "parent": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+          "worker": {"model": "gpt-5.6-luna", "reasoning_effort": "high"}
+        },
+        {
+          "id": "codex-flow-adaptive",
+          "strategy": "flow",
+          "reasoning_policy": "adaptive",
+          "parent": {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": {"routine": "high", "complex": "xhigh", "critical": "max"}
+          },
+          "worker": {
+            "model": "gpt-5.6-luna",
+            "reasoning_effort": {"routine": "high", "complex": "xhigh", "critical": "max"}
+          }
+        }
       ]
     },
     "full": {
-      "description": "Initial routing-calibration matrix; three repetitions per task/configuration.",
+      "description": "Three repetitions across three high direct models, fixed-high flow, and adaptive-effort flow.",
       "repetitions": 3,
       "matrix": [
-        {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
-        {"model": "gpt-5.6-luna", "reasoning_effort": "xhigh"},
-        {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
-        {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
-        {"model": "gpt-5.6-sol", "reasoning_effort": "high"}
+        {"id": "luna-direct", "strategy": "direct", "model": "gpt-5.6-luna", "reasoning_effort": "high"},
+        {"id": "terra-direct", "strategy": "direct", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        {"id": "sol-direct", "strategy": "direct", "model": "gpt-5.6-sol", "reasoning_effort": "high"},
+        {
+          "id": "codex-flow-high",
+          "strategy": "flow",
+          "reasoning_policy": "fixed",
+          "parent": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+          "worker": {"model": "gpt-5.6-luna", "reasoning_effort": "high"}
+        },
+        {
+          "id": "codex-flow-adaptive",
+          "strategy": "flow",
+          "reasoning_policy": "adaptive",
+          "parent": {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": {"routine": "high", "complex": "xhigh", "critical": "max"}
+          },
+          "worker": {
+            "model": "gpt-5.6-luna",
+            "reasoning_effort": {"routine": "high", "complex": "xhigh", "critical": "max"}
+          }
+        }
       ]
     }
   }

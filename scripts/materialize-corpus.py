@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 FIXED_DATE = "2026-01-01T00:00:00+00:00"
 VALID_CLASSES = {"routine", "complex", "critical"}
 VALID_EFFORTS = {"high", "xhigh", "max"}
+VALID_STRATEGIES = {"direct", "flow"}
 
 
 def load_json(path: Path):
@@ -24,7 +25,7 @@ def validate_relative_path(value: str) -> None:
 
 
 def validate(corpus: dict, profiles: dict, profile_name: str) -> dict:
-    if corpus.get("schema_version") != 1 or profiles.get("schema_version") != 1:
+    if corpus.get("schema_version") not in {1, 2} or profiles.get("schema_version") != 2:
         raise ValueError("unsupported corpus/profile schema")
     tasks = corpus.get("tasks")
     if not isinstance(tasks, list) or not tasks:
@@ -60,18 +61,41 @@ def validate(corpus: dict, profiles: dict, profile_name: str) -> dict:
         raise ValueError(f"profile {profile_name} repetitions must be >= 1")
     if not isinstance(matrix, list) or not matrix:
         raise ValueError(f"profile {profile_name} matrix must be non-empty")
-    seen_configs: set[tuple[str, str]] = set()
+    seen_configs: set[str] = set()
+    controlled_efforts: set[str] = set()
     for config in matrix:
-        model = config.get("model")
-        effort = config.get("reasoning_effort")
-        if not isinstance(model, str) or not model:
-            raise ValueError(f"profile {profile_name} contains an empty model")
-        if effort not in VALID_EFFORTS:
-            raise ValueError(f"profile {profile_name} has invalid reasoning effort: {effort}")
-        key = (model, effort)
-        if key in seen_configs:
-            raise ValueError(f"profile {profile_name} has duplicate configuration: {model}/{effort}")
-        seen_configs.add(key)
+        strategy_id = config.get("id")
+        strategy = config.get("strategy")
+        if not isinstance(strategy_id, str) or not strategy_id:
+            raise ValueError(f"profile {profile_name} contains an empty strategy id")
+        if strategy_id in seen_configs:
+            raise ValueError(f"profile {profile_name} has duplicate strategy id: {strategy_id}")
+        seen_configs.add(strategy_id)
+        if strategy not in VALID_STRATEGIES:
+            raise ValueError(f"profile {profile_name} has invalid strategy: {strategy}")
+        reasoning_policy = config.get("reasoning_policy", "fixed")
+        if reasoning_policy not in {"fixed", "adaptive"}:
+            raise ValueError(f"profile {profile_name} strategy {strategy_id} has invalid reasoning policy")
+        if strategy == "direct" and reasoning_policy != "fixed":
+            raise ValueError(f"profile {profile_name} direct strategy {strategy_id} must use fixed reasoning")
+        actors = [config] if strategy == "direct" else [config.get("parent"), config.get("worker")]
+        for actor in actors:
+            if not isinstance(actor, dict) or not isinstance(actor.get("model"), str) or not actor["model"]:
+                raise ValueError(f"profile {profile_name} strategy {strategy_id} contains an empty model")
+            effort = actor.get("reasoning_effort")
+            if reasoning_policy == "fixed":
+                if effort not in VALID_EFFORTS:
+                    raise ValueError(f"profile {profile_name} strategy {strategy_id} has invalid fixed reasoning effort: {effort}")
+                controlled_efforts.add(effort)
+            else:
+                if not isinstance(effort, dict) or set(effort) != VALID_CLASSES:
+                    raise ValueError(f"profile {profile_name} adaptive strategy {strategy_id} must define per-class reasoning")
+                if any(value not in VALID_EFFORTS for value in effort.values()):
+                    raise ValueError(f"profile {profile_name} strategy {strategy_id} has invalid adaptive reasoning effort")
+    if len(controlled_efforts) != 1:
+        raise ValueError(
+            f"profile {profile_name} must use one controlled reasoning effort across direct strategies and fixed flow"
+        )
     return profile
 
 
@@ -136,7 +160,7 @@ def main() -> int:
         })
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "repetitions": profile["repetitions"],
         "timeout_seconds": args.timeout_seconds,
         "max_repair_cycles": args.max_repair_cycles,
@@ -151,6 +175,13 @@ def main() -> int:
         "profile": args.profile,
         "tasks": len(manifest_tasks),
         "configurations": len(profile["matrix"]),
+        "strategies": [config["id"] for config in profile["matrix"]],
+        "controlled_reasoning_effort": next(iter({
+            actor["reasoning_effort"]
+            for config in profile["matrix"]
+            if config.get("reasoning_policy", "fixed") == "fixed"
+            for actor in ([config] if config["strategy"] == "direct" else [config["parent"], config["worker"]])
+        })),
         "repetitions": profile["repetitions"],
         "planned_runs": runs,
         "manifest": str(manifest_path),

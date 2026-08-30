@@ -24,14 +24,17 @@ import json, subprocess, sys
 summary=json.load(open(sys.argv[1]))
 a=json.load(open(sys.argv[2])); b=json.load(open(sys.argv[3]))
 assert summary['tasks']==6, summary
-assert summary['configurations']==3, summary
+assert summary['configurations']==5, summary
 assert summary['repetitions']==1, summary
-assert summary['planned_runs']==18, summary
-assert len(a['tasks'])==6 and len(a['matrix'])==3 and a['repetitions']==1
+assert summary['planned_runs']==30, summary
+assert summary['controlled_reasoning_effort']=='high', summary
+assert summary['strategies']==['luna-direct','terra-direct','sol-direct','codex-flow-high','codex-flow-adaptive'],summary
+assert len(a['tasks'])==6 and len(a['matrix'])==5 and a['repetitions']==1 and a['schema_version']==2
+assert {name:sum(t['class']==name for t in a['tasks']) for name in ('routine','complex','critical')} == {'routine':2,'complex':2,'critical':2}
 assert [t['base_ref'] for t in a['tasks']] == [t['base_ref'] for t in b['tasks']]
 for task in a['tasks']:
     assert len(task['base_ref']) == 40, task
-    proc=subprocess.run(task['verify'], cwd=task['source'])
+    proc=subprocess.run(task['verify'], cwd=task['source'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert proc.returncode != 0, f"seed unexpectedly passes verifier: {task['id']}"
 PY
 
@@ -54,7 +57,8 @@ python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/quick-a.json" --output
 python3 - "$TMP/runner-plan.json" <<'PY'
 import json,sys
 p=json.load(open(sys.argv[1]))
-assert p['planned_runs']==18,p
+assert p['planned_runs']==30,p
+assert p['strategies']==['luna-direct','terra-direct','sol-direct','codex-flow-high','codex-flow-adaptive'],p
 PY
 
 printf 'corpus test passed\n'

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type RUN QUICK 18 to confirm paid benchmark execution'
+        description: 'Type RUN QUICK 30 to confirm paid benchmark execution'
         required: true
         type: string
       codex_npm_version:
@@ -35,8 +35,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$BENCHMARK_CONFIRM" == 'RUN QUICK 18' ]] || {
-            echo 'Confirmation did not match RUN QUICK 18.' >&2
+          [[ "$BENCHMARK_CONFIRM" == 'RUN QUICK 30' ]] || {
+            echo 'Confirmation did not match RUN QUICK 30.' >&2
             exit 2
           }
           [[ -n "${OPENAI_API_KEY:-}" ]] || {
@@ -70,7 +70,7 @@ jobs:
             --output "$RUNNER_TEMP/results.jsonl" \
             --dry-run \
             > "$RUNNER_TEMP/plan.json"
-          grep -Fq '"planned_runs": 18' "$RUNNER_TEMP/plan.json"
+          grep -Fq '"planned_runs": 30' "$RUNNER_TEMP/plan.json"
 
       - name: Run paid quick benchmark
         run: |

@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 
 [quality]
 routine_min_pass_rate = 0.90
@@ -6,6 +6,37 @@ complex_min_pass_rate = 0.95
 critical_min_pass_rate = 1.00
 min_samples_per_configuration = 3
 max_average_repair_cycles = 1.0
+
+[comparison]
+# The three direct strategies and codex-flow-high use the same `high` effort.
+# codex-flow-adaptive is reported separately so its extra reasoning is never
+# mistaken for a model or fixed-flow advantage.
+sol_strategy_id = "sol-direct"
+worker_strategy_id = "luna-direct"
+flow_strategy_id = "codex-flow-high"
+adaptive_flow_strategy_id = "codex-flow-adaptive"
+min_samples = 3
+
+# Sol must be no worse on final quality and materially improve at least one
+# quality dimension over the strongest other direct model.
+sol_min_pass_rate_gain = 0.05
+sol_min_first_pass_rate_gain = 0.10
+sol_min_repair_reduction = 0.25
+
+# Fixed-high flow must preserve Sol quality, reduce total mixed-model cost, and
+# improve over using the worker model directly.
+flow_max_pass_rate_regression_vs_sol = 0.02
+flow_min_cost_reduction_vs_sol = 0.30
+flow_min_pass_rate_gain_vs_worker = 0.05
+flow_min_first_pass_rate_gain_vs_worker = 0.10
+flow_min_repair_reduction_vs_worker = 0.25
+
+# Adaptive reasoning is valuable only when it produces a measurable quality or
+# repair gain over fixed-high flow without more than a 50% cost increase.
+adaptive_min_pass_rate_gain = 0.05
+adaptive_min_first_pass_rate_gain = 0.10
+adaptive_min_repair_reduction = 0.25
+adaptive_max_cost_increase = 0.50
 
 [cost]
 # Used only after the quality gate passes. Prices are supplied by the benchmark
