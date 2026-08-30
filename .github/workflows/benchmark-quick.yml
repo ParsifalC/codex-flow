@@ -69,8 +69,13 @@ jobs:
             --fail-fast-infrastructure
 
       - name: Analyze benchmark
-        if: always() && hashFiles(format('{0}/results.jsonl', runner.temp)) != ''
+        if: always()
         run: |
+          set -euo pipefail
+          if [[ ! -s "$RUNNER_TEMP/results.jsonl" ]]; then
+            echo 'No benchmark result rows were produced.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           python3 scripts/analyze-benchmark.py \
             --results "$RUNNER_TEMP/results.jsonl" \
             --prices benchmark/prices/gpt-5.6-2026-08-30.json \
