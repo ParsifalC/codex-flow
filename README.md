@@ -1,33 +1,35 @@
 # codex-flow
 
-Fast, low-friction cost-aware multi-agent defaults for Codex.
+**简体中文** | [English](README.en.md)
 
-**Use a qualifying high-capability parent to decide. Use a cheaper worker to execute. Increase reasoning only when the task proves it needs more.**
+为 Codex 提供低摩擦、成本感知的多 Agent 开发工作流默认策略。
 
-`codex-flow` is capability-driven rather than tied to one permanent model slug or one fixed reasoning level.
+**让高能力模型负责决策，让更经济的 Worker 负责执行；只有任务确实需要时，才提高推理强度。**
 
-## Default strategy
+`codex-flow` 按模型能力和任务复杂度路由，不永久绑定某个模型名称，也不固定使用某个 reasoning level。
 
-```text
-SMALL      -> qualifying parent handles directly
-ROUTINE    -> parent plans(high) -> worker executes(high) -> parent reviews(high)
-COMPLEX    -> parent plans(high/xhigh) -> worker executes(high/xhigh) -> parent reviews(high/xhigh)
-CRITICAL   -> quality-first escalation; xhigh/max only when justified
-```
-
-A parent qualifies by policy, not by name. Defaults prefer the latest available high-capability model, require parent reasoning `>= high`, keep the exact model floor configurable, and choose the worker independently. `gpt-5.6-sol/xhigh` is therefore a valid example, not a requirement.
-
-## Per-task routing override
-
-Users can explicitly override subagent routing for the current task without changing persistent configuration.
+## 默认策略
 
 ```text
-direct     -> do not use subagents for this task
-delegate   -> explicitly prefer subagent execution for this task
-adaptive   -> use normal codex-flow routing for this task
+SMALL      -> 合格的 Parent 直接完成
+ROUTINE    -> Parent 规划(high) -> Worker 实施(high) -> Parent 验收(high)
+COMPLEX    -> Parent 规划(high/xhigh) -> Worker 实施(high/xhigh) -> Parent 验收(high/xhigh)
+CRITICAL   -> 质量优先；只有确有必要时才升级到 xhigh/max
 ```
 
-Natural-language equivalents are supported when the intent is unambiguous, for example:
+Parent 是否合格由策略决定，而不是由模型名称决定。默认优先使用当前最新的高能力模型，Parent 最低 reasoning 为 `high`，具体模型下限可配置；Worker 独立选择当前更具成本效率、适合编码的模型。因此 `gpt-5.6-sol/xhigh` 可以是一个组合，但绝不是硬性要求。
+
+## 当前任务显式路由
+
+用户可以在当前任务中明确控制是否使用子 Agent，不需要修改任何持久配置：
+
+```text
+direct     -> 当前任务不使用子 Agent
+delegate   -> 当前任务明确优先交给子 Agent 执行
+adaptive   -> 当前任务使用 codex-flow 默认自动路由
+```
+
+也支持意图明确的自然语言，例如：
 
 ```text
 不要使用子 agent，直接完成
@@ -42,11 +44,21 @@ Natural-language equivalents are supported when the intent is unambiguous, for e
 自动决定是否使用子 agent
 ```
 
-A current-task routing instruction takes priority over codex-flow defaults and persistent routing policy, but applies only to that task and is never written back to user configuration. If multiple routing instructions conflict in the same task, the latest unambiguous instruction wins.
+当前任务中的显式路由指令优先于 codex-flow 默认策略和持久配置，但**只对当前任务生效**，不会写回用户配置。如果同一任务里出现互相冲突的明确指令，以最后一条明确指令为准。
 
-`direct` disables delegation only. Classification, adaptive reasoning effort, validation, acceptance criteria, bounded repair, and review still apply. The workflow becomes `parent -> implementation -> self-review` instead of `parent -> worker -> parent review`.
+`direct` 只关闭 delegation，不会关闭任务分类、reasoning 自适应、验证、验收标准、有限修复和 review。流程只是从：
 
-## Install
+```text
+Parent -> Worker -> Parent review
+```
+
+变成：
+
+```text
+Parent -> implementation -> self-review
+```
+
+## 安装
 
 ### macOS / Linux
 
@@ -64,9 +76,9 @@ cd codex-flow
 .\install.ps1
 ```
 
-The management command is installed under `~/.local/bin`. Restart Codex after installation, then use Codex normally.
+管理命令默认安装到 `~/.local/bin`。安装后重启 Codex，之后正常使用 Codex 即可，不需要每次手动调用特殊命令或 Prompt。
 
-## Daily management
+## 常用管理命令
 
 ```bash
 codex-flow status
@@ -76,11 +88,11 @@ codex-flow benchmark-local quick
 codex-flow uninstall
 ```
 
-`update` fast-forwards the original checkout, preserves explicit user pins, reruns installation, and resolves only `auto` values against new release recommendations.
+`update` 会 fast-forward 原始 checkout，保留用户明确指定的模型/推理配置，重新执行安装，并且只对 `auto` 配置重新解析当前版本推荐值。
 
-## Adaptive policy
+## 默认自适应配置
 
-Installation creates `~/.codex/codex-flow.toml` similar to:
+直接安装且不提供任何环境变量覆盖时，会生成类似下面的 `~/.codex/codex-flow.toml`：
 
 ```toml
 schema_version = 2
@@ -109,13 +121,45 @@ max_concurrent_threads = 4
 max_repair_cycles = 2
 ```
 
-`model = "auto"` follows release recommendations; a concrete model remains pinned across updates. The active parent is never hard-pinned by recommendation metadata.
+`model = "auto"` 会跟随 codex-flow 当前版本的推荐；如果用户明确指定具体模型，则更新时继续保持该 pin。Parent 不会因为推荐元数据而被硬编码成某个固定 Sol 版本。
 
-## Built-in benchmark corpus
+安装器同时会维护 Codex 的 `[agents]` 运行时兜底，例如当前默认：
 
-The deterministic six-task corpus covers localized bug fixing, configuration precedence, multi-file compatibility refactoring, configuration migration, bounded retry semantics, and crash-safe state persistence.
+```toml
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "high"
+```
 
-Profiles:
+它不会强制修改用户当前选择的主模型。
+
+## 推理强度选择
+
+默认目标是使用“足够完成任务的最低合格推理强度”，而不是无条件拉满：
+
+| 任务类型 | Parent | Worker |
+| --- | --- | --- |
+| SMALL | `high` 或当前合格强度 | 不使用 Worker |
+| ROUTINE | `high` | `high` |
+| COMPLEX | `high` / `xhigh` | `high` / `xhigh` |
+| CRITICAL | `xhigh` / `max` | 仅质量优先时使用 `xhigh` / `max` |
+
+`max` 永远不是通用默认值。只有任务风险、复杂度或者较低强度的实际失败证据足以证明有必要时才升级。
+
+## 内置 Benchmark
+
+项目提供一个确定性的六任务 Benchmark corpus，用真实工程结果而不是单纯模型价格来校准路由策略。覆盖：
+
+- 局部 Bug 修复
+- 配置优先级
+- 多文件兼容性重构
+- 配置迁移
+- 有界重试语义
+- 崩溃安全的状态持久化
+
+当前 profiles：
 
 ```text
 quick
@@ -133,44 +177,44 @@ full
   Sol/high
 ```
 
-Every task gets a deterministic seed commit and an external verifier outside the writable task repository.
+每个任务都会生成确定性的 seed commit，并使用位于可写任务仓库之外的外部 verifier，避免模型通过修改测试本身“通过”验收。
 
-## Recommended real run: local Codex session
+## 推荐真实 Benchmark：本地 Codex 登录态
 
-v0.8 makes the local authenticated Codex session the primary real-benchmark path. No API key is required when your local Codex CLI is already authenticated through ChatGPT or another supported local login method.
+本地已经认证的 Codex session 是当前默认的真实 Benchmark 路径。如果本机 Codex CLI 已经通过 ChatGPT 或其他受支持的本地方式登录，**不需要 API Key**。
 
-Run:
+运行：
 
 ```bash
 codex-flow update
 codex-flow benchmark-local quick
 ```
 
-The command performs the whole flow:
+该命令会自动完成：
 
 ```text
-check git/python/codex
-show codex CLI version
+检查 git / Python / Codex
+显示 Codex CLI 版本
         ↓
-materialize frozen quick corpus
+生成冻结的 quick corpus
         ↓
-dry-run validate 18 planned runs
+dry-run 验证 18 个计划执行
         ↓
-show quota/token warning
+显示 quota / token 提示
         ↓
-require confirmation:
+要求输入确认：
 RUN QUICK 18
         ↓
-run 18 real Codex executions
+执行 18 次真实 Codex 任务
         ↓
-fail fast on zero-usage infrastructure/auth failures
+认证/CLI 等零 usage 基础设施失败时立即停止
         ↓
-analyze results
+分析结果
         ↓
-render Markdown report
+生成 Markdown 报告
 ```
 
-By default it writes timestamped files under `benchmark/results/`:
+默认会在 `benchmark/results/` 下生成带时间戳的结果：
 
 ```text
 quick-<timestamp>.jsonl
@@ -179,26 +223,30 @@ quick-<timestamp>.report.md
 quick-<timestamp>.meta.json
 ```
 
-The metadata records the Codex CLI version, codex-flow commit, local-auth execution mode, manifest path, and result/report paths.
+metadata 会记录 Codex CLI 版本、codex-flow commit、本地认证执行模式、manifest 路径以及结果/报告路径。
 
-For the first quick run, budget roughly up to ~5M total tokens as a conservative planning ceiling. Actual use can be much lower or higher depending on tool loops and repair attempts.
+第一次 `quick` 建议按**最多约 500 万总 token**作为保守预算上限。实际消耗可能明显低于或高于这个估算，取决于工具循环和 repair 次数。
 
-### Cost semantics
+### 成本含义
 
-When the benchmark is run through a ChatGPT/Codex subscription, the dollar figures in reports are **API-equivalent reference costs only**. They are calculated from a pinned API price snapshot to compare configurations consistently; they are **not** the actual amount charged against the ChatGPT subscription.
+如果 Benchmark 使用 ChatGPT/Codex 套餐登录态执行，报告中的美元数字全部是：
 
-The primary measurements for subscription use are therefore:
+> **API-equivalent reference cost（API 等价参考成本）**
 
-- pass rate
+它使用固定 API 价格快照把不同模型放到统一尺度上比较，**不代表 ChatGPT 套餐实际产生了对应美元账单**。
+
+套餐用户更应该关注：
+
+- 任务通过率
 - repair cycles
-- input/cached/output tokens
-- total token efficiency
+- input / cached input / output tokens
+- 总 token 效率
 - wall time
-- API-equivalent reference cost for normalized model comparison
+- API 等价参考成本
 
-## Lower-level benchmark commands
+## 底层 Benchmark 命令
 
-You can still run each stage separately:
+如果需要单独控制每一步，仍然可以使用：
 
 ```bash
 codex-flow benchmark-corpus quick
@@ -214,43 +262,68 @@ codex-flow benchmark-analyze \
   --json
 ```
 
-The analyzer applies quality gates before comparing reference cost. Benchmark conclusions remain advisory; `policy/benchmark.toml` keeps `auto_apply = false`.
+Analyzer 会先应用质量门槛，再比较参考成本。更便宜但达不到通过率或 repair 阈值的配置不能成为推荐配置。Benchmark 结论保持 advisory；`policy/benchmark.toml` 默认 `auto_apply = false`。
 
-## Optional API-key GitHub Actions benchmark
+## 可选：API Key + GitHub Actions Benchmark
 
-`.github/workflows/benchmark-quick.yml` remains available as an optional headless execution path for users who have an OpenAI API key. It is not the default benchmark route.
+`.github/workflows/benchmark-quick.yml` 仍然保留，作为拥有 OpenAI API Key 用户的可选无头执行方式，但它不再是默认 Benchmark 路径。
 
-It is manual `workflow_dispatch` only, requires `OPENAI_API_KEY` plus the exact confirmation `RUN QUICK 18`, exposes only the 18-run quick profile, and uploads results/analysis/report metadata as an artifact. Normal CI never invokes it.
+该 workflow：
 
-## Automatic model recommendations
+- 仅支持手动 `workflow_dispatch`
+- 需要 repository secret `OPENAI_API_KEY`
+- 需要精确确认 `RUN QUICK 18`
+- 只开放 18-run `quick` profile
+- 正常 CI 永远不会自动调用付费模型
+- 会上传原始结果、analysis、report 和相关 metadata
 
-`scripts/check-recommendation.py` and `.github/workflows/model-recommendation.yml` conservatively inspect OpenAI official model documentation and maintain release recommendations through reviewable PRs. The active parent remains policy-driven; worker `auto` recommendations change only through release defaults and explicit user updates.
+## 自动模型推荐
 
-## Measurement boundaries
+`scripts/check-recommendation.py` 和 `.github/workflows/model-recommendation.yml` 会保守地检查 OpenAI 官方模型文档，并通过可 review 的 PR 维护 release recommendation。
 
-Current Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and it does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits.
+设计原则是：
 
-Full methodology: `docs/benchmark.md`.
-Optional Actions setup: `docs/benchmark-actions.md`.
+- Parent 始终由能力策略决定，而不是推荐值硬 pin
+- Worker 的 `auto` 推荐可以随着新一代高性价比模型更新
+- 用户明确 pin 的模型不会被 update 偷偷覆盖
+- 无法可靠确认模型能力或价格时 fail closed
 
-## Install-time overrides
+## 测量边界
+
+当前 Codex JSONL 能提供 input / cached input / output usage，但不能稳定提供独立 reasoning-token 字段，也不能稳定返回 provider 最终实际使用的 model identifier。因此 Benchmark 记录请求的 model/effort，以及 Codex 实际能够可靠提供的 usage 字段。
+
+完整方法说明见 `docs/benchmark.md`。
+GitHub Actions 可选路径说明见 `docs/benchmark-actions.md`。
+
+## 安装时覆盖项
 
 ```text
-CODEX_FLOW_PARENT_MODEL_POLICY    default: latest-capable
-CODEX_FLOW_PARENT_MIN_MODEL       default: auto
-CODEX_FLOW_PARENT_MIN_EFFORT      default: high
-CODEX_FLOW_WORKER_MODEL_POLICY    default: latest-efficient
-CODEX_FLOW_WORKER_MODEL           default: auto
-CODEX_FLOW_WORKER_MIN_EFFORT      default: high
-CODEX_FLOW_MAX_THREADS            default: 4
-CODEX_FLOW_MAX_REPAIR_CYCLES      default: 2
-CODEX_FLOW_BIN_DIR                default: ~/.local/bin
+CODEX_FLOW_PARENT_MODEL_POLICY    默认: latest-capable
+CODEX_FLOW_PARENT_MIN_MODEL       默认: auto
+CODEX_FLOW_PARENT_MIN_EFFORT      默认: high
+CODEX_FLOW_WORKER_MODEL_POLICY    默认: latest-efficient
+CODEX_FLOW_WORKER_MODEL           默认: auto
+CODEX_FLOW_WORKER_MIN_EFFORT      默认: high
+CODEX_FLOW_MAX_THREADS            默认: 4
+CODEX_FLOW_MAX_REPAIR_CYCLES      默认: 2
+CODEX_FLOW_BIN_DIR                默认: ~/.local/bin
 ```
 
 ## CI
 
-Normal CI never invokes a paid model. It validates shell/Python/PowerShell syntax, model recommendation fixtures, quality-first benchmark analysis, report rendering, runner isolation/repair/token aggregation and infrastructure fail-fast behavior, deterministic corpus generation, routing-override skill installation, and installer/update flows.
+普通 CI **不会调用真实付费模型**。目前主要验证：
 
-## Status
+- Shell / Python / PowerShell 语法
+- 模型推荐 fixture
+- quality-first Benchmark 分析
+- 报告生成
+- runner 隔离、repair、token 聚合与基础设施 fail-fast
+- 确定性 corpus 生成
+- `direct` / `delegate` / `adaptive` 显式路由规则是否正确安装
+- Unix / Windows 安装与更新流程
 
-Private preview, version 0.8.1. Local authenticated benchmarking is the primary real-data path. Per-task `direct`, `delegate`, and `adaptive` routing overrides are explicit and non-persistent. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution is always explicit; explicit user pins remain authoritative.
+## 当前状态
+
+Private preview，版本 `0.8.1`。
+
+本地认证 Benchmark 是默认真实数据采集路径；`direct`、`delegate`、`adaptive` 是显式且非持久的当前任务覆盖；模型推荐变更需要 review；Benchmark routing 保持 advisory；真实 Benchmark 必须由用户明确触发；用户明确 pin 的配置始终拥有最高持久配置优先级。
