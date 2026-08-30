@@ -8,6 +8,9 @@ POLICY="$CODEX_HOME/codex-flow.toml"
 DEFAULTS="$ROOT_DIR/policy/defaults.toml"
 STATE_DIR="$CODEX_HOME/codex-flow"
 BIN_DIR="${CODEX_FLOW_BIN_DIR:-$HOME/.local/bin}"
+SHELL_VALUE="${CODEX_FLOW_SHELL:-${SHELL:-}}"
+SHELL_NAME="${SHELL_VALUE##*/}"
+SHELL_CONFIG_DIR="${CODEX_FLOW_SHELL_CONFIG_DIR:-$HOME}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 VERSION="$(cat "$ROOT_DIR/VERSION" 2>/dev/null || echo dev)"
 
@@ -16,18 +19,46 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+# Read the scalar values used by codex-flow without requiring Python 3.11's
+# tomllib (or a separately installed tomli package).
+read_toml_value() {
+  local section="$1" key="$2" file="$3"
+  awk -v section="[$section]" -v key="$key" '
+    $0 == section { in_section=1; next }
+    /^\[/ { in_section=0 }
+    in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      value=$0
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (value ~ /^".*"$/) {
+        sub(/^"/, "", value)
+        sub(/"$/, "", value)
+      }
+      print value
+      found=1
+      exit
+    }
+    END { if (!found) exit 1 }
+  ' "$file"
+}
+
+read_default() {
+  local section="$1" key="$2" value
+  if ! value="$(read_toml_value "$section" "$key" "$DEFAULTS")" || [[ -z "$value" ]]; then
+    printf 'missing [%s].%s in %s\n' "$section" "$key" "$DEFAULTS" >&2
+    exit 1
+  fi
+  printf '%s\n' "$value"
+}
+
 # Read release-time recommendations. The workflow itself never depends on these
 # exact slugs; `auto` resolves to the current recommendation shipped by codex-flow.
-eval "$(python3 - "$DEFAULTS" <<'PY'
-import sys, tomllib
-p = tomllib.load(open(sys.argv[1], 'rb'))
-print(f'DEFAULT_WORKER_MODEL={p["models"]["worker_model"]!r}')
-print(f'DEFAULT_PARENT_POLICY={p["models"]["parent_policy"]!r}')
-print(f'DEFAULT_PARENT_MIN_MODEL={p["models"]["parent_min_model"]!r}')
-print(f'DEFAULT_MAX_THREADS={str(p["runtime"]["max_concurrent_threads"])!r}')
-print(f'DEFAULT_MAX_REPAIRS={str(p["runtime"]["max_repair_cycles"])!r}')
-PY
-)"
+DEFAULT_WORKER_MODEL="$(read_default models worker_model)"
+DEFAULT_PARENT_POLICY="$(read_default models parent_policy)"
+DEFAULT_PARENT_MIN_MODEL="$(read_default models parent_min_model)"
+DEFAULT_MAX_THREADS="$(read_default runtime max_concurrent_threads)"
+DEFAULT_MAX_REPAIRS="$(read_default runtime max_repair_cycles)"
 
 PARENT_MODEL_POLICY="${CODEX_FLOW_PARENT_MODEL_POLICY:-$DEFAULT_PARENT_POLICY}"
 PARENT_MIN_MODEL="${CODEX_FLOW_PARENT_MIN_MODEL:-$DEFAULT_PARENT_MIN_MODEL}"
@@ -124,6 +155,20 @@ printf '%s\n' "$VERSION" > "$STATE_DIR/version"
 cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"
 chmod +x "$BIN_DIR/codex-flow"
 
+# Keep shell integration self-contained in the managed state directory. The
+# rc files only source init.sh, so changing or removing the checkout cannot
+# leave a shell pointing at a stale completion file.
+if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
+  mkdir -p "$STATE_DIR/shell"
+  cp "$ROOT_DIR/scripts/manage-shell.py" "$STATE_DIR/shell/manage-shell.py"
+  cp "$ROOT_DIR/completions/codex-flow.$SHELL_NAME" "$STATE_DIR/shell/codex-flow.$SHELL_NAME"
+  python3 "$STATE_DIR/shell/manage-shell.py" install \
+    --state-dir "$STATE_DIR" \
+    --shell "$SHELL_NAME" \
+    --config-dir "$SHELL_CONFIG_DIR" \
+    --bin-dir "$BIN_DIR"
+fi
+
 cat <<EOF
 codex-flow $VERSION installed.
 
@@ -137,7 +182,11 @@ Adaptive effort: high baseline -> xhigh for complex work -> max only for critica
 Restart Codex, then use it normally.
 EOF
 
-case ":${PATH}:" in
-  *":$BIN_DIR:"*) printf 'Run: codex-flow status\n' ;;
-  *) printf 'Add %s to PATH to use: codex-flow status\n' "$BIN_DIR" ;;
-esac
+if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
+  printf 'shell: %s (managed rc under %s; open a new terminal to use it)\n' "$SHELL_NAME" "$SHELL_CONFIG_DIR"
+else
+  case ":${PATH}:" in
+    *":$BIN_DIR:"*) printf 'Run: codex-flow status\n' ;;
+    *) printf 'Add %s to PATH to use: codex-flow status\n' "$BIN_DIR" ;;
+  esac
+fi

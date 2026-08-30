@@ -16,19 +16,22 @@ source_dir() {
 }
 read_policy_value() {
   local section="$1" key="$2" file="$3"
-  python3 - "$section" "$key" "$file" <<'PY'
-import sys
-from pathlib import Path
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-section, key, file = sys.argv[1:]
-with Path(file).open('rb') as fh:
-    data = tomllib.load(fh)
-value = data.get(section, {}).get(key, '')
-print(value)
-PY
+  awk -v section="[$section]" -v key="$key" '
+    $0 == section { in_section=1; next }
+    /^\[/ { in_section=0 }
+    in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      value=$0
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (value ~ /^".*"$/) {
+        sub(/^"/, "", value)
+        sub(/"$/, "", value)
+      }
+      print value
+      exit
+    }
+  ' "$file"
 }
 
 cmd="${1:-help}"

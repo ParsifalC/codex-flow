@@ -76,7 +76,9 @@ cd codex-flow
 .\install.ps1
 ```
 
-管理命令默认安装到 `~/.local/bin`。安装后重启 Codex，之后正常使用 Codex 即可，不需要每次手动调用特殊命令或 Prompt。
+管理命令默认安装到 `~/.local/bin`。如果当前默认 shell 是 Bash 或 zsh，安装器还会向对应的 rc 文件写入一个带明确标记、可重复执行的托管块。该托管块会自动把 CLI 目录加入 `PATH`，并注册 `codex-flow` 子命令补全，包括 `benchmark-local quick|full` 和 `benchmark-corpus quick|full`。安装后打开新终端即可生效；Codex 本身仍需重启，之后正常使用即可，不需要每次手动调用特殊命令或 Prompt。
+
+Shell 选择优先读取 `CODEX_FLOW_SHELL`，否则使用 `SHELL` 的 basename。`CODEX_FLOW_SHELL_CONFIG_DIR` 可将托管的 `.bashrc`、登录 profile 或 `.zshrc` 放到指定配置目录；无法识别 shell 时，安装器仍会输出手动添加 `PATH` 的提示。
 
 ## 常用管理命令
 
@@ -307,6 +309,8 @@ CODEX_FLOW_WORKER_MIN_EFFORT      默认: high
 CODEX_FLOW_MAX_THREADS            默认: 4
 CODEX_FLOW_MAX_REPAIR_CYCLES      默认: 2
 CODEX_FLOW_BIN_DIR                默认: ~/.local/bin
+CODEX_FLOW_SHELL                  默认: SHELL 的 basename（自动配置 Bash/zsh）
+CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME
 ```
 
 ## CI

@@ -13,6 +13,7 @@ jobs:
         run: |
           bash -n install.sh
           bash -n bin/codex-flow
+          bash -n completions/codex-flow.bash
           bash -n scripts/doctor
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
@@ -24,6 +25,7 @@ jobs:
           python3 -m py_compile scripts/analyze-benchmark.py
           python3 -m py_compile scripts/run-benchmark.py
           python3 -m py_compile scripts/materialize-corpus.py
+          python3 -m py_compile scripts/manage-shell.py
           python3 -m py_compile scripts/render-benchmark-report.py
           python3 -m py_compile scripts/benchmark-local.py
       - name: Recommendation policy test

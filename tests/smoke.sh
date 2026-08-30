@@ -7,7 +7,12 @@ trap 'rm -rf "$TMP"' EXIT
 
 export CODEX_HOME="$TMP/.codex"
 export CODEX_FLOW_BIN_DIR="$TMP/bin-installed"
-mkdir -p "$TMP/bin" "$CODEX_HOME" "$CODEX_FLOW_BIN_DIR"
+export CODEX_FLOW_SHELL_CONFIG_DIR="$TMP/shell-config"
+export CODEX_FLOW_SHELL=bash
+mkdir -p "$TMP/bin" "$CODEX_HOME" "$CODEX_FLOW_BIN_DIR" "$CODEX_FLOW_SHELL_CONFIG_DIR"
+
+printf '%s\n' '# bashrc sentinel' > "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
+printf '%s\n' '# profile sentinel' > "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile"
 
 # doctor only needs a version-capable codex binary for this installer smoke test.
 cat > "$TMP/bin/codex" <<'EOF'
@@ -31,6 +36,16 @@ bash "$ROOT_DIR/install.sh"
 [[ -f "$CODEX_HOME/codex-flow/source" ]]
 [[ -f "$CODEX_HOME/codex-flow/version" ]]
 [[ -x "$CODEX_FLOW_BIN_DIR/codex-flow" ]]
+[[ -f "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc" ]]
+[[ -f "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile" ]]
+[[ ! -e "$CODEX_FLOW_SHELL_CONFIG_DIR/.bash_profile" ]]
+[[ "$(grep -cF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc")" == 1 ]]
+[[ "$(grep -cF '# <<< codex-flow <<<' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc")" == 1 ]]
+[[ "$(grep -cF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile")" == 1 ]]
+grep -Fq '# bashrc sentinel' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
+grep -Fq '# profile sentinel' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile"
+grep -Fq "$CODEX_HOME/codex-flow/shell/init.sh" "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
+grep -Fq "codex-flow.bash" "$CODEX_HOME/codex-flow/shell/init.sh"
 [[ -f "$CODEX_HOME/agents/worker-explorer.toml" ]]
 [[ -f "$CODEX_HOME/agents/worker-implementer.toml" ]]
 [[ -f "$CODEX_HOME/skills/cost-aware-development/SKILL.md" ]]
@@ -48,6 +63,43 @@ grep -Fxq "$(cat "$ROOT_DIR/VERSION")" "$CODEX_HOME/codex-flow/version"
 codex-flow status
 codex-flow doctor
 
+# A second install must replace the same managed block, not append another.
+bash "$ROOT_DIR/install.sh"
+[[ "$(grep -cF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc")" == 1 ]]
+[[ "$(grep -cF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile")" == 1 ]]
+[[ ! -e "$CODEX_FLOW_SHELL_CONFIG_DIR/.bash_profile" ]]
+grep -Fq '# bashrc sentinel' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
+grep -Fq '# profile sentinel' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile"
+
+# A fresh bash receives PATH and completion from the managed rc source.
+bash --noprofile --norc -c \
+  'source "$1"; [[ "$PATH" == "$2"* ]]; type -t codex-flow >/dev/null' \
+  _ "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc" "$CODEX_FLOW_BIN_DIR"
+bash --noprofile --norc -c '
+  source "$1"
+  COMP_WORDS=(codex-flow st); COMP_CWORD=1
+  _codex_flow_completion
+  [[ "${COMPREPLY[*]}" == status ]]
+  COMP_WORDS=(codex-flow benchmark-corpus f); COMP_CWORD=2
+  _codex_flow_completion
+  [[ "${COMPREPLY[*]}" == full ]]
+  COMP_WORDS=(codex-flow benchmark-local q); COMP_CWORD=2
+  _codex_flow_completion
+  [[ "${COMPREPLY[*]}" == quick ]]
+' _ "$CODEX_HOME/codex-flow/shell/codex-flow.bash"
+
+# Switching shells removes the old managed paths and registers zsh completion.
+CODEX_FLOW_SHELL=zsh bash "$ROOT_DIR/install.sh"
+[[ "$(grep -cF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.zshrc")" == 1 ]]
+grep -Fq "codex-flow.zsh" "$CODEX_HOME/codex-flow/shell/init.sh"
+if command -v zsh >/dev/null 2>&1; then
+  zsh -fc \
+    'autoload -Uz compinit; compinit -d "$3"; source "$1"; [[ "${_comps[codex-flow]}" == _codex_flow ]]' \
+    _ "$CODEX_HOME/codex-flow/shell/init.sh" unused "$TMP/zcompdump"
+else
+  grep -Fq 'compdef _codex_flow codex-flow' "$CODEX_HOME/codex-flow/shell/codex-flow.zsh"
+fi
+
 # Explicit overrides must become both policy and concrete Codex fallback.
 CODEX_FLOW_WORKER_MODEL=gpt-test-worker \
 CODEX_FLOW_WORKER_MIN_EFFORT=xhigh \
@@ -59,13 +111,18 @@ grep -Fq 'default_subagent_reasoning_effort = "xhigh"' "$CODEX_HOME/config.toml"
 grep -Fq 'resolved_model = "gpt-test-worker"' "$CODEX_HOME/codex-flow.toml"
 codex-flow doctor
 
-codex-flow uninstall
+env -u CODEX_FLOW_BIN_DIR codex-flow uninstall
 [[ ! -e "$CODEX_HOME/codex-flow.toml" ]]
 [[ ! -e "$CODEX_HOME/codex-flow" ]]
 [[ ! -e "$CODEX_FLOW_BIN_DIR/codex-flow" ]]
 [[ ! -e "$CODEX_HOME/agents/worker-explorer.toml" ]]
 [[ ! -e "$CODEX_HOME/agents/worker-implementer.toml" ]]
 [[ ! -e "$CODEX_HOME/skills/cost-aware-development" ]]
+! grep -qF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
+! grep -qF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile"
+! grep -qF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.zshrc"
+grep -Fq '# bashrc sentinel' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
+grep -Fq '# profile sentinel' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile"
 grep -Fq 'model = "user-parent-model"' "$CODEX_HOME/config.toml"
 grep -Fq 'keep_me = true' "$CODEX_HOME/config.toml"
 ! grep -q '^default_subagent_model' "$CODEX_HOME/config.toml"

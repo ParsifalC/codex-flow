@@ -66,7 +66,17 @@ cd codex-flow
 .\install.ps1
 ```
 
-The management command is installed under `~/.local/bin`. Restart Codex after installation, then use Codex normally.
+The management command is installed under `~/.local/bin`. When the default
+shell is Bash or zsh, installation also adds one marked, idempotent block to
+the corresponding shell rc file. That block adds the CLI directory to `PATH`
+and registers `codex-flow` subcommand completion, including
+`benchmark-local quick|full` and `benchmark-corpus quick|full`. Open a new
+terminal after installation. Restart Codex, then use Codex normally.
+
+Shell selection follows `CODEX_FLOW_SHELL` when set, otherwise the basename of
+`SHELL`. Use `CODEX_FLOW_SHELL_CONFIG_DIR` to place the managed `.bashrc`,
+login profile, or `.zshrc` in a test/configuration directory. An unrecognized
+shell keeps the manual `PATH` instruction.
 
 ## Daily management
 
@@ -210,6 +220,8 @@ CODEX_FLOW_WORKER_MIN_EFFORT      default: high
 CODEX_FLOW_MAX_THREADS            default: 4
 CODEX_FLOW_MAX_REPAIR_CYCLES      default: 2
 CODEX_FLOW_BIN_DIR                default: ~/.local/bin
+CODEX_FLOW_SHELL                  default: basename of SHELL (Bash/zsh auto-configured)
+CODEX_FLOW_SHELL_CONFIG_DIR       default: HOME
 ```
 
 ## CI

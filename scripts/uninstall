@@ -4,13 +4,25 @@ set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG="$CODEX_HOME/config.toml"
 BIN_DIR="${CODEX_FLOW_BIN_DIR:-$HOME/.local/bin}"
+STATE_DIR="$CODEX_HOME/codex-flow"
+
+# Prefer the path captured at install time so uninstall remains exact even if
+# CODEX_FLOW_BIN_DIR is not exported in the current shell.
+if [[ -f "$STATE_DIR/shell/bin_dir" ]]; then
+  BIN_DIR="$(cat "$STATE_DIR/shell/bin_dir")"
+fi
+
+SHELL_HELPER="$STATE_DIR/shell/manage-shell.py"
+if [[ -f "$SHELL_HELPER" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 "$SHELL_HELPER" uninstall --state-dir "$STATE_DIR"
+fi
 
 rm -f "$CODEX_HOME/agents/worker-explorer.toml"
 rm -f "$CODEX_HOME/agents/worker-implementer.toml"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml"
 rm -f "$CODEX_HOME/agents/luna-implementer.toml"
 rm -f "$CODEX_HOME/codex-flow.toml"
-rm -rf "$CODEX_HOME/codex-flow"
+rm -rf "$STATE_DIR"
 rm -rf "$CODEX_HOME/skills/cost-aware-development"
 rm -f "$BIN_DIR/codex-flow"
 

@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse, json, sys, tomllib
+import argparse, json, sys
 from collections import defaultdict
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 EFFORT_RANK = {"high": 0, "xhigh": 1, "max": 2}
 TASK_CLASSES = {"routine", "complex", "critical"}
