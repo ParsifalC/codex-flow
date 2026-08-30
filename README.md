@@ -17,6 +17,35 @@ CRITICAL   -> quality-first escalation; xhigh/max only when justified
 
 A parent qualifies by policy, not by name. Defaults prefer the latest available high-capability model, require parent reasoning `>= high`, keep the exact model floor configurable, and choose the worker independently. `gpt-5.6-sol/xhigh` is therefore a valid example, not a requirement.
 
+## Per-task routing override
+
+Users can explicitly override subagent routing for the current task without changing persistent configuration.
+
+```text
+direct     -> do not use subagents for this task
+delegate   -> explicitly prefer subagent execution for this task
+adaptive   -> use normal codex-flow routing for this task
+```
+
+Natural-language equivalents are supported when the intent is unambiguous, for example:
+
+```text
+不要使用子 agent，直接完成
+这次直接做
+跳过 worker
+不用 delegation
+
+使用子 agent
+这次交给 worker 实现
+
+按默认策略
+自动决定是否使用子 agent
+```
+
+A current-task routing instruction takes priority over codex-flow defaults and persistent routing policy, but applies only to that task and is never written back to user configuration. If multiple routing instructions conflict in the same task, the latest unambiguous instruction wins.
+
+`direct` disables delegation only. Classification, adaptive reasoning effort, validation, acceptance criteria, bounded repair, and review still apply. The workflow becomes `parent -> implementation -> self-review` instead of `parent -> worker -> parent review`.
+
 ## Install
 
 ### macOS / Linux
@@ -220,8 +249,8 @@ CODEX_FLOW_BIN_DIR                default: ~/.local/bin
 
 ## CI
 
-Normal CI never invokes a paid model. It validates shell/Python/PowerShell syntax, model recommendation fixtures, quality-first benchmark analysis, report rendering, runner isolation/repair/token aggregation and infrastructure fail-fast behavior, deterministic corpus generation, and installer/update flows.
+Normal CI never invokes a paid model. It validates shell/Python/PowerShell syntax, model recommendation fixtures, quality-first benchmark analysis, report rendering, runner isolation/repair/token aggregation and infrastructure fail-fast behavior, deterministic corpus generation, routing-override skill installation, and installer/update flows.
 
 ## Status
 
-Private preview, version 0.8.0. Local authenticated benchmarking is the primary real-data path. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution is always explicit; explicit user pins remain authoritative.
+Private preview, version 0.8.1. Local authenticated benchmarking is the primary real-data path. Per-task `direct`, `delegate`, and `adaptive` routing overrides are explicit and non-persistent. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution is always explicit; explicit user pins remain authoritative.
