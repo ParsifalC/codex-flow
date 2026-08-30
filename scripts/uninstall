@@ -4,8 +4,11 @@ set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG="$CODEX_HOME/config.toml"
 
+rm -f "$CODEX_HOME/agents/worker-explorer.toml"
+rm -f "$CODEX_HOME/agents/worker-implementer.toml"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml"
 rm -f "$CODEX_HOME/agents/luna-implementer.toml"
+rm -f "$CODEX_HOME/codex-flow.toml"
 rm -rf "$CODEX_HOME/skills/cost-aware-development"
 
 if [[ -f "$CONFIG" ]] && command -v python3 >/dev/null 2>&1; then
@@ -43,4 +46,4 @@ if m:
 PY
 fi
 
-printf 'codex-flow files removed. Existing backups were preserved.\n'
+printf 'codex-flow files and policy removed. Existing backups were preserved.\n'
