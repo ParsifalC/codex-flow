@@ -19,10 +19,12 @@ jobs:
           bash -n tests/benchmark.sh
           bash -n tests/runner.sh
           bash -n tests/corpus.sh
+          bash -n tests/report.sh
           python3 -m py_compile scripts/check-recommendation.py
           python3 -m py_compile scripts/analyze-benchmark.py
           python3 -m py_compile scripts/run-benchmark.py
           python3 -m py_compile scripts/materialize-corpus.py
+          python3 -m py_compile scripts/render-benchmark-report.py
       - name: Recommendation policy test
         run: |
           python3 scripts/check-recommendation.py \
@@ -45,6 +47,8 @@ jobs:
         run: bash tests/runner.sh
       - name: Benchmark corpus test
         run: bash tests/corpus.sh
+      - name: Benchmark report test
+        run: bash tests/report.sh
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
 
