@@ -6,7 +6,10 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG="$CODEX_HOME/config.toml"
 POLICY="$CODEX_HOME/codex-flow.toml"
 DEFAULTS="$ROOT_DIR/policy/defaults.toml"
+STATE_DIR="$CODEX_HOME/codex-flow"
+BIN_DIR="${CODEX_FLOW_BIN_DIR:-$HOME/.local/bin}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+VERSION="$(cat "$ROOT_DIR/VERSION" 2>/dev/null || echo dev)"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required" >&2
@@ -40,7 +43,7 @@ MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$DEFAULT_MAX_REPAIRS}"
 case "$PARENT_MIN_EFFORT" in high|xhigh|max) ;; *) echo "parent minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
 case "$WORKER_MIN_EFFORT" in high|xhigh|max) ;; *) echo "worker minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
 
-mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/cost-aware-development"
+mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/cost-aware-development" "$STATE_DIR" "$BIN_DIR"
 
 if [[ -f "$CONFIG" ]]; then
   cp "$CONFIG" "$CONFIG.codex-flow.$STAMP.bak"
@@ -114,15 +117,27 @@ cp "$ROOT_DIR/templates/agents/worker-implementer.toml" "$CODEX_HOME/agents/work
 cp "$ROOT_DIR/templates/skills/cost-aware-development/SKILL.md" "$CODEX_HOME/skills/cost-aware-development/SKILL.md"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 
+# Install lightweight management metadata and CLI. The checkout remains the
+# update source so private-repository authentication continues to use normal git.
+printf '%s\n' "$ROOT_DIR" > "$STATE_DIR/source"
+printf '%s\n' "$VERSION" > "$STATE_DIR/version"
+cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"
+chmod +x "$BIN_DIR/codex-flow"
+
 cat <<EOF
-codex-flow installed.
+codex-flow $VERSION installed.
 
   config: $CONFIG
   policy: $POLICY
+  cli:    $BIN_DIR/codex-flow
   parent: $PARENT_MODEL_POLICY / min=$PARENT_MIN_MODEL / reasoning >= $PARENT_MIN_EFFORT
   worker: $WORKER_MODEL_POLICY / requested=$WORKER_MODEL_REQUESTED / resolved=$WORKER_MODEL / reasoning >= $WORKER_MIN_EFFORT
 
 Adaptive effort: high baseline -> xhigh for complex work -> max only for critical quality-first work.
 Restart Codex, then use it normally.
-Run: bash $ROOT_DIR/scripts/doctor
 EOF
+
+case ":${PATH}:" in
+  *":$BIN_DIR:"*) printf 'Run: codex-flow status\n' ;;
+  *) printf 'Add %s to PATH to use: codex-flow status\n' "$BIN_DIR" ;;
+esac
