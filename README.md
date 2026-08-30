@@ -107,24 +107,13 @@ The active parent remains policy-driven; recommendation metadata never hard-pins
 
 ## Built-in benchmark corpus
 
-v0.6 adds a deterministic six-task corpus so the routing policy can be calibrated from measured engineering outcomes rather than price alone.
+The deterministic six-task corpus calibrates routing from measured engineering outcomes rather than price alone. It covers localized bug fixing, configuration precedence, multi-file compatibility refactoring, configuration migration, bounded retry semantics, and crash-safe state persistence.
 
-The corpus covers:
-
-- localized query-normalization bug fixing
-- configuration precedence edge cases
-- multi-file provider refactoring with legacy API compatibility
-- backward-compatible configuration migration
-- bounded retry/error semantics
-- crash-safe atomic state persistence
-
-Generate the built-in corpus without calling any model:
+Generate it without calling any model:
 
 ```bash
 codex-flow benchmark-corpus quick
 ```
-
-It creates `.codex-flow-benchmark/manifest.json` plus six independent frozen Git repositories and prints the planned run count. **No model is invoked by this command.**
 
 Profiles:
 
@@ -144,13 +133,9 @@ full
   Sol/high
 ```
 
-The full profile can consume substantial model tokens and is never launched automatically. Running it always requires an explicit `codex-flow benchmark` command.
+Materialization never invokes a model. Every task gets a deterministic seed commit and an external verifier outside the writable task repository. The full profile can consume substantial tokens and is never launched automatically.
 
-Each task materializes to a deterministic seed commit. Its verifier is stored outside the writable task repository, preventing a worker from passing by editing acceptance logic. CI proves that every seed initially fails its verifier and that repeated materialization yields the same commit SHAs.
-
-## Run and analyze a benchmark
-
-After materializing a profile:
+## Run and analyze locally
 
 ```bash
 codex-flow benchmark \
@@ -171,9 +156,34 @@ codex-flow benchmark-analyze \
 
 The analyzer applies quality gates before cost comparison. A cheaper configuration that misses pass-rate or repair thresholds cannot win. Benchmark conclusions remain advisory; `policy/benchmark.toml` keeps `auto_apply = false`.
 
-Current measurement boundaries are explicit: Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits.
+## Guarded paid benchmark on GitHub Actions
 
-Full details: `docs/benchmark.md`.
+v0.7 adds `.github/workflows/benchmark-quick.yml` for the first real 18-run data collection without turning paid benchmarking into an automatic CI behavior.
+
+The workflow is **manual `workflow_dispatch` only**. It has no `push`, `pull_request`, or schedule trigger. Before any Codex model execution it requires:
+
+```text
+Repository secret: OPENAI_API_KEY
+Confirmation:      RUN QUICK 18
+```
+
+It exposes only the quick profile; the 90-run full profile is deliberately not available as an Actions button. The Codex npm version can be pinned per run, and both requested and actual CLI versions are stored with the artifact.
+
+The runner uses `--fail-fast-infrastructure`: a non-zero Codex exit with zero reported usage (for example authentication/CLI/model availability failure) stops the remaining batch instead of repeating the same infrastructure error 18 times.
+
+At the end of the job, available files are uploaded as a 30-day artifact, including raw JSONL, manifest, immutable prices, analysis JSON, readable Markdown report, Codex CLI version, and codex-flow commit. Partial/failing runs keep the evidence generated before failure.
+
+The Markdown report includes overall pass rate, infrastructure failures, repairs, token totals, estimated cost, per-model/effort results, and advisory task-class routing. If results exist, the same report is rendered into the GitHub Actions job summary.
+
+Full setup and safety notes: `docs/benchmark-actions.md`.
+
+## Measurement boundaries
+
+Current Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits.
+
+The GitHub workflow authenticates through `OPENAI_API_KEY`; it does not commit credentials or synthesize an interactive login. Benchmark results record the Codex CLI version because harness changes are another experimental variable.
+
+Full benchmark methodology: `docs/benchmark.md`.
 
 ## Install-time overrides
 
@@ -198,12 +208,13 @@ codex-flow deliberately uses several layers rather than depending on one unstabl
 3. Codex `[agents]` — stable worker fallback.
 4. Skill + generic worker roles — classification, delegation, adaptive escalation, review, bounded repairs.
 5. Recommendation automation — official-source model/price maintenance through PRs.
-6. Benchmark corpus + runner + analyzer — advisory evidence for future routing calibration.
+6. Benchmark corpus + runner + analyzer — advisory evidence for routing calibration.
+7. Guarded manual Actions workflow — reproducible quick data collection without automatic paid execution.
 
 ## CI
 
-The repository validates shell/Python/PowerShell syntax, deterministic model recommendation fixtures, quality-first benchmark analysis, runner isolation/repair/token aggregation and infrastructure fail-closed behavior, deterministic corpus generation and seed verifier failure, Unix install/update flows, and Windows install/status/doctor/uninstall behavior.
+Normal CI never invokes a paid model. It validates shell/Python/PowerShell syntax, deterministic model recommendation fixtures, quality-first benchmark analysis, report rendering, runner isolation/repair/token aggregation and infrastructure fail-fast behavior, deterministic corpus generation and seed verifier failure, Unix install/update flows, and Windows install/status/doctor/uninstall behavior.
 
 ## Status
 
-Private preview, version 0.6.0. Model recommendation changes remain reviewable; benchmark routing remains advisory; benchmark execution is always explicit; installed users change behavior only through explicit update/install actions and explicit pins remain authoritative.
+Private preview, version 0.7.0. Model recommendation changes remain reviewable; benchmark routing remains advisory; paid benchmark execution is always explicit; installed users change behavior only through explicit update/install actions and explicit pins remain authoritative.
