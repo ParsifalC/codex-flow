@@ -9,9 +9,11 @@ FAILED=0
 ok() { printf '✓ %s\n' "$1"; }
 warn() { printf '! %s\n' "$1"; }
 fail() { printf '✗ %s\n' "$1"; FAILED=1; }
+value() { local key="$1" section="$2"; awk -v sec="[$section]" -v key="$key" '
+  $0==sec {insec=1; next} /^\[/ {insec=0} insec && $0 ~ "^" key "[[:space:]]*=" {sub(/^[^=]*=[[:space:]]*/, ""); gsub(/^\"|\"$/, ""); print; exit}
+' "$POLICY"; }
 
 printf 'codex-flow doctor\n\n'
-
 if command -v codex >/dev/null 2>&1; then
   VERSION="$(codex --version 2>/dev/null || true)"
   ok "Codex CLI found${VERSION:+: $VERSION}"
@@ -26,31 +28,39 @@ fi
 [[ -f "$CODEX_HOME/skills/cost-aware-development/SKILL.md" ]] && ok "cost-aware-development skill installed" || fail "cost-aware-development skill missing"
 
 if [[ -f "$POLICY" ]]; then
-  MIN_EFFORT="$(grep -E '^min_reasoning_effort\s*=' "$POLICY" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')"
-  MODEL_POLICY="$(grep -E '^model_policy\s*=' "$POLICY" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')"
-  WORKER_MODEL="$(grep -E '^model\s*=' "$POLICY" | tail -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')"
-  WORKER_EFFORT="$(grep -E '^reasoning_effort\s*=' "$POLICY" | tail -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')"
+  SCHEMA="$(grep -E '^schema_version\s*=' "$POLICY" | head -1 | sed -E 's/.*=\s*//')"
+  PARENT_POLICY="$(value model_policy parent)"
+  PARENT_MIN_MODEL="$(value min_model parent)"
+  PARENT_MIN_EFFORT="$(value min_reasoning_effort parent)"
+  PARENT_REASONING="$(value reasoning_policy parent)"
+  WORKER_POLICY="$(value model_policy worker)"
+  WORKER_REQUESTED="$(value model worker)"
+  WORKER_MODEL="$(value resolved_model worker)"
+  WORKER_MIN_EFFORT="$(value min_reasoning_effort worker)"
+  WORKER_REASONING="$(value reasoning_policy worker)"
 
-  case "$MIN_EFFORT" in
-    high|xhigh|max) ok "parent minimum reasoning is $MIN_EFFORT" ;;
-    *) warn "parent minimum reasoning is '$MIN_EFFORT'; high or above is recommended" ;;
-  esac
-  ok "parent model policy: ${MODEL_POLICY:-unknown}"
-  ok "worker policy: ${WORKER_MODEL:-unknown} / ${WORKER_EFFORT:-unknown}"
+  [[ "$SCHEMA" == "2" ]] && ok "policy schema v2" || warn "policy schema is ${SCHEMA:-unknown}; reinstall recommended"
+  case "$PARENT_MIN_EFFORT" in high|xhigh|max) ok "parent minimum reasoning: $PARENT_MIN_EFFORT" ;; *) fail "parent minimum reasoning must be high or above" ;; esac
+  case "$WORKER_MIN_EFFORT" in high|xhigh|max) ok "worker minimum reasoning: $WORKER_MIN_EFFORT" ;; *) fail "worker minimum reasoning must be high or above" ;; esac
+  [[ "$PARENT_REASONING" == "adaptive" ]] && ok "parent reasoning policy: adaptive" || warn "parent reasoning policy: ${PARENT_REASONING:-unknown}"
+  [[ "$WORKER_REASONING" == "adaptive" ]] && ok "worker reasoning policy: adaptive" || warn "worker reasoning policy: ${WORKER_REASONING:-unknown}"
+  ok "parent model policy: ${PARENT_POLICY:-unknown} (floor: ${PARENT_MIN_MODEL:-unknown})"
+  ok "worker model policy: ${WORKER_POLICY:-unknown} (requested: ${WORKER_REQUESTED:-unknown}, resolved: ${WORKER_MODEL:-unknown})"
 fi
 
-if [[ -f "$CONFIG" && -f "$POLICY" ]]; then
+if [[ -f "$CONFIG" && -n "${WORKER_MODEL:-}" ]]; then
   grep -Fq "default_subagent_model = \"${WORKER_MODEL}\"" "$CONFIG" \
-    && ok "Codex subagent model matches policy" \
-    || fail "Codex default_subagent_model does not match policy"
-  grep -Fq "default_subagent_reasoning_effort = \"${WORKER_EFFORT}\"" "$CONFIG" \
-    && ok "Codex subagent reasoning matches policy" \
-    || fail "Codex default_subagent_reasoning_effort does not match policy"
+    && ok "Codex worker baseline model matches resolved policy" \
+    || fail "Codex default_subagent_model does not match resolved policy"
+  grep -Fq "default_subagent_reasoning_effort = \"${WORKER_MIN_EFFORT}\"" "$CONFIG" \
+    && ok "Codex worker baseline effort matches policy floor" \
+    || fail "Codex default_subagent_reasoning_effort does not match worker floor"
 fi
 
 printf '\n'
 if [[ "$FAILED" -eq 0 ]]; then
-  printf 'Installation looks ready. Parent eligibility is policy-based, not tied to a fixed model slug.\n'
+  printf 'Ready. Routing is capability-based with adaptive effort and a stable worker fallback.\n'
+  printf 'Note: per-spawn model/effort overrides depend on the active Codex build; the installed baseline remains valid when overrides are unavailable.\n'
   exit 0
 fi
 
