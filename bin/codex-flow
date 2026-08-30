@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+STATE_DIR="$CODEX_HOME/codex-flow"
+SOURCE_FILE="$STATE_DIR/source"
+POLICY="$CODEX_HOME/codex-flow.toml"
+
+fail() { printf 'codex-flow: %s\n' "$*" >&2; exit 1; }
+source_dir() {
+  [[ -f "$SOURCE_FILE" ]] || fail "missing source metadata; reinstall codex-flow"
+  local dir
+  dir="$(cat "$SOURCE_FILE")"
+  [[ -d "$dir" ]] || fail "source checkout no longer exists: $dir"
+  printf '%s\n' "$dir"
+}
+read_policy_value() {
+  local section="$1" key="$2" file="$3"
+  python3 - "$section" "$key" "$file" <<'PY'
+import sys
+from pathlib import Path
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+section, key, file = sys.argv[1:]
+with Path(file).open('rb') as fh:
+    data = tomllib.load(fh)
+value = data.get(section, {}).get(key, '')
+print(value)
+PY
+}
+
+cmd="${1:-help}"
+case "$cmd" in
+  status)
+    src="$(source_dir)"
+    installed="$(cat "$STATE_DIR/version" 2>/dev/null || echo unknown)"
+    available="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
+    printf 'codex-flow\n'
+    printf '  installed: %s\n' "$installed"
+    printf '  checkout:  %s\n' "$src"
+    printf '  checkout version: %s\n' "$available"
+    if [[ -f "$POLICY" ]]; then
+      printf '  policy:    %s\n' "$POLICY"
+      printf '  parent:    %s / min effort %s\n' \
+        "$(read_policy_value parent model_policy "$POLICY")" \
+        "$(read_policy_value parent min_reasoning_effort "$POLICY")"
+      printf '  worker:    %s / %s\n' \
+        "$(read_policy_value worker resolved_model "$POLICY")" \
+        "$(read_policy_value worker min_reasoning_effort "$POLICY")"
+    fi
+    ;;
+  doctor)
+    exec bash "$(source_dir)/scripts/doctor"
+    ;;
+  uninstall)
+    exec bash "$(source_dir)/scripts/uninstall"
+    ;;
+  update)
+    src="$(source_dir)"
+    [[ -d "$src/.git" ]] || fail "update requires the original git checkout"
+    command -v git >/dev/null 2>&1 || fail "git is required for update"
+    [[ -f "$POLICY" ]] || fail "missing policy; reinstall codex-flow"
+
+    parent_policy="$(read_policy_value parent model_policy "$POLICY")"
+    parent_model="$(read_policy_value parent min_model "$POLICY")"
+    parent_effort="$(read_policy_value parent min_reasoning_effort "$POLICY")"
+    worker_policy="$(read_policy_value worker model_policy "$POLICY")"
+    worker_model="$(read_policy_value worker model "$POLICY")"
+    worker_effort="$(read_policy_value worker min_reasoning_effort "$POLICY")"
+    max_threads="$(read_policy_value runtime max_concurrent_threads "$POLICY")"
+    repair_cycles="$(read_policy_value runtime max_repair_cycles "$POLICY")"
+
+    before="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
+    git -C "$src" pull --ff-only
+    after="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
+
+    CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" \
+    CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" \
+    CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \
+    CODEX_FLOW_WORKER_MODEL_POLICY="$worker_policy" \
+    CODEX_FLOW_WORKER_MODEL="$worker_model" \
+    CODEX_FLOW_WORKER_MIN_EFFORT="$worker_effort" \
+    CODEX_FLOW_MAX_THREADS="$max_threads" \
+    CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" \
+      bash "$src/install.sh"
+
+    printf '\nupdated %s -> %s\n' "$before" "$after"
+    bash "$src/scripts/doctor"
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+codex-flow <command>
+
+Commands:
+  status      Show installed version and effective policy
+  update      Pull the checkout, preserve explicit policy, refresh auto recommendations
+  doctor      Verify installation and routing configuration
+  uninstall   Remove codex-flow-managed files
+EOF
+    ;;
+  *) fail "unknown command: $cmd" ;;
+esac
