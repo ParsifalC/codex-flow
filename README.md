@@ -30,13 +30,13 @@ Because this repository is private, clone it first:
 ```bash
 git clone git@github.com:ParsifalC/codex-flow.git
 cd codex-flow
-./install.sh
+bash install.sh
 ```
 
 ### Windows PowerShell
 
 ```powershell
-./install.ps1
+.\install.ps1
 ```
 
 Restart Codex after installation.
@@ -83,7 +83,7 @@ Why not force the parent model? People often maintain their own Codex model/prof
 ## Verify
 
 ```bash
-./scripts/doctor
+bash scripts/doctor
 ```
 
 The doctor checks the Codex CLI, installed files, and effective config hints.
@@ -91,7 +91,7 @@ The doctor checks the Codex CLI, installed files, and effective config hints.
 ## Uninstall
 
 ```bash
-./scripts/uninstall
+bash scripts/uninstall
 ```
 
 The uninstall script removes files owned by codex-flow and leaves unrelated Codex configuration alone.
