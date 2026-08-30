@@ -11,8 +11,9 @@ import html
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 
 MODELS_URL = "https://developers.openai.com/api/docs/models"
@@ -57,8 +58,6 @@ def fetch(url: str) -> str:
 
 
 def visible_text(raw: str) -> str:
-    # The docs are server-rendered today, but this intentionally tolerates
-    # additional markup. Scripts/styles are removed before whitespace folding.
     raw = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", raw)
     raw = re.sub(r"(?s)<[^>]+>", " ", raw)
     return re.sub(r"\s+", " ", html.unescape(raw)).strip()
@@ -85,7 +84,11 @@ def parse_model(model: str, raw: str) -> ModelInfo:
         text,
         re.I,
     )
-    efforts = effort_match.group(1).lower() if effort_match else ""
+    effort_tokens = set(
+        re.findall(r"\b(?:none|low|medium|high|xhigh|max)\b", effort_match.group(1).lower())
+        if effort_match
+        else []
+    )
 
     price_match = re.search(
         r"Text tokens.*?Input\s*\$([0-9]+(?:\.[0-9]+)?)"
@@ -97,8 +100,6 @@ def parse_model(model: str, raw: str) -> ModelInfo:
     if not price_match:
         raise ValueError(f"could not parse token pricing for {model}")
 
-    # A coding worker must expose modern agent/tool surfaces. Either marker is
-    # accepted so minor docs wording changes do not cause false negatives.
     supports_agent_tools = bool(
         re.search(r"\b(?:Apply patch|Hosted shell|Skills)\b", text, re.I)
     )
@@ -111,9 +112,9 @@ def parse_model(model: str, raw: str) -> ModelInfo:
         input_price=float(price_match.group(1)),
         cached_input_price=float(price_match.group(2)),
         output_price=float(price_match.group(3)),
-        supports_high="high" in efforts,
-        supports_xhigh="xhigh" in efforts,
-        supports_max="max" in efforts,
+        supports_high="high" in effort_tokens,
+        supports_xhigh="xhigh" in effort_tokens,
+        supports_max="max" in effort_tokens,
         supports_agent_tools=supports_agent_tools,
     )
 
@@ -160,8 +161,7 @@ def replace_toml_value(text: str, section: str, key: str, value: str) -> str:
 
 def write_defaults(path: Path, parent: ModelInfo, worker: ModelInfo) -> bool:
     original = path.read_text()
-    updated = original
-    updated = replace_toml_value(updated, "models", "parent_recommended_model", parent.model)
+    updated = replace_toml_value(original, "models", "parent_recommended_model", parent.model)
     updated = replace_toml_value(updated, "models", "worker_model", worker.model)
     if updated == original:
         return False
@@ -194,7 +194,7 @@ def main() -> int:
         if not discovered:
             raise ValueError("no Sol/Terra/Luna model ids discovered from official model index")
 
-        parsed = []
+        parsed: list[ModelInfo] = []
         for model in discovered:
             try:
                 parsed.append(parse_model(model, fetch_model(model)))
@@ -212,9 +212,7 @@ def main() -> int:
             "source": MODELS_URL,
         }
 
-        changed = False
-        if args.write:
-            changed = write_defaults(Path(args.defaults), parent, worker)
+        changed = write_defaults(Path(args.defaults), parent, worker) if args.write else False
         result["changed"] = changed
 
         if args.json:
