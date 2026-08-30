@@ -36,6 +36,10 @@ switch ($cmd) {
             Write-Host "  worker:    $(Get-PolicyValue worker resolved_model) / $(Get-PolicyValue worker min_reasoning_effort)"
         }
     }
+    'benchmark-local' {
+        & python3 (Join-Path (Get-SourceDir) 'scripts/benchmark-local.py') @rest
+        exit $LASTEXITCODE
+    }
     'benchmark-corpus' {
         $src = Get-SourceDir
         $profile = if ($rest.Count -gt 0) { $rest[0] } else { 'quick' }
@@ -90,13 +94,14 @@ Commands:
   status              Show installed version and effective policy
   update              Pull the checkout, preserve explicit policy, refresh auto recommendations
   doctor              Verify installation and routing configuration
+  benchmark-local     Run built-in benchmark through the local Codex login session
   benchmark-corpus    Materialize the built-in corpus without calling any model
   benchmark           Run a reproducible Codex benchmark manifest
   benchmark-analyze   Analyze benchmark JSONL with quality-first cost routing
   uninstall           Remove codex-flow-managed files
 
-benchmark-corpus usage:
-  codex-flow benchmark-corpus [quick|full] [output-directory]
+Recommended first real run:
+  codex-flow benchmark-local quick
 '@
     }
 }
