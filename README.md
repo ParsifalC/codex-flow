@@ -152,6 +152,34 @@ CODEX_FLOW_BIN_DIR                default: ~/.local/bin
 
 Teams can therefore pin a minimum generation/model when reproducibility matters, while normal installations stay future-facing.
 
+## Automatic model recommendations
+
+`codex-flow` includes a conservative recommendation bot in `scripts/check-recommendation.py` and `.github/workflows/model-recommendation.yml`.
+
+The scheduled workflow reads only OpenAI's official model documentation. It discovers the newest Sol/Terra/Luna family, verifies that candidate models support `high`, `xhigh`, and `max` reasoning plus modern agent tooling, reads official token prices, and then:
+
+- records the newest qualifying Sol model as `parent_recommended_model` metadata
+- chooses the lowest-cost qualifying Terra/Luna model as the release worker recommendation
+- changes nothing if parsing or capability verification is incomplete
+- opens or refreshes a PR only when `policy/defaults.toml` would actually change
+
+The worker cost ranking uses a transparent heuristic (`70% input price + 30% output price`) only to compare qualifying worker tiers. It is not presented as a user's exact bill estimate.
+
+The parent recommendation is deliberately **metadata only**. It does not set the active parent model and does not weaken the policy rule that any qualifying high-capability parent with reasoning `>= high` may own planning/review.
+
+The worker recommendation affects only installations with:
+
+```toml
+[worker]
+model = "auto"
+```
+
+Explicit model pins remain authoritative across `codex-flow update`.
+
+For deterministic CI, recommendation logic is tested against `tests/fixtures/models.json`; live OpenAI documentation is contacted only by the scheduled/manual recommendation workflow.
+
+Current official GPT-5.6 guidance identifies Sol as flagship, Terra as balanced, and Luna as cost-sensitive/high-volume, with all three supporting `high`, `xhigh`, and `max`. The release recommendation therefore remains Luna until official data indicates a newer qualifying lower-cost worker.
+
 ## What gets installed
 
 ```text
@@ -199,6 +227,7 @@ This deliberately avoids depending on one unstable runtime feature for correctne
 - Prefer the latest suitable generation without permanently encoding its slug into workflow semantics.
 - `high` is the normal floor; `xhigh/max` are earned by complexity or evidence.
 - `auto` follows release recommendations; explicit pins survive updates.
+- Recommendation automation fails closed and changes policy only through reviewable PRs.
 - Children receive compact task packets instead of irrelevant parent history.
 - Parent review checks diff + evidence instead of reimplementing.
 - Read-only exploration may run in parallel; overlapping writable workers should not.
@@ -208,10 +237,11 @@ This deliberately avoids depending on one unstable runtime feature for correctne
 
 The repository validates:
 
-- shell syntax for Unix installer/CLI/scripts
+- shell/Python syntax for Unix installer, CLI, scripts, and recommendation checker
+- deterministic recommendation selection against offline fixtures
 - Unix install -> status/doctor -> override -> uninstall smoke flow
-- PowerShell syntax for the Windows installer/CLI/doctor/uninstall
+- PowerShell syntax plus Windows install/status/doctor/uninstall smoke flow
 
 ## Status
 
-Private preview. The update mechanism is intentionally conservative: recommendation changes are automatic only for `auto` policy fields, while explicit user pins remain authoritative.
+Private preview. Recommendation updates are automatic only for release defaults and only through a reviewable PR. Installed users change behavior only when they run `codex-flow update`; explicit pins remain authoritative.
