@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CONFIG="$CODEX_HOME/config.toml"
+FAILED=0
+
+ok() { printf '✓ %s\n' "$1"; }
+warn() { printf '! %s\n' "$1"; }
+fail() { printf '✗ %s\n' "$1"; FAILED=1; }
+
+printf 'codex-flow doctor\n\n'
+
+if command -v codex >/dev/null 2>&1; then
+  VERSION="$(codex --version 2>/dev/null || true)"
+  ok "Codex CLI found${VERSION:+: $VERSION}"
+else
+  fail "Codex CLI not found in PATH"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  ok "python3 found"
+else
+  warn "python3 not found; the Unix installer requires it"
+fi
+
+[[ -f "$CONFIG" ]] && ok "config.toml found" || fail "missing $CONFIG"
+[[ -f "$CODEX_HOME/agents/luna-explorer.toml" ]] && ok "luna-explorer installed" || fail "luna-explorer missing"
+[[ -f "$CODEX_HOME/agents/luna-implementer.toml" ]] && ok "luna-implementer installed" || fail "luna-implementer missing"
+[[ -f "$CODEX_HOME/skills/cost-aware-development/SKILL.md" ]] && ok "cost-aware-development skill installed" || fail "cost-aware-development skill missing"
+
+if [[ -f "$CONFIG" ]]; then
+  grep -Eq '^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"' "$CONFIG" \
+    && ok "default subagent model is Luna" \
+    || fail "default_subagent_model is not gpt-5.6-luna"
+
+  grep -Eq '^\s*default_subagent_reasoning_effort\s*=\s*"max"' "$CONFIG" \
+    && ok "default subagent reasoning is max" \
+    || fail "default_subagent_reasoning_effort is not max"
+
+  grep -Eq '^\s*max_concurrent_threads_per_session\s*=\s*4' "$CONFIG" \
+    && ok "subagent concurrency is 4" \
+    || warn "subagent concurrency is not the codex-flow default (4)"
+fi
+
+printf '\n'
+if [[ "$FAILED" -eq 0 ]]; then
+  printf 'Installation looks ready. Restart Codex after any config change.\n'
+  printf 'For the full strategy, use gpt-5.6-sol/xhigh as the parent.\n'
+  exit 0
+fi
+
+printf 'One or more required checks failed. Re-run the installer, then restart Codex.\n'
+exit 1
