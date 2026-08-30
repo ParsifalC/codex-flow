@@ -15,7 +15,7 @@ COMPLEX    -> parent plans(high/xhigh) -> worker executes(high/xhigh) -> parent 
 CRITICAL   -> quality-first escalation; xhigh/max only when justified
 ```
 
-A parent qualifies by policy, not by name. The defaults prefer the latest available high-capability model, require parent reasoning `>= high`, keep the exact model floor configurable, and choose the worker independently. `gpt-5.6-sol/xhigh` is therefore a valid example, not a requirement.
+A parent qualifies by policy, not by name. Defaults prefer the latest available high-capability model, require parent reasoning `>= high`, keep the exact model floor configurable, and choose the worker independently. `gpt-5.6-sol/xhigh` is therefore a valid example, not a requirement.
 
 ## Install
 
@@ -43,6 +43,7 @@ The management command is installed under `~/.local/bin`. Restart Codex after in
 codex-flow status
 codex-flow doctor
 codex-flow update
+codex-flow benchmark-corpus quick
 codex-flow benchmark --help
 codex-flow benchmark-analyze --help
 codex-flow uninstall
@@ -100,66 +101,77 @@ The workflow chooses the lowest sufficient qualifying effort:
 
 `scripts/check-recommendation.py` and `.github/workflows/model-recommendation.yml` conservatively inspect OpenAI official model documentation and maintain release recommendations through reviewable PRs.
 
-The automation:
-
-- discovers the newest qualifying Sol/Terra/Luna generation
-- verifies `high`, `xhigh`, and `max` reasoning plus modern agent tooling
-- records the latest qualifying flagship only as `parent_recommended_model` metadata
-- chooses the lowest-cost qualifying Terra/Luna worker recommendation
-- changes nothing when parsing/capability verification is incomplete
-- never overwrites an installed user's explicit model pin
+The automation discovers the newest qualifying Sol/Terra/Luna generation, verifies `high`, `xhigh`, and `max` reasoning plus modern agent tooling, records the latest qualifying flagship only as `parent_recommended_model` metadata, and chooses the lowest-cost qualifying Terra/Luna worker recommendation. It fails closed when parsing/capability verification is incomplete and never overwrites an installed user's explicit pin.
 
 The active parent remains policy-driven; recommendation metadata never hard-pins it.
 
-## Real benchmark runner
+## Built-in benchmark corpus
 
-v0.5 adds a real, reproducible Codex runner so routing can eventually be calibrated from measured task outcomes instead of price alone.
+v0.6 adds a deterministic six-task corpus so the routing policy can be calibrated from measured engineering outcomes rather than price alone.
 
-Create a manifest based on `benchmark/manifest.example.json`, using a frozen repository and preferably a full 40-character commit SHA:
+The corpus covers:
 
-```json
-{
-  "schema_version": 1,
-  "repetitions": 3,
-  "timeout_seconds": 1800,
-  "max_repair_cycles": 2,
-  "matrix": [
-    {"model":"gpt-5.6-luna","reasoning_effort":"high"},
-    {"model":"gpt-5.6-terra","reasoning_effort":"xhigh"}
-  ],
-  "tasks": [{
-    "id":"localized-fix-001",
-    "class":"routine",
-    "source":"/absolute/path/to/frozen-repo",
-    "base_ref":"<full-commit-sha>",
-    "prompt":"Implement the fixed task without modifying the verifier.",
-    "verify":["python3","tests/verify_task.py"]
-  }]
-}
+- localized query-normalization bug fixing
+- configuration precedence edge cases
+- multi-file provider refactoring with legacy API compatibility
+- backward-compatible configuration migration
+- bounded retry/error semantics
+- crash-safe atomic state persistence
+
+Generate the built-in corpus without calling any model:
+
+```bash
+codex-flow benchmark-corpus quick
 ```
 
-Run the matrix:
+It creates `.codex-flow-benchmark/manifest.json` plus six independent frozen Git repositories and prints the planned run count. **No model is invoked by this command.**
+
+Profiles:
+
+```text
+quick
+  6 tasks × 3 configs × 1 repetition = 18 runs
+  Luna/high
+  Terra/xhigh
+  Sol/high
+
+full
+  6 tasks × 5 configs × 3 repetitions = 90 runs
+  Luna/high
+  Luna/xhigh
+  Terra/high
+  Terra/xhigh
+  Sol/high
+```
+
+The full profile can consume substantial model tokens and is never launched automatically. Running it always requires an explicit `codex-flow benchmark` command.
+
+Each task materializes to a deterministic seed commit. Its verifier is stored outside the writable task repository, preventing a worker from passing by editing acceptance logic. CI proves that every seed initially fails its verifier and that repeated materialization yields the same commit SHAs.
+
+## Run and analyze a benchmark
+
+After materializing a profile:
 
 ```bash
 codex-flow benchmark \
-  --manifest benchmark-real.json \
-  --output benchmark/results/run-001.jsonl
+  --manifest .codex-flow-benchmark/manifest.json \
+  --output benchmark/results/quick-001.jsonl
 ```
 
-Every model/effort/repetition starts from a fresh temporary clone at the same commit. After the first implementation, a fixed verifier runs; failures may trigger bounded repair attempts with the same model/effort. Input, cached-input, and output usage are accumulated across the initial attempt and repairs, so the measured unit is **cost to finish the task**, not cost of the first call.
+Every model/effort/repetition starts from a fresh clone at the same commit. Failed verification can trigger bounded repairs using the same model/effort. Token usage is accumulated across the first attempt and repairs, so the measured unit is **cost to finish the task**, not first-call price.
 
-Then analyze it with an immutable price snapshot:
+Analyze with the bundled immutable GPT-5.6 price snapshot:
 
 ```bash
 codex-flow benchmark-analyze \
-  --results benchmark/results/run-001.jsonl \
-  --prices benchmark-prices.json \
+  --results benchmark/results/quick-001.jsonl \
+  --prices benchmark/prices/gpt-5.6-2026-08-30.json \
   --json
 ```
 
-The analyzer applies quality gates first and compares dollar cost only among configurations that meet the required pass rate, sample count, and repair-cycle threshold. Benchmark conclusions are advisory only; `policy/benchmark.toml` keeps `auto_apply = false`.
+The analyzer applies quality gates before cost comparison. A cheaper configuration that misses pass-rate or repair thresholds cannot win. Benchmark conclusions remain advisory; `policy/benchmark.toml` keeps `auto_apply = false`.
 
-Current measurement boundaries are explicit: Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and it does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits. The runner also uses wall-clock timeout plus repair limits because deterministic agent-turn budgeting is not yet a stable `codex exec` capability.
+Current measurement boundaries are explicit: Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits.
 
 Full details: `docs/benchmark.md`.
 
@@ -177,27 +189,6 @@ CODEX_FLOW_MAX_REPAIR_CYCLES      default: 2
 CODEX_FLOW_BIN_DIR                default: ~/.local/bin
 ```
 
-## What gets installed
-
-```text
-~/.codex/
-├── config.toml
-├── codex-flow.toml
-├── codex-flow/
-│   ├── source
-│   └── version
-├── agents/
-│   ├── worker-explorer.toml
-│   └── worker-implementer.toml
-└── skills/
-    └── cost-aware-development/
-        └── SKILL.md
-
-~/.local/bin/
-└── codex-flow            # Unix
-# or codex-flow.cmd/.ps1   # Windows
-```
-
 ## Compatibility model
 
 codex-flow deliberately uses several layers rather than depending on one unstable runtime feature:
@@ -206,12 +197,13 @@ codex-flow deliberately uses several layers rather than depending on one unstabl
 2. `policy/defaults.toml` — release-time `auto` recommendations.
 3. Codex `[agents]` — stable worker fallback.
 4. Skill + generic worker roles — classification, delegation, adaptive escalation, review, bounded repairs.
-5. Benchmark runner/analyzer — advisory evidence for future routing calibration.
+5. Recommendation automation — official-source model/price maintenance through PRs.
+6. Benchmark corpus + runner + analyzer — advisory evidence for future routing calibration.
 
 ## CI
 
-The repository validates shell/Python/PowerShell syntax, deterministic model recommendation fixtures, benchmark analyzer quality-first routing, benchmark runner isolation/repair/token aggregation with a fake Codex executable, Unix install/update flows, and Windows install/status/doctor/uninstall smoke behavior.
+The repository validates shell/Python/PowerShell syntax, deterministic model recommendation fixtures, quality-first benchmark analysis, runner isolation/repair/token aggregation and infrastructure fail-closed behavior, deterministic corpus generation and seed verifier failure, Unix install/update flows, and Windows install/status/doctor/uninstall behavior.
 
 ## Status
 
-Private preview, version 0.5.0. Model recommendation changes remain reviewable; benchmark routing remains advisory; installed users change behavior only through explicit update/install actions and explicit pins remain authoritative.
+Private preview, version 0.6.0. Model recommendation changes remain reviewable; benchmark routing remains advisory; benchmark execution is always explicit; installed users change behavior only through explicit update/install actions and explicit pins remain authoritative.
