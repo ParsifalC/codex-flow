@@ -17,8 +17,10 @@ jobs:
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
           bash -n tests/benchmark.sh
+          bash -n tests/runner.sh
           python3 -m py_compile scripts/check-recommendation.py
           python3 -m py_compile scripts/analyze-benchmark.py
+          python3 -m py_compile scripts/run-benchmark.py
       - name: Recommendation policy test
         run: |
           python3 scripts/check-recommendation.py \
@@ -37,6 +39,8 @@ jobs:
           grep -Fq '"changed": true' /tmp/recommendation-write.json
       - name: Benchmark routing test
         run: bash tests/benchmark.sh
+      - name: Benchmark runner test
+        run: bash tests/runner.sh
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
 
