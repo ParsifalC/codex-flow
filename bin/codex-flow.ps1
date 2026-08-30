@@ -21,6 +21,7 @@ function Get-PolicyValue([string]$Section, [string]$Key) {
 }
 
 $cmd = if ($args.Count -gt 0) { $args[0] } else { 'help' }
+$rest = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
 switch ($cmd) {
     'status' {
         $src = Get-SourceDir
@@ -34,6 +35,14 @@ switch ($cmd) {
             Write-Host "  parent:    $(Get-PolicyValue parent model_policy) / min effort $(Get-PolicyValue parent min_reasoning_effort)"
             Write-Host "  worker:    $(Get-PolicyValue worker resolved_model) / $(Get-PolicyValue worker min_reasoning_effort)"
         }
+    }
+    'benchmark' {
+        & python3 (Join-Path (Get-SourceDir) 'scripts/run-benchmark.py') @rest
+        exit $LASTEXITCODE
+    }
+    'benchmark-analyze' {
+        & python3 (Join-Path (Get-SourceDir) 'scripts/analyze-benchmark.py') @rest
+        exit $LASTEXITCODE
     }
     'doctor' { & (Join-Path (Get-SourceDir) 'scripts/doctor.ps1'); exit $LASTEXITCODE }
     'uninstall' { & (Join-Path (Get-SourceDir) 'scripts/uninstall.ps1'); exit $LASTEXITCODE }
@@ -64,10 +73,12 @@ switch ($cmd) {
 codex-flow <command>
 
 Commands:
-  status      Show installed version and effective policy
-  update      Pull the checkout, preserve explicit policy, refresh auto recommendations
-  doctor      Verify installation and routing configuration
-  uninstall   Remove codex-flow-managed files
+  status              Show installed version and effective policy
+  update              Pull the checkout, preserve explicit policy, refresh auto recommendations
+  doctor              Verify installation and routing configuration
+  benchmark           Run a reproducible Codex benchmark manifest
+  benchmark-analyze   Analyze benchmark JSONL with quality-first cost routing
+  uninstall           Remove codex-flow-managed files
 '@
     }
 }
