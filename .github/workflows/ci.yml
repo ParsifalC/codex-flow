@@ -19,7 +19,7 @@ jobs:
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
 
-  windows-syntax:
+  windows-smoke:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,3 +42,38 @@ jobs:
               exit 1
             }
           }
+      - name: Installer and CLI smoke test
+        shell: pwsh
+        run: |
+          $root = (Get-Location).Path
+          $tmp = Join-Path $env:RUNNER_TEMP 'codex-flow-smoke'
+          $env:CODEX_HOME = Join-Path $tmp '.codex'
+          $env:CODEX_FLOW_BIN_DIR = Join-Path $tmp 'bin-installed'
+          $fakeBin = Join-Path $tmp 'bin'
+          New-Item -ItemType Directory -Force -Path $env:CODEX_HOME,$env:CODEX_FLOW_BIN_DIR,$fakeBin | Out-Null
+          '@echo off
+echo codex-test 0.0.0
+' | Set-Content (Join-Path $fakeBin 'codex.cmd') -NoNewline
+          $env:PATH = "$fakeBin;$env:CODEX_FLOW_BIN_DIR;$env:PATH"
+          @'
+model = "user-parent-model"
+model_reasoning_effort = "high"
+
+[unrelated]
+keep_me = true
+'@ | Set-Content (Join-Path $env:CODEX_HOME 'config.toml')
+
+          & "$root\install.ps1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') status
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') doctor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $config = Get-Content (Join-Path $env:CODEX_HOME 'config.toml') -Raw
+          if ($config -notmatch 'default_subagent_model\s*=\s*"gpt-5\.6-luna"') { throw 'worker model was not installed' }
+          $policy = Get-Content (Join-Path $env:CODEX_HOME 'codex-flow.toml') -Raw
+          if ($policy -notmatch 'model\s*=\s*"auto"') { throw 'auto worker policy was not preserved' }
+
+          & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') uninstall
+          if (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow.toml')) { throw 'policy survived uninstall' }
