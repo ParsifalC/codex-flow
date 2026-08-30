@@ -25,13 +25,19 @@ cat > "$BIN/codex" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 workdir=""
+model=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cd) workdir="$2"; shift 2 ;;
+    --model) model="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 [[ -n "$workdir" ]]
+if [[ "$model" == "gpt-test-fail" ]]; then
+  printf '%s\n' 'simulated infrastructure failure' >&2
+  exit 2
+fi
 count_file="$workdir/.fake-codex-count"
 count=0
 [[ -f "$count_file" ]] && count="$(cat "$count_file")"
@@ -53,7 +59,10 @@ cat > "$TMP/manifest.json" <<EOF
   "repetitions": 1,
   "timeout_seconds": 30,
   "max_repair_cycles": 2,
-  "matrix": [{"model":"gpt-test-worker","reasoning_effort":"high"}],
+  "matrix": [
+    {"model":"gpt-test-worker","reasoning_effort":"high"},
+    {"model":"gpt-test-fail","reasoning_effort":"high"}
+  ],
   "tasks": [{
     "id":"runner-smoke",
     "class":"routine",
@@ -69,23 +78,31 @@ python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/manifest.json" --dry-r
 python3 - "$TMP/plan.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['planned_runs'] == 1, p
+assert p['planned_runs'] == 2, p
 PY
 
 python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/manifest.json" --output "$TMP/results.jsonl"
 python3 - "$TMP/results.jsonl" <<'PY'
 import json, sys
 rows=[json.loads(x) for x in open(sys.argv[1]) if x.strip()]
-assert len(rows) == 1, rows
-r=rows[0]
+assert len(rows) == 2, rows
+by_model={r['model']: r for r in rows}
+
+r=by_model['gpt-test-worker']
 assert r['passed'] is True, r
 assert r['repair_cycles'] == 1, r
 assert r['input_tokens'] == 200, r
 assert r['cached_input_tokens'] == 40, r
 assert r['output_tokens'] == 20, r
-assert r['model'] == 'gpt-test-worker', r
 assert r['reasoning_effort'] == 'high', r
 assert r['source_commit'], r
+
+f=by_model['gpt-test-fail']
+assert f['passed'] is False, f
+assert f['repair_cycles'] == 0, f
+assert f['codex_exit_code'] == 2, f
+assert f['input_tokens'] == 0 and f['output_tokens'] == 0, f
+assert 'simulated infrastructure failure' in f['diagnostic_excerpt'], f
 PY
 
 printf 'runner smoke test passed\n'
