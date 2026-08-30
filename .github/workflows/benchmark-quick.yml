@@ -7,6 +7,11 @@ on:
         description: 'Type RUN QUICK 18 to confirm paid benchmark execution'
         required: true
         type: string
+      codex_npm_version:
+        description: 'Codex npm version to run (pin for repeatable comparisons)'
+        required: true
+        default: 'latest'
+        type: string
 
 permissions:
   contents: read
@@ -21,6 +26,8 @@ jobs:
     timeout-minutes: 360
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      BENCHMARK_CONFIRM: ${{ inputs.confirm }}
+      CODEX_NPM_VERSION: ${{ inputs.codex_npm_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,12 +35,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ '${{ inputs.confirm }}' == 'RUN QUICK 18' ]] || {
+          [[ "$BENCHMARK_CONFIRM" == 'RUN QUICK 18' ]] || {
             echo 'Confirmation did not match RUN QUICK 18.' >&2
             exit 2
           }
           [[ -n "${OPENAI_API_KEY:-}" ]] || {
             echo 'Repository secret OPENAI_API_KEY is required.' >&2
+            exit 2
+          }
+          [[ "$CODEX_NPM_VERSION" =~ ^[0-9A-Za-z._+-]+$ ]] || {
+            echo 'codex_npm_version contains unsupported characters.' >&2
             exit 2
           }
 
@@ -43,8 +54,8 @@ jobs:
 
       - name: Install Codex CLI
         run: |
-          npm install -g @openai/codex@latest
-          codex --version
+          npm install -g "@openai/codex@$CODEX_NPM_VERSION"
+          codex --version | tee "$RUNNER_TEMP/codex-version.txt"
 
       - name: Materialize frozen quick corpus
         run: |
@@ -93,14 +104,14 @@ jobs:
         if: always()
         run: |
           mkdir -p benchmark-artifact
-          for f in materialize.json plan.json manifest.json results.jsonl analysis.json report.md; do
+          for f in materialize.json plan.json manifest.json results.jsonl analysis.json report.md codex-version.txt; do
             if [[ -f "$RUNNER_TEMP/$f" ]]; then
               cp "$RUNNER_TEMP/$f" "benchmark-artifact/$f"
             fi
           done
           cp benchmark/prices/gpt-5.6-2026-08-30.json benchmark-artifact/prices.json
-          printf '%s\n' "$(codex --version 2>/dev/null || true)" > benchmark-artifact/codex-version.txt
           printf '%s\n' "$GITHUB_SHA" > benchmark-artifact/codex-flow-commit.txt
+          printf '%s\n' "$CODEX_NPM_VERSION" > benchmark-artifact/codex-npm-version-requested.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
