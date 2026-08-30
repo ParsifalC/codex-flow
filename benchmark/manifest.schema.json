@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "codex-flow benchmark runner manifest",
+  "type": "object",
+  "required": ["schema_version", "tasks", "matrix"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "repetitions": {"type": "integer", "minimum": 1, "default": 1},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "default": 1800},
+    "max_repair_cycles": {"type": "integer", "minimum": 0, "default": 2},
+    "matrix": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["model", "reasoning_effort"],
+        "properties": {
+          "model": {"type": "string", "minLength": 1},
+          "reasoning_effort": {"enum": ["high", "xhigh", "max"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "class", "source", "base_ref", "prompt", "verify"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "class": {"enum": ["routine", "complex", "critical"]},
+          "source": {"type": "string", "minLength": 1},
+          "base_ref": {"type": "string", "minLength": 1},
+          "prompt": {"type": "string", "minLength": 1},
+          "verify": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          },
+          "max_repair_cycles": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
