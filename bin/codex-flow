@@ -51,6 +51,10 @@ case "$cmd" in
         "$(read_policy_value worker min_reasoning_effort "$POLICY")"
     fi
     ;;
+  benchmark-local)
+    shift
+    exec python3 "$(source_dir)/scripts/benchmark-local.py" "$@"
+    ;;
   benchmark-corpus)
     shift
     src="$(source_dir)"
@@ -120,13 +124,14 @@ Commands:
   status              Show installed version and effective policy
   update              Pull the checkout, preserve explicit policy, refresh auto recommendations
   doctor              Verify installation and routing configuration
+  benchmark-local     Run built-in benchmark through the local Codex login session
   benchmark-corpus    Materialize the built-in corpus without calling any model
   benchmark           Run a reproducible Codex benchmark manifest
   benchmark-analyze   Analyze benchmark JSONL with quality-first cost routing
   uninstall           Remove codex-flow-managed files
 
-benchmark-corpus usage:
-  codex-flow benchmark-corpus [quick|full] [output-directory]
+Recommended first real run:
+  codex-flow benchmark-local quick
 EOF
     ;;
   *) fail "unknown command: $cmd" ;;
