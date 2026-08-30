@@ -1,0 +1,18 @@
+schema_version = 1
+
+[quality]
+routine_min_pass_rate = 0.90
+complex_min_pass_rate = 0.95
+critical_min_pass_rate = 1.00
+min_samples_per_configuration = 3
+max_average_repair_cycles = 1.0
+
+[cost]
+# Used only after the quality gate passes. Prices are supplied by the benchmark
+# snapshot so historical runs remain reproducible.
+prefer_cached_input = true
+
+[promotion]
+# Benchmark output is advisory by default. A routing change must be reviewed
+# before it is merged into release policy.
+auto_apply = false
