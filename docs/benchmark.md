@@ -1,6 +1,6 @@
 # Benchmark-driven routing
 
-`codex-flow` v0.5 includes a real Codex benchmark runner plus the advisory analyzer introduced in v0.4.
+`codex-flow` v0.6 includes a deterministic built-in corpus, the real Codex runner from v0.5, and the advisory analyzer introduced in v0.4.
 
 It does **not** fabricate benchmark data and it does **not** automatically rewrite release routing. Real model runs must first accumulate enough evidence.
 
@@ -30,11 +30,66 @@ max_average_repair_cycles = 1.0
 
 These are intentionally conservative starting values, not universal truths.
 
+## Built-in v0.6 corpus
+
+The first corpus contains six deterministic engineering tasks:
+
+| Task | Class | Focus |
+| --- | --- | --- |
+| `routine-query-normalization` | routine | localized Unicode/whitespace bug |
+| `routine-env-precedence` | routine | configuration precedence and edge cases |
+| `complex-renew-provider-refactor` | complex | multi-file provider dispatch with legacy API compatibility |
+| `complex-config-migration` | complex | backward-compatible old/new configuration migration |
+| `complex-bounded-retry` | complex | precise retry/error semantics and attempt accounting |
+| `critical-atomic-state-write` | critical | crash-safe atomic state replacement and cleanup |
+
+`benchmark/corpus.json` stores the seed files, fixed task prompt, and verifier for each task. `scripts/materialize-corpus.py` turns those definitions into independent Git repositories.
+
+Materialization is deterministic: seed commits use fixed author metadata and timestamps, so an unchanged corpus produces the same commit SHA on different machines. Verifiers are written **outside** each writable task repository and the generated manifest invokes them by absolute path. A benchmark worker therefore cannot pass by weakening or editing its verifier.
+
+Generate the low-cost comparison set without calling any model:
+
+```bash
+codex-flow benchmark-corpus quick
+```
+
+This creates `.codex-flow-benchmark/manifest.json` and six frozen task repositories. The command prints the planned run count and stops; it does not execute Codex.
+
+Profiles are defined in `benchmark/profiles.json`:
+
+```text
+quick
+  6 tasks × 3 configs × 1 repetition = 18 runs
+  Luna/high
+  Terra/xhigh
+  Sol/high
+
+full
+  6 tasks × 5 configs × 3 repetitions = 90 runs
+  Luna/high
+  Luna/xhigh
+  Terra/high
+  Terra/xhigh
+  Sol/high
+```
+
+`full` can incur substantial real model usage. It is deliberately never launched by install, update, CI, recommendation automation, or corpus materialization. A user must explicitly run the generated manifest.
+
+The bundled GPT-5.6 price snapshot is `benchmark/prices/gpt-5.6-2026-08-30.json`. Price snapshots are immutable benchmark inputs rather than live billing lookups, so reports remain reproducible after future price changes.
+
 ## Real runner
 
-A benchmark manifest freezes the task source, starting ref, prompt, verifier, model matrix, repetition count, timeout, and repair budget. See `benchmark/manifest.schema.json` and `benchmark/manifest.example.json`.
+A benchmark manifest freezes the task source, starting ref, prompt, external verifier, model matrix, repetition count, timeout, and repair budget. See `benchmark/manifest.schema.json` and `benchmark/manifest.example.json`.
 
-Minimal shape:
+Run the built-in quick corpus after materializing it:
+
+```bash
+codex-flow benchmark \
+  --manifest .codex-flow-benchmark/manifest.json \
+  --output benchmark/results/quick-001.jsonl
+```
+
+For custom tasks, the minimal manifest shape is:
 
 ```json
 {
@@ -52,25 +107,9 @@ Minimal shape:
     "source":"/absolute/path/to/frozen-repo",
     "base_ref":"<full-commit-sha>",
     "prompt":"Implement the fixed task without changing the verifier.",
-    "verify":["python3","tests/verify_task.py"]
+    "verify":["python3","/absolute/path/to/verify_task.py"]
   }]
 }
-```
-
-Run it after installing codex-flow:
-
-```bash
-codex-flow benchmark \
-  --manifest benchmark-real.json \
-  --output benchmark/results/run-001.jsonl
-```
-
-Or invoke the script directly:
-
-```bash
-python3 scripts/run-benchmark.py \
-  --manifest benchmark-real.json \
-  --output benchmark/results/run-001.jsonl
 ```
 
 Use `--dry-run` to validate/filter a manifest without spending model tokens. `--only-task` and `--only-model` support bounded experiments.
@@ -86,7 +125,7 @@ fresh clone at fixed commit
         ↓
 codex exec with requested model/effort
         ↓
-fixed verifier argv
+fixed external verifier argv
         ↓
 pass? ── yes ──> record result
   │
@@ -101,7 +140,9 @@ verify again
 
 Repair cycles are part of the measurement because a cheap first attempt that repeatedly fails can be more expensive end-to-end than a more capable worker.
 
-The verifier is an argv array rather than an arbitrary shell string. Benchmark tasks should keep verifier code inside the frozen source repo and explicitly tell the model not to modify or weaken it.
+For benchmark integrity, keep verifier code outside the writable task repo whenever possible. The built-in corpus does this automatically. Custom manifests should also use an immutable/external verifier or independently verify that the worker did not modify acceptance logic.
+
+Infrastructure failures are fail-closed: if `codex exec` exits non-zero because of authentication, quota, timeout, CLI/configuration failure, or another execution error, the run is recorded as failed and the runner does not spend repair cycles trying to treat infrastructure failure as an implementation defect.
 
 ## Codex invocation
 
@@ -141,36 +182,14 @@ Each run is one JSON object in JSONL:
 
 The canonical result schema is `benchmark/schema.json`.
 
-## Price snapshot
-
-Cost analysis uses a separate immutable price snapshot so old reports remain reproducible when future model prices change.
-
-Example:
-
-```json
-{
-  "gpt-5.6-luna": {"input": 0.20, "cached_input": 0.02, "output": 1.20},
-  "gpt-5.6-terra": {"input": 2.00, "cached_input": 0.20, "output": 12.00}
-}
-```
-
-Prices are dollars per 1M tokens.
-
 ## Analyze
+
+Analyze a built-in GPT-5.6 corpus run with the immutable snapshot:
 
 ```bash
 codex-flow benchmark-analyze \
-  --results benchmark/results/run-001.jsonl \
-  --prices benchmark-prices.json \
-  --json
-```
-
-or:
-
-```bash
-python3 scripts/analyze-benchmark.py \
-  --results benchmark/results/run-001.jsonl \
-  --prices benchmark-prices.json \
+  --results benchmark/results/quick-001.jsonl \
+  --prices benchmark/prices/gpt-5.6-2026-08-30.json \
   --json
 ```
 
@@ -195,14 +214,9 @@ A cheaper model can consume less money per attempt but still cost more end-to-en
 
 The analyzer therefore never selects a configuration solely because its token price is lower. A configuration must first meet the class-specific quality and repair thresholds.
 
-The deterministic analyzer fixture demonstrates this intentionally:
+The deterministic analyzer fixture demonstrates this intentionally: Luna/high wins `routine` when it meets the gate and is cheaper, while a failing Luna/xhigh complex configuration is rejected and Terra/xhigh wins despite higher per-token pricing. Critical routing requires 100% pass rate by default.
 
-- Luna/high wins `routine` because it passes the quality gate and is cheaper.
-- Luna/xhigh fails the `complex` pass-rate gate in the fixture.
-- Terra/xhigh therefore wins `complex` despite higher per-token pricing.
-- Critical routing requires 100% pass rate by default.
-
-The deterministic runner test separately uses a fake Codex executable and a temporary Git repository to prove that fresh checkout, failed verification, one repair, token aggregation, and final pass are recorded correctly without spending real model tokens.
+The deterministic runner test separately uses a fake Codex executable and a temporary Git repository to prove fresh checkout, failed verification, one repair, token aggregation, fail-closed infrastructure handling, and final pass without spending real model tokens. Corpus CI additionally proves that all six seeds initially fail their verifier and that materialized commit SHAs are deterministic.
 
 ## Promotion policy
 
@@ -215,8 +229,8 @@ auto_apply = false
 
 Benchmark conclusions must therefore be reviewed before changing release routing. Installed users should never be silently switched based on a small or noisy sample.
 
-## Building a useful corpus
+## Growing the corpus
 
-A real corpus should contain repeated, deterministic tasks across several engineering domains instead of one repository only. Useful categories include localized bug fixes, multi-file refactors, test-driven feature implementation, CI/CD workflow repairs, dependency/configuration migrations, compatibility-preserving API changes, and infrastructure changes with strict validation.
+The built-in v0.6 tasks are a first calibration set, not a claim of broad production representativeness. Future tasks should add different languages, larger codebases, CI/CD workflows, dependency migrations, compatibility-preserving API changes, and infrastructure changes with strict validation.
 
 Each task needs frozen acceptance criteria and a reproducible starting commit. Model/config comparisons are meaningful only when they start from equivalent state.
