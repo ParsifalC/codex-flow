@@ -2,30 +2,34 @@
 
 Fast, low-friction cost-aware multi-agent defaults for Codex.
 
-**Plan with the strongest model. Execute with a cheaper worker. Review with the strongest model again.**
+**Use a qualifying high-capability model to plan and review. Use a cheaper worker for execution loops.**
 
-`codex-flow` installs a small Codex configuration layer that keeps the main thread focused on architecture and review while delegating execution-heavy work to lower-cost subagents.
+`codex-flow` is intentionally capability-driven rather than tied to a specific flagship model slug.
 
-## Why
-
-For medium and large engineering tasks, raw token usage can increase with delegation because agents read context independently, while total cost can still fall substantially when implementation loops run on a cheaper model.
-
-The default policy is:
+## Default strategy
 
 ```text
 small task         -> parent handles directly
-medium/large task  -> parent plans
-                    -> Luna subagent implements
-                    -> parent reviews
-                    -> Luna performs bounded fixes if needed
+medium/large task  -> qualifying parent plans
+                    -> cheaper worker explores / implements / tests
+                    -> qualifying parent reviews
+                    -> worker performs bounded fixes if needed
                     -> parent gives final acceptance
 ```
+
+A parent qualifies by policy, not by name. The default is:
+
+- prefer the latest available high-capability model
+- minimum parent reasoning effort: `high`
+- `high`, `xhigh`, and `max` all qualify
+- exact minimum model: `auto` by default, but configurable
+- worker model and reasoning effort are independently configurable
+
+So `gpt-5.6-sol/xhigh` is one valid configuration, not a requirement.
 
 ## Install
 
 ### macOS / Linux
-
-Because this repository is private, clone it first:
 
 ```bash
 git clone git@github.com:ParsifalC/codex-flow.git
@@ -39,30 +43,87 @@ bash install.sh
 .\install.ps1
 ```
 
-Restart Codex after installation.
-
-Then use Codex normally. No special prompt is required.
+Restart Codex after installation, then use it normally. No special prompt is required.
 
 ```text
 Refactor the renew workflow and keep backward compatibility.
 ```
 
-The installed skill is designed for implicit activation on non-trivial engineering work. You can also invoke it explicitly:
+You can also invoke the workflow explicitly:
 
 ```text
 Use $cost-aware-development and refactor the renew workflow.
 ```
 
-## What gets installed
+## Policy
 
-User-level files under `~/.codex`:
+Installation creates `~/.codex/codex-flow.toml`:
+
+```toml
+[parent]
+model_policy = "latest-capable"
+min_model = "auto"
+min_reasoning_effort = "high"
+
+[worker]
+model = "gpt-5.6-luna"
+reasoning_effort = "high"
+
+[runtime]
+max_concurrent_threads = 4
+```
+
+The parent model is never hard-pinned by codex-flow. `latest-capable` means the workflow should prefer the current recommended high-capability generation when Codex exposes a stable way to select/elevate it. If automatic elevation is unavailable, the configured minimum remains the guardrail rather than silently pretending an underpowered parent qualifies.
+
+The worker currently defaults to Luna because it is the cost-oriented GPT-5.6 tier, but that is an installation default, not part of the architecture.
+
+## Configure at install time
+
+macOS/Linux example:
+
+```bash
+CODEX_FLOW_PARENT_MIN_EFFORT=high \
+CODEX_FLOW_PARENT_MIN_MODEL=auto \
+CODEX_FLOW_WORKER_MODEL=gpt-5.6-luna \
+CODEX_FLOW_WORKER_EFFORT=high \
+bash install.sh
+```
+
+Available overrides:
+
+```text
+CODEX_FLOW_PARENT_MODEL_POLICY   default: latest-capable
+CODEX_FLOW_PARENT_MIN_MODEL      default: auto
+CODEX_FLOW_PARENT_MIN_EFFORT     default: high
+CODEX_FLOW_WORKER_MODEL          default: gpt-5.6-luna
+CODEX_FLOW_WORKER_EFFORT         default: high
+CODEX_FLOW_MAX_THREADS           default: 4
+```
+
+This lets teams pin a minimum family/version when required, while normal installations can keep the parent policy future-facing.
+
+## Reasoning policy
+
+Reasoning is treated as a minimum plus a task-adaptive choice, not one fixed value:
+
+```text
+parent planning/review          >= high
+routine worker execution          high
+difficult debugging/refactor      xhigh
+hardest quality-first work         max
+```
+
+`max` is deliberately not the universal default. The workflow should use the lowest qualifying level that gives enough reliability for the task.
+
+## What gets installed
 
 ```text
 ~/.codex/
 ├── config.toml
+├── codex-flow.toml
 ├── agents/
-│   ├── luna-explorer.toml
-│   └── luna-implementer.toml
+│   ├── worker-explorer.toml
+│   └── worker-implementer.toml
 └── skills/
     └── cost-aware-development/
         └── SKILL.md
@@ -70,23 +131,13 @@ User-level files under `~/.codex`:
 
 The installer backs up an existing `config.toml` before changing the managed `[agents]` keys.
 
-## Defaults
-
-- Parent model: left unchanged. Select `gpt-5.6-sol` with `xhigh` in Codex when you want the full strategy.
-- Default subagent model: `gpt-5.6-luna`
-- Default subagent reasoning: `max`
-- Concurrent subagents: 4
-- Skill: automatically routes trivial work directly and delegates execution-heavy work for medium/large tasks.
-
-Why not force the parent model? People often maintain their own Codex model/profile settings. `codex-flow` changes only the delegation policy by default.
-
 ## Verify
 
 ```bash
 bash scripts/doctor
 ```
 
-The doctor checks the Codex CLI, installed files, and effective config hints.
+The doctor verifies the installed policy and checks that Codex subagent routing matches it.
 
 ## Uninstall
 
@@ -98,21 +149,24 @@ The uninstall script removes files owned by codex-flow and leaves unrelated Code
 
 ## Compatibility strategy
 
-Codex multi-agent behavior is evolving. `codex-flow` deliberately uses two layers:
+Codex multi-agent behavior is evolving, so codex-flow uses three layers:
 
-1. `[agents]` defaults provide the reliable baseline: spawned subagents use Luna unless explicitly overridden.
-2. Custom agents provide richer explorer/implementer roles where the current Codex surface supports named custom-agent selection.
+1. `codex-flow.toml` expresses model/effort policy separately from implementation details.
+2. `[agents]` provides a concrete default worker route for the installed Codex version.
+3. Generic custom agents and the orchestration Skill provide richer explorer/implementer behavior where supported.
 
-If named custom agents are unavailable, the workflow still works through the default Luna subagent policy and the orchestration skill.
+This separation lets the current concrete model change without rewriting the workflow itself.
 
 ## Design principles
 
-- Expensive tokens are spent at decision gates, not implementation loops.
-- Children receive compact task packets instead of irrelevant parent history when the runtime supports fresh forks.
+- High-capability tokens are spent at decision gates, not implementation loops.
+- Model eligibility is expressed as a capability/effort threshold rather than one hardcoded flagship slug.
+- Prefer the latest suitable generation when it can be selected reliably.
+- Children receive compact task packets instead of irrelevant parent history when supported.
 - Review checks the diff and evidence instead of re-solving the task.
 - Read-only exploration may run in parallel; overlapping writable workers should not.
-- Repair loops are bounded. Repeated failure causes the parent to reassess the plan instead of burning tokens indefinitely.
+- Repair loops are bounded.
 
 ## Status
 
-Early private preview. Codex model routing and multi-agent APIs are changing quickly, so `doctor` and compatibility fallbacks are first-class parts of this project.
+Early private preview. Codex model routing and multi-agent APIs are changing quickly, so policy separation, `doctor`, and compatibility fallbacks are first-class parts of the project.
