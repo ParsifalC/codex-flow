@@ -14,8 +14,12 @@
     "cached_input_tokens": {"type": "integer", "minimum": 0},
     "output_tokens": {"type": "integer", "minimum": 0},
     "repair_cycles": {"type": "integer", "minimum": 0},
-    "wall_seconds": {"type": "number", "minimum": 0},
-    "source_commit": {"type": "string"},
+    "wall_time_seconds": {"type": "number", "minimum": 0},
+    "source_commit": {"type": "string", "minLength": 1},
+    "repetition": {"type": "integer", "minimum": 1},
+    "codex_exit_code": {"type": "integer"},
+    "verification_excerpt": {"type": "string"},
+    "diagnostic_excerpt": {"type": "string"},
     "notes": {"type": "string"}
   },
   "additionalProperties": false
