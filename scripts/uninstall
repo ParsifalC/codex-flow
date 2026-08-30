@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CONFIG="$CODEX_HOME/config.toml"
+
+rm -f "$CODEX_HOME/agents/luna-explorer.toml"
+rm -f "$CODEX_HOME/agents/luna-implementer.toml"
+rm -rf "$CODEX_HOME/skills/cost-aware-development"
+
+if [[ -f "$CONFIG" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$CONFIG" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+keys = {
+    "enabled",
+    "max_concurrent_threads_per_session",
+    "default_subagent_model",
+    "default_subagent_reasoning_effort",
+}
+
+m = re.search(r"(?ms)^\[agents\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)", text)
+if m:
+    body = m.group(1)
+    lines = []
+    for line in body.splitlines():
+        key = line.split("=", 1)[0].strip() if "=" in line else None
+        if key in keys:
+            continue
+        lines.append(line)
+    new_body = "\n".join(lines).strip("\n")
+    if new_body.strip():
+        new_body += "\n"
+        text = text[:m.start(1)] + new_body + text[m.end(1):]
+    else:
+        text = text[:m.start()] + text[m.end():]
+        text = re.sub(r"\n{3,}", "\n\n", text)
+    path.write_text(text)
+PY
+fi
+
+printf 'codex-flow files removed. Existing backups were preserved.\n'
