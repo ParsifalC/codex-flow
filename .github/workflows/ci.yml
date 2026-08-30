@@ -16,7 +16,9 @@ jobs:
           bash -n scripts/doctor
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
+          bash -n tests/benchmark.sh
           python3 -m py_compile scripts/check-recommendation.py
+          python3 -m py_compile scripts/analyze-benchmark.py
       - name: Recommendation policy test
         run: |
           python3 scripts/check-recommendation.py \
@@ -33,6 +35,8 @@ jobs:
             --write --json >/tmp/recommendation-write.json
           grep -Fq 'worker_model = "gpt-5.6-luna"' /tmp/defaults.toml
           grep -Fq '"changed": true' /tmp/recommendation-write.json
+      - name: Benchmark routing test
+        run: bash tests/benchmark.sh
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
 
@@ -68,9 +72,7 @@ jobs:
           $env:CODEX_FLOW_BIN_DIR = Join-Path $tmp 'bin-installed'
           $fakeBin = Join-Path $tmp 'bin'
           New-Item -ItemType Directory -Force -Path $env:CODEX_HOME,$env:CODEX_FLOW_BIN_DIR,$fakeBin | Out-Null
-          '@echo off
-echo codex-test 0.0.0
-' | Set-Content (Join-Path $fakeBin 'codex.cmd') -NoNewline
+          '@echo off\r\necho codex-test 0.0.0\r\n' | Set-Content (Join-Path $fakeBin 'codex.cmd') -NoNewline
           $env:PATH = "$fakeBin;$env:CODEX_FLOW_BIN_DIR;$env:PATH"
           @'
 model = "user-parent-model"
