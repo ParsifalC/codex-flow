@@ -35,7 +35,7 @@ cd codex-flow
 .\install.ps1
 ```
 
-The management command is installed under `~/.local/bin`. Restart Codex after installation, then use Codex normally; no special prompt is required.
+The management command is installed under `~/.local/bin`. Restart Codex after installation, then use Codex normally.
 
 ## Daily management
 
@@ -43,13 +43,11 @@ The management command is installed under `~/.local/bin`. Restart Codex after in
 codex-flow status
 codex-flow doctor
 codex-flow update
-codex-flow benchmark-corpus quick
-codex-flow benchmark --help
-codex-flow benchmark-analyze --help
+codex-flow benchmark-local quick
 codex-flow uninstall
 ```
 
-`update` fast-forwards the original checkout, preserves explicit user pins, reruns installation, and resolves only `auto` values against the new release recommendations.
+`update` fast-forwards the original checkout, preserves explicit user pins, reruns installation, and resolves only `auto` values against new release recommendations.
 
 ## Adaptive policy
 
@@ -82,38 +80,11 @@ max_concurrent_threads = 4
 max_repair_cycles = 2
 ```
 
-`model = "auto"` follows release recommendations; a concrete model remains pinned across updates. The concrete Codex `[agents]` baseline stays conservative because per-spawn model/effort overrides are not equally reliable across all Codex App/V2 versions.
-
-## Reasoning selection
-
-The workflow chooses the lowest sufficient qualifying effort:
-
-| Task class | Parent | Worker |
-| --- | --- | --- |
-| SMALL | `high` or current qualifying effort | none |
-| ROUTINE | `high` | `high` |
-| COMPLEX | `high`/`xhigh` | `high`/`xhigh` |
-| CRITICAL | `xhigh`/`max` | `xhigh`/`max` only when quality-first |
-
-`max` is never the universal default. Complexity, risk, or failed lower-effort attempts must justify escalation.
-
-## Automatic model recommendations
-
-`scripts/check-recommendation.py` and `.github/workflows/model-recommendation.yml` conservatively inspect OpenAI official model documentation and maintain release recommendations through reviewable PRs.
-
-The automation discovers the newest qualifying Sol/Terra/Luna generation, verifies `high`, `xhigh`, and `max` reasoning plus modern agent tooling, records the latest qualifying flagship only as `parent_recommended_model` metadata, and chooses the lowest-cost qualifying Terra/Luna worker recommendation. It fails closed when parsing/capability verification is incomplete and never overwrites an installed user's explicit pin.
-
-The active parent remains policy-driven; recommendation metadata never hard-pins it.
+`model = "auto"` follows release recommendations; a concrete model remains pinned across updates. The active parent is never hard-pinned by recommendation metadata.
 
 ## Built-in benchmark corpus
 
-The deterministic six-task corpus calibrates routing from measured engineering outcomes rather than price alone. It covers localized bug fixing, configuration precedence, multi-file compatibility refactoring, configuration migration, bounded retry semantics, and crash-safe state persistence.
-
-Generate it without calling any model:
-
-```bash
-codex-flow benchmark-corpus quick
-```
+The deterministic six-task corpus covers localized bug fixing, configuration precedence, multi-file compatibility refactoring, configuration migration, bounded retry semantics, and crash-safe state persistence.
 
 Profiles:
 
@@ -133,57 +104,105 @@ full
   Sol/high
 ```
 
-Materialization never invokes a model. Every task gets a deterministic seed commit and an external verifier outside the writable task repository. The full profile can consume substantial tokens and is never launched automatically.
+Every task gets a deterministic seed commit and an external verifier outside the writable task repository.
 
-## Run and analyze locally
+## Recommended real run: local Codex session
+
+v0.8 makes the local authenticated Codex session the primary real-benchmark path. No API key is required when your local Codex CLI is already authenticated through ChatGPT or another supported local login method.
+
+Run:
 
 ```bash
-codex-flow benchmark \
-  --manifest .codex-flow-benchmark/manifest.json \
-  --output benchmark/results/quick-001.jsonl
+codex-flow update
+codex-flow benchmark-local quick
 ```
 
-Every model/effort/repetition starts from a fresh clone at the same commit. Failed verification can trigger bounded repairs using the same model/effort. Token usage is accumulated across the first attempt and repairs, so the measured unit is **cost to finish the task**, not first-call price.
+The command performs the whole flow:
 
-Analyze with the bundled immutable GPT-5.6 price snapshot:
+```text
+check git/python/codex
+show codex CLI version
+        ↓
+materialize frozen quick corpus
+        ↓
+dry-run validate 18 planned runs
+        ↓
+show quota/token warning
+        ↓
+require confirmation:
+RUN QUICK 18
+        ↓
+run 18 real Codex executions
+        ↓
+fail fast on zero-usage infrastructure/auth failures
+        ↓
+analyze results
+        ↓
+render Markdown report
+```
+
+By default it writes timestamped files under `benchmark/results/`:
+
+```text
+quick-<timestamp>.jsonl
+quick-<timestamp>.analysis.json
+quick-<timestamp>.report.md
+quick-<timestamp>.meta.json
+```
+
+The metadata records the Codex CLI version, codex-flow commit, local-auth execution mode, manifest path, and result/report paths.
+
+For the first quick run, budget roughly up to ~5M total tokens as a conservative planning ceiling. Actual use can be much lower or higher depending on tool loops and repair attempts.
+
+### Cost semantics
+
+When the benchmark is run through a ChatGPT/Codex subscription, the dollar figures in reports are **API-equivalent reference costs only**. They are calculated from a pinned API price snapshot to compare configurations consistently; they are **not** the actual amount charged against the ChatGPT subscription.
+
+The primary measurements for subscription use are therefore:
+
+- pass rate
+- repair cycles
+- input/cached/output tokens
+- total token efficiency
+- wall time
+- API-equivalent reference cost for normalized model comparison
+
+## Lower-level benchmark commands
+
+You can still run each stage separately:
 
 ```bash
+codex-flow benchmark-corpus quick
+
+codex-flow benchmark \
+  --manifest .codex-flow-benchmark/manifest.json \
+  --output benchmark/results/quick-001.jsonl \
+  --fail-fast-infrastructure
+
 codex-flow benchmark-analyze \
   --results benchmark/results/quick-001.jsonl \
   --prices benchmark/prices/gpt-5.6-2026-08-30.json \
   --json
 ```
 
-The analyzer applies quality gates before cost comparison. A cheaper configuration that misses pass-rate or repair thresholds cannot win. Benchmark conclusions remain advisory; `policy/benchmark.toml` keeps `auto_apply = false`.
+The analyzer applies quality gates before comparing reference cost. Benchmark conclusions remain advisory; `policy/benchmark.toml` keeps `auto_apply = false`.
 
-## Guarded paid benchmark on GitHub Actions
+## Optional API-key GitHub Actions benchmark
 
-v0.7 adds `.github/workflows/benchmark-quick.yml` for the first real 18-run data collection without turning paid benchmarking into an automatic CI behavior.
+`.github/workflows/benchmark-quick.yml` remains available as an optional headless execution path for users who have an OpenAI API key. It is not the default benchmark route.
 
-The workflow is **manual `workflow_dispatch` only**. It has no `push`, `pull_request`, or schedule trigger. Before any Codex model execution it requires:
+It is manual `workflow_dispatch` only, requires `OPENAI_API_KEY` plus the exact confirmation `RUN QUICK 18`, exposes only the 18-run quick profile, and uploads results/analysis/report metadata as an artifact. Normal CI never invokes it.
 
-```text
-Repository secret: OPENAI_API_KEY
-Confirmation:      RUN QUICK 18
-```
+## Automatic model recommendations
 
-It exposes only the quick profile; the 90-run full profile is deliberately not available as an Actions button. The Codex npm version can be pinned per run, and both requested and actual CLI versions are stored with the artifact.
-
-The runner uses `--fail-fast-infrastructure`: a non-zero Codex exit with zero reported usage (for example authentication/CLI/model availability failure) stops the remaining batch instead of repeating the same infrastructure error 18 times.
-
-At the end of the job, available files are uploaded as a 30-day artifact, including raw JSONL, manifest, immutable prices, analysis JSON, readable Markdown report, Codex CLI version, and codex-flow commit. Partial/failing runs keep the evidence generated before failure.
-
-The Markdown report includes overall pass rate, infrastructure failures, repairs, token totals, estimated cost, per-model/effort results, and advisory task-class routing. If results exist, the same report is rendered into the GitHub Actions job summary.
-
-Full setup and safety notes: `docs/benchmark-actions.md`.
+`scripts/check-recommendation.py` and `.github/workflows/model-recommendation.yml` conservatively inspect OpenAI official model documentation and maintain release recommendations through reviewable PRs. The active parent remains policy-driven; worker `auto` recommendations change only through release defaults and explicit user updates.
 
 ## Measurement boundaries
 
-Current Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits.
+Current Codex JSONL reports input/cached/output usage but not a reliably separate reasoning-token field, and it does not reliably expose the provider-returned model identifier. Results therefore record the requested model/effort and the accounting fields Codex actually emits.
 
-The GitHub workflow authenticates through `OPENAI_API_KEY`; it does not commit credentials or synthesize an interactive login. Benchmark results record the Codex CLI version because harness changes are another experimental variable.
-
-Full benchmark methodology: `docs/benchmark.md`.
+Full methodology: `docs/benchmark.md`.
+Optional Actions setup: `docs/benchmark-actions.md`.
 
 ## Install-time overrides
 
@@ -199,22 +218,10 @@ CODEX_FLOW_MAX_REPAIR_CYCLES      default: 2
 CODEX_FLOW_BIN_DIR                default: ~/.local/bin
 ```
 
-## Compatibility model
-
-codex-flow deliberately uses several layers rather than depending on one unstable runtime feature:
-
-1. `codex-flow.toml` — model/effort policy.
-2. `policy/defaults.toml` — release-time `auto` recommendations.
-3. Codex `[agents]` — stable worker fallback.
-4. Skill + generic worker roles — classification, delegation, adaptive escalation, review, bounded repairs.
-5. Recommendation automation — official-source model/price maintenance through PRs.
-6. Benchmark corpus + runner + analyzer — advisory evidence for routing calibration.
-7. Guarded manual Actions workflow — reproducible quick data collection without automatic paid execution.
-
 ## CI
 
-Normal CI never invokes a paid model. It validates shell/Python/PowerShell syntax, deterministic model recommendation fixtures, quality-first benchmark analysis, report rendering, runner isolation/repair/token aggregation and infrastructure fail-fast behavior, deterministic corpus generation and seed verifier failure, Unix install/update flows, and Windows install/status/doctor/uninstall behavior.
+Normal CI never invokes a paid model. It validates shell/Python/PowerShell syntax, model recommendation fixtures, quality-first benchmark analysis, report rendering, runner isolation/repair/token aggregation and infrastructure fail-fast behavior, deterministic corpus generation, and installer/update flows.
 
 ## Status
 
-Private preview, version 0.7.0. Model recommendation changes remain reviewable; benchmark routing remains advisory; paid benchmark execution is always explicit; installed users change behavior only through explicit update/install actions and explicit pins remain authoritative.
+Private preview, version 0.8.0. Local authenticated benchmarking is the primary real-data path. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution is always explicit; explicit user pins remain authoritative.
