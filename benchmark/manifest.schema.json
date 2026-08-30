@@ -8,6 +8,7 @@
     "repetitions": {"type": "integer", "minimum": 1, "default": 1},
     "timeout_seconds": {"type": "integer", "minimum": 1, "default": 1800},
     "max_repair_cycles": {"type": "integer", "minimum": 0, "default": 2},
+    "allow_floating_refs": {"type": "boolean", "default": false},
     "matrix": {
       "type": "array",
       "minItems": 1,
