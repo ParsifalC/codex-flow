@@ -1,157 +1,138 @@
 ---
 name: cost-aware-development
-description: Route non-trivial software engineering work through a high-capability parent for planning and review while delegating exploration, implementation, testing, debugging, and bounded repair loops to cheaper workers. Use for medium/large coding tasks, refactors, migrations, CI/CD, infrastructure, debugging, and multi-file changes.
+description: Route non-trivial software engineering work through a qualifying high-capability parent for planning/review and cheaper workers for exploration, implementation, testing, debugging, and bounded repair. Adapt reasoning effort to task difficulty while keeping high as the normal minimum.
 ---
 
 # Cost-Aware Development
 
-Optimize for expensive-token efficiency, not minimum raw token count.
+Optimize expensive-token efficiency while preserving correctness. The policy is capability-driven, not tied to a permanent model slug.
 
-The policy is capability-driven, not tied to a specific flagship model name.
+## 0. Load policy
 
-## 0. Apply the parent capability policy
+When `~/.codex/codex-flow.toml` exists, use it as the policy source.
 
-When `~/.codex/codex-flow.toml` exists, treat it as the policy source.
+Default parent eligibility:
+- prefer the latest available high-capability model
+- minimum reasoning effort is `high`
+- exact model floor is configurable; `auto` means follow the current codex-flow recommendation/runtime capability
 
-The default policy is:
-- prefer the latest available high-capability model for the parent role
-- parent reasoning effort must be at least `high`
-- the exact minimum model can be `auto` or explicitly configured
-- worker model and effort are independently configurable
+Default worker policy:
+- prefer the latest cost-efficient model suitable for coding work
+- `model = "auto"` resolves to the current codex-flow recommendation at install/update time
+- reasoning baseline is `high`
+- task-specific escalation may request `xhigh` or `max`
 
-Do not require `gpt-5.6-sol` or `xhigh` specifically.
+Never require one historical model name such as `gpt-5.6-sol` to qualify.
 
-If the current parent satisfies the configured model policy and minimum reasoning effort, it may own planning and final review.
+If the active parent is known to be below the configured floor, do not pretend it qualifies. Elevate when the runtime supports it; otherwise keep the work direct and surface a concise policy warning.
 
-If the current parent is below the configured minimum, prefer automatic elevation to a qualifying model/reasoning level when the current Codex runtime supports it. Otherwise, avoid pretending the threshold is satisfied: keep the task direct or surface a concise warning that the active parent is below policy.
+## 1. Classify before spending
 
-`high`, `xhigh`, and `max` all satisfy a default minimum of `high`. Do not increase to `max` mechanically; use the lowest qualifying effort that is appropriate for the task.
+Classify the engineering task as SMALL, ROUTINE, COMPLEX, or CRITICAL.
 
-## 1. Classify the task
-
-Handle directly when the task is genuinely small:
+SMALL:
 - obvious localized change
-- one or two files
-- little architectural uncertainty
-- little or no exploratory work
-- low regression risk
+- usually one or two files
+- low uncertainty and regression risk
+- little exploration/testing
 
-Use delegation when the task is medium or large:
-- multiple files or systems
-- unclear root cause
-- architecture or compatibility decisions
-- refactor or migration
-- CI/CD or infrastructure
-- meaningful test/debug loops
-- substantial repository exploration
+ROUTINE:
+- clear implementation plan
+- several files may change
+- normal tests/debugging
+- no major architecture decision
 
-Do not create multi-agent overhead for trivial work.
+COMPLEX:
+- unclear root cause, difficult debugging, refactor/migration
+- architecture/compatibility decisions
+- substantial exploration or cross-system impact
 
-## 2. Explore cheaply when needed
+CRITICAL:
+- security-sensitive change
+- destructive/data migration
+- production-critical infrastructure or integrity risk
+- repeated lower-effort failure where quality dominates cost
 
-Delegate bounded read-only investigations before planning when repository discovery would otherwise consume substantial parent context.
+SMALL work stays with the parent. Delegate ROUTINE/COMPLEX/CRITICAL execution when useful.
 
-Good parallel investigations are independent, for example:
-- locate implementation and call sites
-- locate tests and fixtures
-- inspect workflow/configuration paths
-- identify compatibility constraints
+## 2. Choose the lowest sufficient effort
 
-Do not spawn several agents to answer the same question.
-Do not use writable workers for exploration.
+Use the configured floor and never go below it.
 
-When the runtime supports named custom agents, prefer `worker-explorer`. Otherwise use a normal subagent and explicitly instruct it to remain read-only and concise.
+Default routing:
 
-## 3. Parent plans
+| Class | Parent planning/review | Worker execution |
+| --- | --- | --- |
+| SMALL | `high` or current qualifying effort | direct; no worker |
+| ROUTINE | `high` | `high` |
+| COMPLEX | `xhigh` when available/justified | `xhigh` when available/justified |
+| CRITICAL | `xhigh` or `max` | `xhigh` or `max` only when quality-first |
 
-Before broad implementation, the qualifying parent owns and resolves:
-- root cause or intended architecture
+Do not use `max` merely because it exists. Escalate one level only when task risk/complexity or actual failure evidence justifies it.
+
+When the current Codex spawn surface supports per-child reasoning/model overrides, request the selected worker effort for that child. When it does not, use the installed high baseline and compensate with tighter scope, evidence, and review rather than relying on a broken override path.
+
+## 3. Explore cheaply
+
+For substantial repository discovery, delegate bounded read-only investigations. Parallelize only independent questions such as implementation/call sites, tests/fixtures, workflow/config paths, or compatibility constraints.
+
+Prefer `worker-explorer` when named roles are supported. Otherwise use a normal child with explicit read-only instructions. Do not duplicate investigations or dump entire repositories into parent context.
+
+## 4. Parent decides
+
+Before broad implementation, the qualifying parent owns:
+- root cause / architecture
 - scope and non-goals
-- files/components likely affected
 - implementation sequence
 - compatibility constraints
-- regression risks
+- risks
 - acceptance criteria
 
-Do not delegate an ambiguous request as "go solve this" when the parent can cheaply remove ambiguity first.
+Do not delegate an ambiguous "go solve this" if the parent can cheaply remove ambiguity first.
 
-## 4. Build a compact handoff packet
+## 5. Compact handoff
 
-Delegate implementation with only the information needed to execute:
+Send only:
 - Goal
-- Root cause / design decision
+- Root cause/design decision
 - Scope
 - Relevant files/components
-- Implementation steps
-- Constraints and non-goals
+- Steps
+- Constraints/non-goals
 - Acceptance criteria
 - Required validation
 
-Prefer a fresh child or no-history fork when supported. Avoid transferring irrelevant conversation history.
+Prefer fresh/no-history child context when supported. Do not hydrate a worker with irrelevant parent history.
 
-When the runtime supports named custom agents, prefer `worker-implementer`. Otherwise the configured default subagent is the implementation worker.
+## 6. Worker implements and proves
 
-## 5. Worker implements and verifies
+The worker makes the scoped change, runs the narrowest relevant validation first, fixes failures caused by the patch, avoids unrelated cleanup, and returns:
+- changed files
+- concise implementation summary
+- validation commands/results
+- deviations
+- unresolved risks/failures
 
-The worker should:
-- make the complete scoped change
-- run targeted validation first
-- fix failures caused by the change
-- avoid unrelated cleanup
-- summarize changed files and evidence
+Return evidence, not verbose logs.
 
-Do not send verbose build logs back to the parent. Return exit codes, failing test names, relevant excerpts, and final status.
+## 7. Parent reviews, not reimplements
 
-## 6. Parent reviews instead of reimplementing
+Review `git diff --stat`, the actual relevant diff, directly affected call sites, validation evidence, every acceptance criterion, architecture consistency, and regression risk.
 
-After the worker returns, inspect:
-- `git diff --stat`
-- the actual diff
-- changed files and directly affected call sites
-- validation evidence
-- each acceptance criterion
-- regression and architecture risk
+Expand investigation only for a concrete review concern. PASS only when criteria are satisfied with adequate evidence.
 
-Do not solve the whole task again.
-Expand investigation only when a concrete review concern requires it.
+## 8. Repair with bounded delta tasks
 
-PASS when the implementation satisfies the plan and acceptance criteria with adequate evidence.
+On failure, send only the exact defect, impact, required correction, relevant file/symbol, and validation required. Do not resend the original task.
 
-## 7. Repair with delta tasks
-
-If review fails, formulate a bounded repair task containing only:
-- exact defect
-- impact
-- required correction
-- relevant file/symbol
-- validation required
-
-Return the delta to the worker instead of resending the full original task.
-
-Allow at most two implementation/review repair cycles. After repeated failure, reassess the root cause or plan at the parent level rather than continuing an expensive blind loop.
-
-## Reasoning policy
-
-Treat reasoning effort as a threshold plus task-adaptive choice, not a fixed constant.
-
-Default guidance:
-- parent planning/review: `high` minimum
-- routine worker execution: `high`
-- difficult debugging/refactor worker: `xhigh`
-- `max`: only when the task is genuinely quality-first and lower qualifying levels are insufficient
-
-When a newer model family becomes the current recommended generation, prefer it automatically when the runtime exposes a stable current-model choice. Otherwise respect the explicitly configured model floor/policy instead of hardcoding a stale model name in the workflow.
+Use the configured maximum repair cycles (default 2). If repeated repairs fail, reassess root cause/plan and optionally escalate effort/model capability rather than continuing a blind loop.
 
 ## Context discipline
 
-Prefer targeted searches, diff-scoped review, concise test modes, and small relevant excerpts. Avoid whole-repository dumps, full verbose logs, rereading unchanged files, duplicate investigations, and asking the parent to redo worker implementation.
+Prefer targeted search, diff-scoped review, concise test modes, and small relevant excerpts. Avoid full repo dumps, full verbose logs, rereading unchanged files, duplicate agents, and parent reimplementation.
 
 ## Concurrency discipline
 
-Parallelize independent read-only exploration. Do not run overlapping writable workers against the same files/worktree. Use separate worktrees only when implementation workstreams are genuinely independent.
+Parallelize independent read-only exploration. Do not run overlapping writable workers on the same files/worktree; isolate genuinely independent workstreams.
 
-## Escalation
-
-The parent should take deeper control when the worker reports a real architecture blocker, two repair cycles fail, security/destructive migration/data-integrity/critical-infrastructure risk is involved, or acceptance criteria cannot be proven with available validation.
-
-The goal is simple: spend high-capability-model tokens at decision gates and lower-cost-model tokens inside execution loops.
+The invariant is: qualifying high-capability reasoning makes decisions; cost-efficient execution performs loops; effort rises only when the task proves it needs to.
