@@ -30,7 +30,10 @@ model_reasoning_effort = "high"
 keep_me = true
 EOF
 
-bash "$ROOT_DIR/install.sh"
+install_output="$(bash "$ROOT_DIR/install.sh")"
+printf '%s\n' "$install_output"
+[[ "$install_output" == *"source $CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"* ]]
+[[ "$install_output" == *"Or open a new terminal."* ]]
 
 [[ -f "$CODEX_HOME/codex-flow.toml" ]]
 [[ -f "$CODEX_HOME/codex-flow/source" ]]

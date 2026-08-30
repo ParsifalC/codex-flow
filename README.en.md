@@ -70,8 +70,10 @@ The management command is installed under `~/.local/bin`. When the default
 shell is Bash or zsh, installation also adds one marked, idempotent block to
 the corresponding shell rc file. That block adds the CLI directory to `PATH`
 and registers `codex-flow` subcommand completion, including
-`benchmark-local quick|full` and `benchmark-corpus quick|full`. Open a new
-terminal after installation. Restart Codex, then use Codex normally.
+`benchmark-local quick|full` and `benchmark-corpus quick|full`. After
+installation, the installer explicitly prompts you to run `source ~/.zshrc`
+(`source ~/.bashrc` for Bash) to update the current terminal immediately, or
+to open a new terminal. Restart Codex, then use Codex normally.
 
 Shell selection follows `CODEX_FLOW_SHELL` when set, otherwise the basename of
 `SHELL`. Use `CODEX_FLOW_SHELL_CONFIG_DIR` to place the managed `.bashrc`,
@@ -230,4 +232,4 @@ Normal CI never invokes a paid model. It validates shell/Python/PowerShell synta
 
 ## Status
 
-Private preview, version 0.8.1. Local authenticated benchmarking is the primary real-data path. Per-task `direct`, `delegate`, and `adaptive` routing overrides are explicit and non-persistent. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution is always explicit; explicit user pins remain authoritative.
+Private preview, version 0.8.2. Local authenticated benchmarking is the primary real-data path. Per-task `direct`, `delegate`, and `adaptive` routing overrides are explicit and non-persistent. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution is always explicit; explicit user pins remain authoritative.

@@ -76,7 +76,7 @@ cd codex-flow
 .\install.ps1
 ```
 
-管理命令默认安装到 `~/.local/bin`。如果当前默认 shell 是 Bash 或 zsh，安装器还会向对应的 rc 文件写入一个带明确标记、可重复执行的托管块。该托管块会自动把 CLI 目录加入 `PATH`，并注册 `codex-flow` 子命令补全，包括 `benchmark-local quick|full` 和 `benchmark-corpus quick|full`。安装后打开新终端即可生效；Codex 本身仍需重启，之后正常使用即可，不需要每次手动调用特殊命令或 Prompt。
+管理命令默认安装到 `~/.local/bin`。如果当前默认 shell 是 Bash 或 zsh，安装器还会向对应的 rc 文件写入一个带明确标记、可重复执行的托管块。该托管块会自动把 CLI 目录加入 `PATH`，并注册 `codex-flow` 子命令补全，包括 `benchmark-local quick|full` 和 `benchmark-corpus quick|full`。安装完成后，安装器会明确提示执行 `source ~/.zshrc`（Bash 为 `source ~/.bashrc`）立即更新当前终端，或者打开一个新终端。Codex 本身仍需重启，之后正常使用即可，不需要每次手动调用特殊命令或 Prompt。
 
 Shell 选择优先读取 `CODEX_FLOW_SHELL`，否则使用 `SHELL` 的 basename。`CODEX_FLOW_SHELL_CONFIG_DIR` 可将托管的 `.bashrc`、登录 profile 或 `.zshrc` 放到指定配置目录；无法识别 shell 时，安装器仍会输出手动添加 `PATH` 的提示。
 
@@ -328,6 +328,6 @@ CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME
 
 ## 当前状态
 
-Private preview，版本 `0.8.1`。
+Private preview，版本 `0.8.2`。
 
 本地认证 Benchmark 是默认真实数据采集路径；`direct`、`delegate`、`adaptive` 是显式且非持久的当前任务覆盖；模型推荐变更需要 review；Benchmark routing 保持 advisory；真实 Benchmark 必须由用户明确触发；用户明确 pin 的配置始终拥有最高持久配置优先级。

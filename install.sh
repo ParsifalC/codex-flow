@@ -183,7 +183,9 @@ Restart Codex, then use it normally.
 EOF
 
 if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
-  printf 'shell: %s (managed rc under %s; open a new terminal to use it)\n' "$SHELL_NAME" "$SHELL_CONFIG_DIR"
+  printf '\nShell integration installed for %s.\n' "$SHELL_NAME"
+  printf 'Activate completion in this terminal now:\n  source %q\n' "$SHELL_CONFIG_DIR/.${SHELL_NAME}rc"
+  printf 'Or open a new terminal.\n'
 else
   case ":${PATH}:" in
     *":$BIN_DIR:"*) printf 'Run: codex-flow status\n' ;;
