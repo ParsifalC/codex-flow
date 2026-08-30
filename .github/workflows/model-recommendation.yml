@@ -1,0 +1,65 @@
+name: model recommendation
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: model-recommendation
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check OpenAI official model docs
+        id: recommendation
+        run: |
+          python3 scripts/check-recommendation.py --write --json | tee /tmp/recommendation.json
+          if git diff --quiet -- policy/defaults.toml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate changed recommendation
+        if: steps.recommendation.outputs.changed == 'true'
+        run: |
+          python3 scripts/check-recommendation.py --fixture tests/fixtures/models.json --json >/dev/null
+          bash tests/smoke.sh
+
+      - name: Create or refresh recommendation PR
+        if: steps.recommendation.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="automation/model-recommendation"
+          report="$(cat /tmp/recommendation.json)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add policy/defaults.toml
+          git commit -m "chore: update model recommendations"
+          git push --force-with-lease origin "$branch"
+
+          existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+          if [[ -z "$existing" ]]; then
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "chore: update model recommendations" \
+              --body "Automated recommendation update derived from OpenAI official model documentation.\n\nThe parent recommendation is metadata only and does not pin the active parent. The worker recommendation affects only users who keep worker.model = auto. Explicit pins remain unchanged.\n\nResult:\n\`\`\`json\n${report}\n\`\`\`"
+          else
+            echo "Recommendation PR #$existing refreshed."
+          fi
