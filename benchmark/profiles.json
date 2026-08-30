@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "quick": {
+      "description": "Low-cost smoke comparison before spending on a full corpus run.",
+      "repetitions": 1,
+      "matrix": [
+        {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
+        {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
+        {"model": "gpt-5.6-sol", "reasoning_effort": "high"}
+      ]
+    },
+    "full": {
+      "description": "Initial routing-calibration matrix; three repetitions per task/configuration.",
+      "repetitions": 3,
+      "matrix": [
+        {"model": "gpt-5.6-luna", "reasoning_effort": "high"},
+        {"model": "gpt-5.6-luna", "reasoning_effort": "xhigh"},
+        {"model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
+        {"model": "gpt-5.6-sol", "reasoning_effort": "high"}
+      ]
+    }
+  }
+}
