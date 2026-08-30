@@ -36,6 +36,20 @@ switch ($cmd) {
             Write-Host "  worker:    $(Get-PolicyValue worker resolved_model) / $(Get-PolicyValue worker min_reasoning_effort)"
         }
     }
+    'benchmark-corpus' {
+        $src = Get-SourceDir
+        $profile = if ($rest.Count -gt 0) { $rest[0] } else { 'quick' }
+        if ($profile -notin @('quick','full')) { throw 'benchmark-corpus profile must be quick or full' }
+        $outputRoot = if ($rest.Count -gt 1) { $rest[1] } else { Join-Path (Get-Location) '.codex-flow-benchmark' }
+        New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+        & python3 (Join-Path $src 'scripts/materialize-corpus.py') `
+            --corpus (Join-Path $src 'benchmark/corpus.json') `
+            --profiles (Join-Path $src 'benchmark/profiles.json') `
+            --profile $profile `
+            --output-dir (Join-Path $outputRoot 'corpus') `
+            --manifest (Join-Path $outputRoot 'manifest.json')
+        exit $LASTEXITCODE
+    }
     'benchmark' {
         & python3 (Join-Path (Get-SourceDir) 'scripts/run-benchmark.py') @rest
         exit $LASTEXITCODE
@@ -76,9 +90,13 @@ Commands:
   status              Show installed version and effective policy
   update              Pull the checkout, preserve explicit policy, refresh auto recommendations
   doctor              Verify installation and routing configuration
+  benchmark-corpus    Materialize the built-in corpus without calling any model
   benchmark           Run a reproducible Codex benchmark manifest
   benchmark-analyze   Analyze benchmark JSONL with quality-first cost routing
   uninstall           Remove codex-flow-managed files
+
+benchmark-corpus usage:
+  codex-flow benchmark-corpus [quick|full] [output-directory]
 '@
     }
 }
