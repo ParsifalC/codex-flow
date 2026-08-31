@@ -104,11 +104,11 @@ jobs:
           $installOutput
           if ($installExit -ne 0) { exit $installExit }
           foreach ($expected in @(
-            'IMPORTANT: FULL CODEX RESTART REQUIRED',
-            'Fully quit Codex and open it again; starting a new task alone',
-            'Telemetry is enabled: run /hooks; approve FlowPilot telemetry',
-            'After restarting, start a new task and a new turn',
-            'already-running turn cannot rebuild its starting snapshot.'
+            'REQUIRED NEXT STEPS',
+            'Complete Codex Restart',
+            'Fully quit Codex and relaunch it',
+            'Authorize Hooks',
+            '/hooks'
           )) {
             if (-not $installOutput.Contains($expected)) { throw "installer reminder missing: $expected" }
           }
