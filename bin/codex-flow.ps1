@@ -59,8 +59,14 @@ switch ($cmd) {
     }
     'benchmark' { & python3 (Join-Path (Get-SourceDir) 'scripts/run-benchmark.py') @rest; exit $LASTEXITCODE }
     'benchmark-analyze' { & python3 (Join-Path (Get-SourceDir) 'scripts/analyze-benchmark.py') @rest; exit $LASTEXITCODE }
-    'doctor' { & (Join-Path (Get-SourceDir) 'scripts/doctor.ps1'); exit $LASTEXITCODE }
-    'uninstall' { & (Join-Path (Get-SourceDir) 'scripts/uninstall.ps1'); exit $LASTEXITCODE }
+    'doctor' { & (Join-Path (Get-SourceDir) 'scripts/doctor.ps1'); if (-not $?) { exit 1 }; exit 0 }
+    'uninstall' {
+        & (Join-Path (Get-SourceDir) 'scripts/uninstall.ps1')
+        if (-not $?) { exit 1 }
+        # Do not propagate a stale native-process exit code from helpers used by
+        # uninstall.ps1. Successful PowerShell completion is the contract here.
+        exit 0
+    }
     'update' {
         $src = Get-SourceDir
         if (-not (Test-Path (Join-Path $src '.git'))) { throw 'update requires the original git checkout' }
