@@ -61,10 +61,12 @@ jobs:
       fail-fast: false
       matrix:
         shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
       - name: Parse PowerShell entrypoints
-        shell: ${{ matrix.shell }}
         run: |
           $files = @('install.ps1','bin/codex-flow.ps1','scripts/doctor.ps1','scripts/uninstall.ps1')
           foreach ($file in $files) {
@@ -76,7 +78,6 @@ jobs:
             }
           }
       - name: Installer and CLI smoke test
-        shell: ${{ matrix.shell }}
         run: |
           $root = (Get-Location).Path
           $tmp = Join-Path $env:RUNNER_TEMP ('codex-flow-smoke-' + '${{ matrix.shell }}')
