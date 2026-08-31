@@ -1,15 +1,23 @@
 $ErrorActionPreference = 'Stop'
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $Config = Join-Path $CodexHome 'config.toml'
+$Hooks = Join-Path $CodexHome 'hooks.json'
+$StateDir = Join-Path $CodexHome 'codex-flow'
 $BinDir = if ($env:CODEX_FLOW_BIN_DIR) { $env:CODEX_FLOW_BIN_DIR } else { Join-Path $HOME '.local/bin' }
+
+$hookManager = Join-Path $StateDir 'manage-hooks.py'
+if ((Test-Path $hookManager) -and (Get-Command python3 -ErrorAction SilentlyContinue)) {
+    & python3 $hookManager uninstall --hooks $Hooks
+}
 
 Remove-Item (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/luna-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'codex-flow.toml') -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $CodexHome 'codex-flow') -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $CodexHome 'skills/flow-pilot') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'skills/cost-aware-development') -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $StateDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $BinDir 'codex-flow.ps1') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $BinDir 'codex-flow.cmd') -Force -ErrorAction SilentlyContinue
 
@@ -36,4 +44,4 @@ if (Test-Path $Config) {
     }
 }
 
-Write-Host 'codex-flow files, CLI, and policy removed. Existing backups were preserved.'
+Write-Host 'codex-flow FlowPilot, telemetry hooks, CLI, and policy removed. Existing backups were preserved.'
