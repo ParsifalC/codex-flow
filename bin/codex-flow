@@ -20,16 +20,10 @@ read_policy_value() {
     $0 == section { in_section=1; next }
     /^\[/ { in_section=0 }
     in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-      value=$0
-      sub(/^[^=]*=[[:space:]]*/, "", value)
-      sub(/[[:space:]]+#.*$/, "", value)
+      value=$0; sub(/^[^=]*=[[:space:]]*/, "", value); sub(/[[:space:]]+#.*$/, "", value)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      if (value ~ /^".*"$/) {
-        sub(/^"/, "", value)
-        sub(/"$/, "", value)
-      }
-      print value
-      exit
+      if (value ~ /^".*"$/) { sub(/^"/, "", value); sub(/"$/, "", value) }
+      print value; exit
     }
   ' "$file"
 }
@@ -45,48 +39,38 @@ case "$cmd" in
     printf '  checkout:  %s\n' "$src"
     printf '  checkout version: %s\n' "$available"
     if [[ -f "$POLICY" ]]; then
-      printf '  policy:    %s\n' "$POLICY"
-      printf '  parent:    %s / min effort %s\n' \
-        "$(read_policy_value parent model_policy "$POLICY")" \
-        "$(read_policy_value parent min_reasoning_effort "$POLICY")"
-      printf '  worker:    %s / %s\n' \
-        "$(read_policy_value worker resolved_model "$POLICY")" \
-        "$(read_policy_value worker min_reasoning_effort "$POLICY")"
+      printf '  skill:     FlowPilot\n'
+      printf '  parent:    %s / min effort %s\n' "$(read_policy_value parent model_policy "$POLICY")" "$(read_policy_value parent min_reasoning_effort "$POLICY")"
+      printf '  worker:    %s / %s\n' "$(read_policy_value worker resolved_model "$POLICY")" "$(read_policy_value worker min_reasoning_effort "$POLICY")"
+      printf '  telemetry: %s\n' "$(read_policy_value telemetry enabled "$POLICY")"
     fi
     ;;
-  benchmark-local)
+  usage)
     shift
-    exec python3 "$(source_dir)/scripts/benchmark-local.py" "$@"
+    [[ -f "$STATE_DIR/telemetry.py" ]] || fail "telemetry collector not installed; reinstall codex-flow"
+    case "${1:-last}" in
+      last) shift || true; exec python3 "$STATE_DIR/telemetry.py" last "$@" ;;
+      *) fail "usage supports: last [--json]" ;;
+    esac
     ;;
+  benchmark-local)
+    shift; exec python3 "$(source_dir)/scripts/benchmark-local.py" "$@" ;;
   benchmark-corpus)
     shift
-    src="$(source_dir)"
-    profile="${1:-quick}"
+    src="$(source_dir)"; profile="${1:-quick}"
     [[ "$profile" == "quick" || "$profile" == "full" ]] || fail "benchmark-corpus profile must be quick or full"
     [[ $# -gt 0 ]] && shift
-    output_root="${1:-$PWD/.codex-flow-benchmark}"
-    mkdir -p "$output_root"
-    exec python3 "$src/scripts/materialize-corpus.py" \
-      --corpus "$src/benchmark/corpus.json" \
-      --profiles "$src/benchmark/profiles.json" \
-      --profile "$profile" \
-      --output-dir "$output_root/corpus" \
-      --manifest "$output_root/manifest.json"
+    output_root="${1:-$PWD/.codex-flow-benchmark}"; mkdir -p "$output_root"
+    exec python3 "$src/scripts/materialize-corpus.py" --corpus "$src/benchmark/corpus.json" --profiles "$src/benchmark/profiles.json" --profile "$profile" --output-dir "$output_root/corpus" --manifest "$output_root/manifest.json"
     ;;
   benchmark)
-    shift
-    exec python3 "$(source_dir)/scripts/run-benchmark.py" "$@"
-    ;;
+    shift; exec python3 "$(source_dir)/scripts/run-benchmark.py" "$@" ;;
   benchmark-analyze)
-    shift
-    exec python3 "$(source_dir)/scripts/analyze-benchmark.py" "$@"
-    ;;
+    shift; exec python3 "$(source_dir)/scripts/analyze-benchmark.py" "$@" ;;
   doctor)
-    exec bash "$(source_dir)/scripts/doctor"
-    ;;
+    exec bash "$(source_dir)/scripts/doctor" ;;
   uninstall)
-    exec bash "$(source_dir)/scripts/uninstall"
-    ;;
+    exec bash "$(source_dir)/scripts/uninstall" ;;
   update)
     src="$(source_dir)"
     [[ -d "$src/.git" ]] || fail "update requires the original git checkout"
@@ -101,19 +85,16 @@ case "$cmd" in
     worker_effort="$(read_policy_value worker min_reasoning_effort "$POLICY")"
     max_threads="$(read_policy_value runtime max_concurrent_threads "$POLICY")"
     repair_cycles="$(read_policy_value runtime max_repair_cycles "$POLICY")"
+    telemetry_enabled="$(read_policy_value telemetry enabled "$POLICY")"
+    [[ -n "$telemetry_enabled" ]] || telemetry_enabled=true
 
     before="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
     git -C "$src" pull --ff-only
     after="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
 
-    CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" \
-    CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" \
-    CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \
-    CODEX_FLOW_WORKER_MODEL_POLICY="$worker_policy" \
-    CODEX_FLOW_WORKER_MODEL="$worker_model" \
-    CODEX_FLOW_WORKER_MIN_EFFORT="$worker_effort" \
-    CODEX_FLOW_MAX_THREADS="$max_threads" \
-    CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" \
+    CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \
+    CODEX_FLOW_WORKER_MODEL_POLICY="$worker_policy" CODEX_FLOW_WORKER_MODEL="$worker_model" CODEX_FLOW_WORKER_MIN_EFFORT="$worker_effort" \
+    CODEX_FLOW_MAX_THREADS="$max_threads" CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" CODEX_FLOW_TELEMETRY_ENABLED="$telemetry_enabled" \
       bash "$src/install.sh"
 
     printf '\nupdated %s -> %s\n' "$before" "$after"
@@ -124,13 +105,15 @@ case "$cmd" in
 codex-flow <command>
 
 Commands:
-  status              Show installed version and effective policy
-  update              Pull the checkout, preserve explicit policy, refresh auto recommendations
-  doctor              Verify installation and routing configuration
+  status              Show installed version and effective FlowPilot policy
+  update              Pull checkout, preserve policy, refresh auto recommendations
+  doctor              Verify installation, routing, and telemetry wiring
+  usage last          Show the last deterministic task summary
+  usage last --json   Show raw telemetry for the last completed task
   benchmark-local     Run built-in benchmark through the local Codex login session
   benchmark-corpus    Materialize the built-in corpus without calling any model
   benchmark           Run a reproducible Codex benchmark manifest
-  benchmark-analyze   Analyze benchmark JSONL with quality-first cost routing
+  benchmark-analyze   Analyze benchmark JSONL with quality-first routing
   uninstall           Remove codex-flow-managed files
 
 Recommended first real run:
