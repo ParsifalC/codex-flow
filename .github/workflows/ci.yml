@@ -17,6 +17,7 @@ jobs:
           bash -n scripts/doctor
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
+          bash -n tests/telemetry.sh
           bash -n tests/benchmark.sh
           bash -n tests/runner.sh
           bash -n tests/corpus.sh
@@ -26,22 +27,19 @@ jobs:
           python3 -m py_compile scripts/run-benchmark.py
           python3 -m py_compile scripts/materialize-corpus.py
           python3 -m py_compile scripts/manage-shell.py
+          python3 -m py_compile scripts/manage-hooks.py
+          python3 -m py_compile scripts/telemetry.py
           python3 -m py_compile scripts/render-benchmark-report.py
           python3 -m py_compile scripts/benchmark-local.py
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].each { |f| YAML.parse_file(f) }'
       - name: Recommendation policy test
         run: |
-          python3 scripts/check-recommendation.py \
-            --fixture tests/fixtures/models.json \
-            --json | tee /tmp/recommendation.json
+          python3 scripts/check-recommendation.py --fixture tests/fixtures/models.json --json | tee /tmp/recommendation.json
           grep -Fq '"parent_recommended_model": "gpt-5.6-sol"' /tmp/recommendation.json
           grep -Fq '"worker_model": "gpt-5.6-luna"' /tmp/recommendation.json
-
           cp policy/defaults.toml /tmp/defaults.toml
           sed -i 's/worker_model = "gpt-5.6-luna"/worker_model = "gpt-5.6-terra"/' /tmp/defaults.toml
-          python3 scripts/check-recommendation.py \
-            --fixture tests/fixtures/models.json \
-            --defaults /tmp/defaults.toml \
-            --write --json >/tmp/recommendation-write.json
+          python3 scripts/check-recommendation.py --fixture tests/fixtures/models.json --defaults /tmp/defaults.toml --write --json >/tmp/recommendation-write.json
           grep -Fq 'worker_model = "gpt-5.6-luna"' /tmp/defaults.toml
           grep -Fq '"changed": true' /tmp/recommendation-write.json
       - name: Benchmark routing test
@@ -52,6 +50,8 @@ jobs:
         run: bash tests/corpus.sh
       - name: Benchmark report test
         run: bash tests/report.sh
+      - name: FlowPilot telemetry test
+        run: bash tests/telemetry.sh
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
 
@@ -62,17 +62,10 @@ jobs:
       - name: Parse PowerShell entrypoints
         shell: pwsh
         run: |
-          $files = @(
-            'install.ps1',
-            'bin/codex-flow.ps1',
-            'scripts/doctor.ps1',
-            'scripts/uninstall.ps1'
-          )
+          $files = @('install.ps1','bin/codex-flow.ps1','scripts/doctor.ps1','scripts/uninstall.ps1')
           foreach ($file in $files) {
             $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $file), [ref]$null, [ref]$errors
-            ) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$null, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error "${file}: $($_.Message)" }
               exit 1
@@ -89,13 +82,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:CODEX_HOME,$env:CODEX_FLOW_BIN_DIR,$fakeBin | Out-Null
           '@echo off\r\necho codex-test 0.0.0\r\n' | Set-Content (Join-Path $fakeBin 'codex.cmd') -NoNewline
           $env:PATH = "$fakeBin;$env:CODEX_FLOW_BIN_DIR;$env:PATH"
-          @'
-model = "user-parent-model"
-model_reasoning_effort = "high"
-
-[unrelated]
-keep_me = true
-'@ | Set-Content (Join-Path $env:CODEX_HOME 'config.toml')
+          @('model = "user-parent-model"','model_reasoning_effort = "high"','','[unrelated]','keep_me = true') | Set-Content (Join-Path $env:CODEX_HOME 'config.toml')
 
           & "$root\install.ps1"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -107,7 +94,11 @@ keep_me = true
           $config = Get-Content (Join-Path $env:CODEX_HOME 'config.toml') -Raw
           if ($config -notmatch 'default_subagent_model\s*=\s*"gpt-5\.6-luna"') { throw 'worker model was not installed' }
           $policy = Get-Content (Join-Path $env:CODEX_HOME 'codex-flow.toml') -Raw
+          if ($policy -notmatch 'schema_version\s*=\s*3') { throw 'policy schema was not upgraded' }
           if ($policy -notmatch 'model\s*=\s*"auto"') { throw 'auto worker policy was not preserved' }
+          if (-not (Test-Path (Join-Path $env:CODEX_HOME 'skills/flow-pilot/SKILL.md'))) { throw 'FlowPilot skill missing' }
+          if (-not (Test-Path (Join-Path $env:CODEX_HOME 'hooks.json'))) { throw 'telemetry hooks missing' }
 
           & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') uninstall
           if (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow.toml')) { throw 'policy survived uninstall' }
+          if (Test-Path (Join-Path $env:CODEX_HOME 'skills/flow-pilot')) { throw 'FlowPilot skill survived uninstall' }

@@ -3,62 +3,47 @@ set -euo pipefail
 
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG="$CODEX_HOME/config.toml"
+HOOKS="$CODEX_HOME/hooks.json"
 BIN_DIR="${CODEX_FLOW_BIN_DIR:-$HOME/.local/bin}"
 STATE_DIR="$CODEX_HOME/codex-flow"
 
-# Prefer the path captured at install time so uninstall remains exact even if
-# CODEX_FLOW_BIN_DIR is not exported in the current shell.
-if [[ -f "$STATE_DIR/shell/bin_dir" ]]; then
-  BIN_DIR="$(cat "$STATE_DIR/shell/bin_dir")"
-fi
+if [[ -f "$STATE_DIR/shell/bin_dir" ]]; then BIN_DIR="$(cat "$STATE_DIR/shell/bin_dir")"; fi
 
 SHELL_HELPER="$STATE_DIR/shell/manage-shell.py"
 if [[ -f "$SHELL_HELPER" ]] && command -v python3 >/dev/null 2>&1; then
   python3 "$SHELL_HELPER" uninstall --state-dir "$STATE_DIR"
 fi
+HOOK_HELPER="$STATE_DIR/manage-hooks.py"
+if [[ -f "$HOOK_HELPER" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 "$HOOK_HELPER" uninstall --hooks "$HOOKS"
+fi
 
-rm -f "$CODEX_HOME/agents/worker-explorer.toml"
-rm -f "$CODEX_HOME/agents/worker-implementer.toml"
-rm -f "$CODEX_HOME/agents/luna-explorer.toml"
-rm -f "$CODEX_HOME/agents/luna-implementer.toml"
+rm -f "$CODEX_HOME/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-implementer.toml"
+rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 rm -f "$CODEX_HOME/codex-flow.toml"
+rm -rf "$CODEX_HOME/skills/flow-pilot" "$CODEX_HOME/skills/cost-aware-development"
 rm -rf "$STATE_DIR"
-rm -rf "$CODEX_HOME/skills/cost-aware-development"
 rm -f "$BIN_DIR/codex-flow"
 
 if [[ -f "$CONFIG" ]] && command -v python3 >/dev/null 2>&1; then
   python3 - "$CONFIG" <<'PY'
 from pathlib import Path
-import re
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-keys = {
-    "enabled",
-    "max_concurrent_threads_per_session",
-    "default_subagent_model",
-    "default_subagent_reasoning_effort",
-}
-
+import re, sys
+path = Path(sys.argv[1]); text = path.read_text()
+keys = {"enabled","max_concurrent_threads_per_session","default_subagent_model","default_subagent_reasoning_effort"}
 m = re.search(r"(?ms)^\[agents\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)", text)
 if m:
-    body = m.group(1)
-    lines = []
-    for line in body.splitlines():
-        key = line.split("=", 1)[0].strip() if "=" in line else None
-        if key in keys:
-            continue
-        lines.append(line)
-    new_body = "\n".join(lines).strip("\n")
-    if new_body.strip():
-        new_body += "\n"
-        text = text[:m.start(1)] + new_body + text[m.end(1):]
+    lines=[]
+    for line in m.group(1).splitlines():
+        key=line.split("=",1)[0].strip() if "=" in line else None
+        if key not in keys: lines.append(line)
+    body="\n".join(lines).strip("\n")
+    if body.strip(): text=text[:m.start(1)] + body + "\n" + text[m.end(1):]
     else:
-        text = text[:m.start()] + text[m.end():]
-        text = re.sub(r"\n{3,}", "\n\n", text)
+        text=text[:m.start()] + text[m.end():]
+        text=re.sub(r"\n{3,}","\n\n",text)
     path.write_text(text)
 PY
 fi
 
-printf 'codex-flow files, CLI, and policy removed. Existing backups were preserved.\n'
+printf 'codex-flow FlowPilot, telemetry hooks, CLI, and policy removed. Existing backups were preserved.\n'

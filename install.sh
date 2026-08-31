@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG="$CODEX_HOME/config.toml"
 POLICY="$CODEX_HOME/codex-flow.toml"
+HOOKS="$CODEX_HOME/hooks.json"
 DEFAULTS="$ROOT_DIR/policy/defaults.toml"
 STATE_DIR="$CODEX_HOME/codex-flow"
 BIN_DIR="${CODEX_FLOW_BIN_DIR:-$HOME/.local/bin}"
@@ -19,8 +20,6 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-# Read the scalar values used by codex-flow without requiring Python 3.11's
-# tomllib (or a separately installed tomli package).
 read_toml_value() {
   local section="$1" key="$2" file="$3"
   awk -v section="[$section]" -v key="$key" '
@@ -31,10 +30,7 @@ read_toml_value() {
       sub(/^[^=]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]+#.*$/, "", value)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      if (value ~ /^".*"$/) {
-        sub(/^"/, "", value)
-        sub(/"$/, "", value)
-      }
+      if (value ~ /^".*"$/) { sub(/^"/, "", value); sub(/"$/, "", value) }
       print value
       found=1
       exit
@@ -52,8 +48,6 @@ read_default() {
   printf '%s\n' "$value"
 }
 
-# Read release-time recommendations. The workflow itself never depends on these
-# exact slugs; `auto` resolves to the current recommendation shipped by codex-flow.
 DEFAULT_WORKER_MODEL="$(read_default models worker_model)"
 DEFAULT_PARENT_POLICY="$(read_default models parent_policy)"
 DEFAULT_PARENT_MIN_MODEL="$(read_default models parent_min_model)"
@@ -70,11 +64,13 @@ WORKER_MODEL="$WORKER_MODEL_REQUESTED"
 WORKER_MIN_EFFORT="${CODEX_FLOW_WORKER_MIN_EFFORT:-high}"
 MAX_THREADS="${CODEX_FLOW_MAX_THREADS:-$DEFAULT_MAX_THREADS}"
 MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$DEFAULT_MAX_REPAIRS}"
+TELEMETRY_ENABLED="${CODEX_FLOW_TELEMETRY_ENABLED:-true}"
 
 case "$PARENT_MIN_EFFORT" in high|xhigh|max) ;; *) echo "parent minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
 case "$WORKER_MIN_EFFORT" in high|xhigh|max) ;; *) echo "worker minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
+case "$TELEMETRY_ENABLED" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_ENABLED must be true or false" >&2; exit 2 ;; esac
 
-mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/cost-aware-development" "$STATE_DIR" "$BIN_DIR"
+mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$BIN_DIR"
 
 if [[ -f "$CONFIG" ]]; then
   cp "$CONFIG" "$CONFIG.codex-flow.$STAMP.bak"
@@ -82,9 +78,6 @@ else
   touch "$CONFIG"
 fi
 
-# Keep a stable, economical baseline in Codex config. The Skill may request
-# xhigh/max for a specific child when the current runtime supports per-spawn
-# overrides; otherwise this high baseline remains safe and predictable.
 python3 - "$CONFIG" "$WORKER_MODEL" "$WORKER_MIN_EFFORT" "$MAX_THREADS" <<'PY'
 from pathlib import Path
 import re, sys
@@ -117,7 +110,7 @@ path.write_text(text)
 PY
 
 cat > "$POLICY" <<EOF
-schema_version = 2
+schema_version = 3
 
 [parent]
 model_policy = "$PARENT_MODEL_POLICY"
@@ -141,46 +134,58 @@ critical_effort = "max"
 [runtime]
 max_concurrent_threads = $MAX_THREADS
 max_repair_cycles = $MAX_REPAIRS
+
+[telemetry]
+enabled = $TELEMETRY_ENABLED
+summary = true
+source = "hooks+app-server"
 EOF
 
 cp "$ROOT_DIR/templates/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-explorer.toml"
 cp "$ROOT_DIR/templates/agents/worker-implementer.toml" "$CODEX_HOME/agents/worker-implementer.toml"
-cp "$ROOT_DIR/templates/skills/cost-aware-development/SKILL.md" "$CODEX_HOME/skills/cost-aware-development/SKILL.md"
+cp "$ROOT_DIR/templates/skills/flow-pilot/SKILL.md" "$CODEX_HOME/skills/flow-pilot/SKILL.md"
+rm -rf "$CODEX_HOME/skills/cost-aware-development"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 
-# Install lightweight management metadata and CLI. The checkout remains the
-# update source so private-repository authentication continues to use normal git.
 printf '%s\n' "$ROOT_DIR" > "$STATE_DIR/source"
 printf '%s\n' "$VERSION" > "$STATE_DIR/version"
 cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"
 chmod +x "$BIN_DIR/codex-flow"
+cp "$ROOT_DIR/scripts/telemetry.py" "$STATE_DIR/telemetry.py"
+cp "$ROOT_DIR/scripts/manage-hooks.py" "$STATE_DIR/manage-hooks.py"
+chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py"
 
-# Keep shell integration self-contained in the managed state directory. The
-# rc files only source init.sh, so changing or removing the checkout cannot
-# leave a shell pointing at a stale completion file.
+if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+  python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"
+else
+  python3 "$STATE_DIR/manage-hooks.py" uninstall --hooks "$HOOKS"
+fi
+
 if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
   mkdir -p "$STATE_DIR/shell"
   cp "$ROOT_DIR/scripts/manage-shell.py" "$STATE_DIR/shell/manage-shell.py"
   cp "$ROOT_DIR/completions/codex-flow.$SHELL_NAME" "$STATE_DIR/shell/codex-flow.$SHELL_NAME"
-  python3 "$STATE_DIR/shell/manage-shell.py" install \
-    --state-dir "$STATE_DIR" \
-    --shell "$SHELL_NAME" \
-    --config-dir "$SHELL_CONFIG_DIR" \
-    --bin-dir "$BIN_DIR"
+  python3 "$STATE_DIR/shell/manage-shell.py" install --state-dir "$STATE_DIR" --shell "$SHELL_NAME" --config-dir "$SHELL_CONFIG_DIR" --bin-dir "$BIN_DIR"
 fi
 
 cat <<EOF
 codex-flow $VERSION installed.
 
-  config: $CONFIG
-  policy: $POLICY
-  cli:    $BIN_DIR/codex-flow
-  parent: $PARENT_MODEL_POLICY / min=$PARENT_MIN_MODEL / reasoning >= $PARENT_MIN_EFFORT
-  worker: $WORKER_MODEL_POLICY / requested=$WORKER_MODEL_REQUESTED / resolved=$WORKER_MODEL / reasoning >= $WORKER_MIN_EFFORT
+  config:    $CONFIG
+  policy:    $POLICY
+  cli:       $BIN_DIR/codex-flow
+  skill:     FlowPilot (flow-pilot)
+  parent:    $PARENT_MODEL_POLICY / min=$PARENT_MIN_MODEL / reasoning >= $PARENT_MIN_EFFORT
+  worker:    $WORKER_MODEL_POLICY / requested=$WORKER_MODEL_REQUESTED / resolved=$WORKER_MODEL / reasoning >= $WORKER_MIN_EFFORT
+  telemetry: $TELEMETRY_ENABLED (deterministic hooks + app-server; no model call)
 
 Adaptive effort: high baseline -> xhigh for complex work -> max only for critical quality-first work.
 Restart Codex, then use it normally.
 EOF
+
+if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+  printf '\nCodex may ask once to trust the new command hooks. If prompted, review/approve them with /hooks.\n'
+fi
 
 if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
   printf '\nShell integration installed for %s.\n' "$SHELL_NAME"

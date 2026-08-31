@@ -1,4 +1,4 @@
-schema_version = 2
+schema_version = 3
 
 # Release-time recommendations. `auto` policy values resolve through this file.
 # Keep workflow semantics model-agnostic; update only these recommendations as
@@ -25,3 +25,8 @@ critical = "max"
 [runtime]
 max_concurrent_threads = 4
 max_repair_cycles = 2
+
+[telemetry]
+enabled = true
+summary = true
+source = "hooks+app-server"
