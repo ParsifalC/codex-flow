@@ -74,7 +74,10 @@ cat > "$TMP/manifest.json" <<EOF
 }
 EOF
 
-python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/manifest.json" --dry-run > "$TMP/plan.json"
+python3 "$ROOT/scripts/run-benchmark.py" \
+  --manifest "$TMP/manifest.json" \
+  --output "$TMP/dry-run-results.jsonl" \
+  --dry-run > "$TMP/plan.json"
 python3 - "$TMP/plan.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
