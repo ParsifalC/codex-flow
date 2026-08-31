@@ -28,6 +28,7 @@ jobs:
           python3 -m py_compile scripts/manage-shell.py
           python3 -m py_compile scripts/render-benchmark-report.py
           python3 -m py_compile scripts/benchmark-local.py
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].each { |f| YAML.parse_file(f) }'
       - name: Recommendation policy test
         run: |
           python3 scripts/check-recommendation.py \
@@ -89,13 +90,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:CODEX_HOME,$env:CODEX_FLOW_BIN_DIR,$fakeBin | Out-Null
           '@echo off\r\necho codex-test 0.0.0\r\n' | Set-Content (Join-Path $fakeBin 'codex.cmd') -NoNewline
           $env:PATH = "$fakeBin;$env:CODEX_FLOW_BIN_DIR;$env:PATH"
-          @'
-model = "user-parent-model"
-model_reasoning_effort = "high"
-
-[unrelated]
-keep_me = true
-'@ | Set-Content (Join-Path $env:CODEX_HOME 'config.toml')
+          @(
+            'model = "user-parent-model"',
+            'model_reasoning_effort = "high"',
+            '',
+            '[unrelated]',
+            'keep_me = true'
+          ) | Set-Content (Join-Path $env:CODEX_HOME 'config.toml')
 
           & "$root\install.ps1"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
