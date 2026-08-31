@@ -193,7 +193,7 @@ if ($TelemetryEnabled -eq 'true') {
 Write-Host '  ╰────────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkGray
 Write-Host ""
 
-Write-Host '  ┌─ ⚠️  REQUIRED NEXT STEPS ───────────────────────────────────────────┐' -ForegroundColor Yellow
+Write-Host '  ┌─ [!] REQUIRED NEXT STEPS ───────────────────────────────────────────┐' -ForegroundColor Yellow
 Write-BoxLine "" -color Yellow
 $userPath = [Environment]::GetEnvironmentVariable('Path','User')
 if (($userPath -split ';') -contains $BinDir) {

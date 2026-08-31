@@ -95,7 +95,7 @@ jobs:
 
           $installExit = 0
           try {
-            $installOutput = (& "$root\install.ps1" 2>&1 | Out-String)
+            $installOutput = (& "$root\install.ps1" *>&1 | Out-String)
             if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { $installExit = $LASTEXITCODE }
           } catch {
             $installOutput = $_ | Out-String
