@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import os
-import selectors
+import queue
 import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -47,22 +48,24 @@ def state_lock(key: str):
     STATE_ROOT.mkdir(parents=True, exist_ok=True)
     lock = STATE_ROOT / ("." + key.replace("/", "_") + ".lock")
     deadline = time.monotonic() + 2.0
+    acquired = False
     while True:
         try:
             lock.mkdir()
+            acquired = True
             break
         except FileExistsError:
             if time.monotonic() >= deadline:
-                yield
-                return
+                break
             time.sleep(0.025)
     try:
         yield
     finally:
-        try:
-            lock.rmdir()
-        except OSError:
-            pass
+        if acquired:
+            try:
+                lock.rmdir()
+            except OSError:
+                pass
 
 
 def run_key(event: dict[str, Any]) -> str:
@@ -101,9 +104,18 @@ def app_server_command() -> list[str]:
 
 
 class AppServer:
+    """Minimal stdio JSONL client for the Codex app-server.
+
+    Codex intentionally omits the JSON-RPC `jsonrpc` header on the wire. A
+    background reader thread is used instead of selectors so subprocess pipes
+    work the same way on Unix and Windows.
+    """
+
     def __init__(self) -> None:
         self.proc: subprocess.Popen[str] | None = None
         self.next_id = 1
+        self.messages: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        self.reader: threading.Thread | None = None
 
     def __enter__(self) -> "AppServer":
         try:
@@ -115,10 +127,16 @@ class AppServer:
                 text=True,
                 bufsize=1,
             )
+            self.reader = threading.Thread(target=self._pump_stdout, daemon=True)
+            self.reader.start()
             response = self.request(
                 "initialize",
                 {
-                    "clientInfo": {"name": "codex-flow", "title": "FlowPilot telemetry", "version": "1"},
+                    "clientInfo": {
+                        "name": "codex-flow",
+                        "title": "FlowPilot telemetry",
+                        "version": "1",
+                    },
                     "capabilities": {"experimentalApi": True},
                 },
             )
@@ -135,17 +153,39 @@ class AppServer:
 
     @property
     def available(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None and self.proc.stdin is not None and self.proc.stdout is not None
+        return (
+            self.proc is not None
+            and self.proc.poll() is None
+            and self.proc.stdin is not None
+            and self.proc.stdout is not None
+        )
 
-    def close(self) -> None:
-        if self.proc is None:
+    def _pump_stdout(self) -> None:
+        proc = self.proc
+        if proc is None or proc.stdout is None:
+            self.messages.put(None)
             return
         try:
-            self.proc.terminate()
-            self.proc.wait(timeout=0.4)
+            for line in proc.stdout:
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(message, dict):
+                    self.messages.put(message)
+        finally:
+            self.messages.put(None)
+
+    def close(self) -> None:
+        proc = self.proc
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=0.4)
         except Exception:
             try:
-                self.proc.kill()
+                proc.kill()
             except Exception:
                 pass
         self.proc = None
@@ -162,7 +202,7 @@ class AppServer:
             return False
 
     def notify(self, method: str, params: Any | None = None) -> None:
-        payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        payload: dict[str, Any] = {"method": method}
         if params is not None:
             payload["params"] = params
         self._send(payload)
@@ -170,7 +210,7 @@ class AppServer:
     def request(self, method: str, params: Any | None = None) -> dict[str, Any] | None:
         request_id = self.next_id
         self.next_id += 1
-        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        payload: dict[str, Any] = {"id": request_id, "method": method}
         if params is not None:
             payload["params"] = params
         if not self._send(payload):
@@ -178,30 +218,27 @@ class AppServer:
         return self._read_response(request_id)
 
     def _read_response(self, request_id: int) -> dict[str, Any] | None:
-        if not self.available:
-            return None
-        assert self.proc is not None and self.proc.stdout is not None
-        selector = selectors.DefaultSelector()
-        selector.register(self.proc.stdout, selectors.EVENT_READ)
         deadline = time.monotonic() + TIMEOUT
+        deferred: list[dict[str, Any]] = []
         try:
             while time.monotonic() < deadline:
-                ready = selector.select(max(0.0, deadline - time.monotonic()))
-                if not ready:
-                    break
-                line = self.proc.stdout.readline()
-                if not line:
-                    break
+                remaining = max(0.0, deadline - time.monotonic())
                 try:
-                    message = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+                    message = self.messages.get(timeout=remaining)
+                except queue.Empty:
+                    break
+                if message is None:
+                    break
                 if message.get("id") != request_id:
+                    deferred.append(message)
                     continue
+                if "error" in message:
+                    return None
                 result = message.get("result")
                 return result if isinstance(result, dict) else None
         finally:
-            selector.close()
+            for message in deferred:
+                self.messages.put(message)
         return None
 
     def rate_limits(self) -> dict[str, Any] | None:
@@ -243,7 +280,7 @@ def usage_summary(usage: dict[str, Any] | None) -> dict[str, Any] | None:
     if not usage:
         return None
     groups = usage.get("groups") if isinstance(usage.get("groups"), list) else []
-    totals = {
+    totals: dict[str, Any] = {
         "input_tokens": 0,
         "cached_input_tokens": 0,
         "net_new_input_tokens": 0,
@@ -263,7 +300,7 @@ def usage_summary(usage: dict[str, Any] | None) -> dict[str, Any] | None:
     for group in groups:
         if not isinstance(group, dict):
             continue
-        normalized = {
+        normalized: dict[str, Any] = {
             "model": group.get("model"),
             "reasoning_effort": group.get("reasoningEffort"),
             "speed": group.get("speed"),
@@ -305,12 +342,20 @@ def usage_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) -> 
 
 
 def quota_delta(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_duration = {item.get("window_duration_mins"): item for item in before if item.get("window_duration_mins") is not None}
+    by_duration = {
+        item.get("window_duration_mins"): item
+        for item in before
+        if item.get("window_duration_mins") is not None
+    }
     result = []
     for item in after:
         old = by_duration.get(item.get("window_duration_mins"))
         delta = None
-        if old and isinstance(old.get("used_percent"), (int, float)) and isinstance(item.get("used_percent"), (int, float)):
+        if (
+            old
+            and isinstance(old.get("used_percent"), (int, float))
+            and isinstance(item.get("used_percent"), (int, float))
+        ):
             delta = item["used_percent"] - old["used_percent"]
         result.append({**item, "delta_percentage_points": delta})
     return result
@@ -343,30 +388,61 @@ def render_summary(run: dict[str, Any]) -> str:
     workers = list((run.get("workers") or {}).values())
     parent_usage = run.get("parent", {}).get("usage_delta") or {}
     lines = ["", "FlowPilot summary"]
-    lines.append(f"  participants  1 parent + {len(workers)} worker{'s' if len(workers) != 1 else ''}")
-    lines.append(f"  parent        {run.get('parent', {}).get('model') or 'unknown'}  {fmt_tokens(parent_usage.get('total_tokens'))} tokens")
+    lines.append(
+        f"  participants  1 parent + {len(workers)} worker{'s' if len(workers) != 1 else ''}"
+    )
+    lines.append(
+        f"  parent        {run.get('parent', {}).get('model') or 'unknown'}  "
+        f"{fmt_tokens(parent_usage.get('total_tokens'))} tokens"
+    )
     for worker in workers:
         usage = worker.get("usage") or {}
         state = worker.get("status") or "observed"
-        lines.append(f"  worker        {worker.get('agent_type') or 'subagent'}  {worker.get('model') or 'unknown'}  {fmt_tokens(usage.get('total_tokens'))} tokens  {state}")
-    total_tokens = int(parent_usage.get("total_tokens") or 0) + sum(int((w.get("usage") or {}).get("total_tokens") or 0) for w in workers)
-    credits = int(parent_usage.get("estimated_credits_micros") or 0) + sum(int((w.get("usage") or {}).get("estimated_credits_micros") or 0) for w in workers)
-    lines.append(f"  attributed    {fmt_tokens(total_tokens)} tokens" + (f"  {credits / 1_000_000:.3f} credits" if credits else ""))
+        lines.append(
+            f"  worker        {worker.get('agent_type') or 'subagent'}  "
+            f"{worker.get('model') or 'unknown'}  "
+            f"{fmt_tokens(usage.get('total_tokens'))} tokens  {state}"
+        )
+    total_tokens = int(parent_usage.get("total_tokens") or 0) + sum(
+        int((worker.get("usage") or {}).get("total_tokens") or 0) for worker in workers
+    )
+    credits = int(parent_usage.get("estimated_credits_micros") or 0) + sum(
+        int((worker.get("usage") or {}).get("estimated_credits_micros") or 0)
+        for worker in workers
+    )
+    attributed = f"  attributed    {fmt_tokens(total_tokens)} tokens"
+    if credits:
+        attributed += f"  {credits / 1_000_000:.3f} credits"
+    lines.append(attributed)
+
     windows = run.get("quota_change_during_run") or []
     if windows:
         pieces = []
         for window in windows:
-            before_match = next((x for x in run.get("quota_before", []) if x.get("window_duration_mins") == window.get("window_duration_mins")), None)
+            before_match = next(
+                (
+                    item
+                    for item in run.get("quota_before", [])
+                    if item.get("window_duration_mins") == window.get("window_duration_mins")
+                ),
+                None,
+            )
             old = before_match.get("used_percent") if before_match else None
             new = window.get("used_percent")
             delta = window.get("delta_percentage_points")
             if old is None or new is None:
                 continue
             delta_text = "n/a" if delta is None else f"{delta:+g} pp"
-            pieces.append(f"{window_label(window.get('window_duration_mins'))} {old}%→{new}% ({delta_text})")
+            pieces.append(
+                f"{window_label(window.get('window_duration_mins'))} "
+                f"{old}%→{new}% ({delta_text})"
+            )
         if pieces:
             lines.append("  account quota " + "; ".join(pieces))
-    lines.append("  note          quota delta is account-wide during this run; attributed usage is thread-based")
+    lines.append(
+        "  note          quota delta is account-wide during this run; "
+        "attributed usage is thread-based"
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -392,19 +468,39 @@ def collect_hook(event: dict[str, Any]) -> None:
     with state_lock(key):
         run = load_run(event)
         path = run_path(event)
+
         if kind == "UserPromptSubmit":
-            run.update({"started_at_ms": now_ms(), "cwd": event.get("cwd"), "prompt_seen": True})
+            run.update(
+                {
+                    "started_at_ms": now_ms(),
+                    "cwd": event.get("cwd"),
+                    "prompt_seen": True,
+                }
+            )
             run.setdefault("parent", {})["model"] = event.get("model")
             with AppServer() as server:
-                run["quota_before"] = quota_windows(server.rate_limits()) if server.available else []
-                run["parent"]["usage_before"] = usage_summary(server.thread_usage(event.get("session_id"))) if server.available else None
+                run["quota_before"] = (
+                    quota_windows(server.rate_limits()) if server.available else []
+                )
+                run["parent"]["usage_before"] = (
+                    usage_summary(server.thread_usage(event.get("session_id")))
+                    if server.available
+                    else None
+                )
             atomic_json(path, run)
             return
 
         if kind in {"SubagentStart", "SubagentStop"}:
             agent_id = str(event.get("agent_id") or "unknown")
-            worker = run.setdefault("workers", {}).setdefault(agent_id, {"agent_id": agent_id})
-            worker.update({"agent_type": event.get("agent_type"), "model": event.get("model")})
+            worker = run.setdefault("workers", {}).setdefault(
+                agent_id, {"agent_id": agent_id}
+            )
+            worker.update(
+                {
+                    "agent_type": event.get("agent_type"),
+                    "model": event.get("model"),
+                }
+            )
             if kind == "SubagentStart":
                 worker.update({"started_at_ms": now_ms(), "status": "running"})
             else:
@@ -416,14 +512,28 @@ def collect_hook(event: dict[str, Any]) -> None:
         run.setdefault("parent", {})["model"] = event.get("model")
         with AppServer() as server:
             quota_after = quota_windows(server.rate_limits()) if server.available else []
-            parent_after = usage_summary(server.thread_usage(event.get("session_id"))) if server.available else None
+            parent_after = (
+                usage_summary(server.thread_usage(event.get("session_id")))
+                if server.available
+                else None
+            )
             run["quota_after"] = quota_after
-            run["quota_change_during_run"] = quota_delta(run.get("quota_before", []), quota_after)
+            run["quota_change_during_run"] = quota_delta(
+                run.get("quota_before", []), quota_after
+            )
             run["parent"]["usage_after"] = parent_after
-            run["parent"]["usage_delta"] = usage_delta(run["parent"].get("usage_before"), parent_after)
+            run["parent"]["usage_delta"] = usage_delta(
+                run["parent"].get("usage_before"), parent_after
+            )
             for agent_id, worker in run.get("workers", {}).items():
-                worker["usage"] = usage_summary(server.thread_usage(agent_id)) if server.available else None
+                worker["usage"] = (
+                    usage_summary(server.thread_usage(agent_id))
+                    if server.available
+                    else None
+                )
                 if worker.get("status") == "running":
+                    # Some interrupted subagent paths can miss SubagentStop. Do
+                    # not claim completion; retain that it participated.
                     worker["status"] = "observed"
         atomic_json(path, run)
         atomic_json(LAST_FILE, run)
@@ -458,7 +568,7 @@ def main() -> int:
         try:
             collect_hook(event)
         except Exception:
-            # Telemetry must never break a Codex turn.
+            # Telemetry must never break or block a Codex turn.
             return 0
     return 0
 
