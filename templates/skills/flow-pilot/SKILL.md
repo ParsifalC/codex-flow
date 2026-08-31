@@ -1,11 +1,11 @@
 ---
-name: cost-aware-development
-description: Route non-trivial software engineering work through a qualifying high-capability parent for planning/review and cheaper workers for exploration, implementation, testing, debugging, and bounded repair. Adapt reasoning effort to task difficulty while keeping high as the normal minimum.
+name: flow-pilot
+description: Orchestrate non-trivial software engineering work through a qualifying high-capability parent and efficient workers. Adapt delegation, model capability, reasoning effort, review, and bounded repair to task difficulty while preserving correctness and explicit user routing intent.
 ---
 
-# Cost-Aware Development
+# FlowPilot
 
-Optimize expensive-token efficiency while preserving correctness. The policy is capability-driven, not tied to a permanent model slug.
+FlowPilot is the routing and execution policy for codex-flow. Optimize capability, token efficiency, and parallelism without sacrificing correctness. The policy is capability-driven, not tied to a permanent model slug.
 
 ## 0. Load policy and honor explicit routing overrides
 
@@ -17,7 +17,7 @@ Supported current-task modes:
 
 - `direct` — do not spawn or delegate to subagents for this task. The active parent performs implementation and self-review directly.
 - `delegate` — use subagent delegation for execution when the runtime supports it and the task can be safely scoped.
-- `adaptive` — use normal codex-flow classification and routing for this task.
+- `adaptive` — use normal FlowPilot classification and routing for this task.
 
 Treat unambiguous natural-language equivalents as the same current-task override. Examples include:
 
@@ -42,9 +42,7 @@ Default worker policy:
 - reasoning baseline is `high`
 - task-specific escalation may request `xhigh` or `max`
 
-Never require one historical model name such as `gpt-5.6-sol` to qualify.
-
-If the active parent is known to be below the configured floor, do not pretend it qualifies. Elevate when the runtime supports it; otherwise keep the work direct and surface a concise policy warning.
+Never require one historical model name to qualify. If the active parent is known to be below the configured floor, do not pretend it qualifies. Elevate when the runtime supports it; otherwise keep the work direct and surface a concise policy warning.
 
 ## 1. Classify before spending
 
@@ -79,8 +77,6 @@ SMALL work stays with the parent. In `adaptive` mode, delegate ROUTINE/COMPLEX/C
 
 Use the configured floor and never go below it.
 
-Default routing:
-
 | Class | Parent planning/review | Worker execution |
 | --- | --- | --- |
 | SMALL | `high` or current qualifying effort | direct; no worker unless explicitly delegated and useful |
@@ -92,7 +88,7 @@ Do not use `max` merely because it exists. Escalate one level only when task ris
 
 When the current Codex spawn surface supports per-child reasoning/model overrides, request the selected worker effort for that child. When it does not, use the installed high baseline and compensate with tighter scope, evidence, and review rather than relying on a broken override path.
 
-## 3. Explore cheaply
+## 3. Explore efficiently
 
 Unless the current task is in `direct` mode, delegate bounded read-only investigations for substantial repository discovery. Parallelize only independent questions such as implementation/call sites, tests/fixtures, workflow/config paths, or compatibility constraints.
 
@@ -124,9 +120,7 @@ When delegation is active, send only:
 - Acceptance criteria
 - Required validation
 
-Prefer fresh/no-history child context when supported. Do not hydrate a worker with irrelevant parent history.
-
-Skip this handoff stage entirely in `direct` mode.
+Prefer fresh/no-history child context when supported. Do not hydrate a worker with irrelevant parent history. Skip this handoff stage entirely in `direct` mode.
 
 ## 6. Worker implements and proves
 
@@ -137,25 +131,19 @@ When delegation is active, the worker makes the scoped change, runs the narrowes
 - deviations
 - unresolved risks/failures
 
-Return evidence, not verbose logs.
-
-In `direct` mode, the parent follows the same implementation and validation discipline itself.
+Return evidence, not verbose logs. In `direct` mode, the parent follows the same implementation and validation discipline itself.
 
 ## 7. Parent reviews, not reimplements
 
 Review `git diff --stat`, the actual relevant diff, directly affected call sites, validation evidence, every acceptance criterion, architecture consistency, and regression risk.
 
-Expand investigation only for a concrete review concern. PASS only when criteria are satisfied with adequate evidence.
-
-In `direct` mode this is a self-review pass by the same parent after implementation; do not skip it merely because no worker was used.
+Expand investigation only for a concrete review concern. PASS only when criteria are satisfied with adequate evidence. In `direct` mode this is a self-review pass by the same parent after implementation; do not skip it merely because no worker was used.
 
 ## 8. Repair with bounded delta tasks
 
 On failure, send only the exact defect, impact, required correction, relevant file/symbol, and validation required. Do not resend the original task.
 
-Use the configured maximum repair cycles (default 2). If repeated repairs fail, reassess root cause/plan and optionally escalate effort/model capability rather than continuing a blind loop.
-
-In `direct` mode, apply the same bounded repair policy in the parent context without spawning a worker.
+Use the configured maximum repair cycles (default 2). If repeated repairs fail, reassess root cause/plan and optionally escalate effort/model capability rather than continuing a blind loop. In `direct` mode, apply the same bounded repair policy in the parent context without spawning a worker.
 
 ## Context discipline
 
@@ -165,4 +153,8 @@ Prefer targeted search, diff-scoped review, concise test modes, and small releva
 
 Parallelize independent read-only exploration only when delegation is allowed. Do not run overlapping writable workers on the same files/worktree; isolate genuinely independent workstreams.
 
-The invariant is: explicit user routing intent wins for the current task; qualifying high-capability reasoning makes decisions; cost-efficient execution performs loops when delegation is allowed; effort rises only when the task proves it needs to.
+## Telemetry discipline
+
+FlowPilot telemetry is orchestration-layer instrumentation. Do not call a model to generate usage summaries, do not self-report token counts, and do not add telemetry prose to worker handoffs. Lifecycle hooks and app-server usage/quota APIs are the source of truth; unavailable capabilities must degrade to unavailable fields rather than estimates.
+
+The invariant is: explicit user routing intent wins for the current task; qualifying high-capability reasoning makes decisions; efficient execution performs loops when delegation is allowed; effort rises only when the task proves it needs to; telemetry observes the run without changing it.
