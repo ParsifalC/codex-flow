@@ -18,8 +18,14 @@ Remove-Item (Join-Path $CodexHome 'codex-flow.toml') -Force -ErrorAction Silentl
 Remove-Item (Join-Path $CodexHome 'skills/flow-pilot') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'skills/cost-aware-development') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $StateDir -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $BinDir 'codex-flow.ps1') -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $BinDir 'codex-flow.cmd') -Force -ErrorAction SilentlyContinue
+
+# When invoked through codex-flow.cmd, deleting the active batch wrapper before
+# it regains control makes cmd.exe report "The batch file cannot be found" and
+# return 1 even though uninstall succeeded. Let the wrapper self-delete last.
+if ($env:CODEX_FLOW_DEFER_WINDOWS_CLI_DELETE -ne '1') {
+    Remove-Item (Join-Path $BinDir 'codex-flow.ps1') -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $BinDir 'codex-flow.cmd') -Force -ErrorAction SilentlyContinue
+}
 
 if (Test-Path $Config) {
     $text = Get-Content $Config -Raw
