@@ -64,7 +64,19 @@ grep -Fxq "$ROOT_DIR" "$CODEX_HOME/codex-flow/source"
 grep -Fxq "$(cat "$ROOT_DIR/VERSION")" "$CODEX_HOME/codex-flow/version"
 
 codex-flow status
-codex-flow doctor
+doctor_output="$(codex-flow doctor)"
+printf '%s\n' "$doctor_output"
+[[ "$doctor_output" == *"✓ policy schema v2"* ]]
+[[ "$doctor_output" != *"policy schema is  2"* ]]
+[[ "$doctor_output" == *"Ready. Routing is capability-based"* ]]
+
+# Codex CLI is an optional doctor capability: core routing remains healthy when
+# this shell cannot resolve `codex`, while real benchmark execution is called out.
+no_cli_output="$(env PATH="$CODEX_FLOW_BIN_DIR:/usr/bin:/bin" "$CODEX_FLOW_BIN_DIR/codex-flow" doctor)"
+printf '%s\n' "$no_cli_output"
+[[ "$no_cli_output" == *"! Codex CLI not found in PATH; core routing remains usable"* ]]
+[[ "$no_cli_output" == *"Ready. Core routing is installed and healthy"* ]]
+[[ "$no_cli_output" == *"benchmark-local or a real benchmark"* ]]
 
 # A second install must replace the same managed block, not append another.
 bash "$ROOT_DIR/install.sh"
