@@ -39,19 +39,19 @@ switch ($cmd) {
         function Write-StatusLine($content) {
             $width = 68
             $pad = [Math]::Max(0, $width - $content.Length)
-            Write-Host '  │  ' -ForegroundColor DarkGray -NoNewline
+            Write-Host '  |  ' -ForegroundColor DarkGray -NoNewline
             Write-Host $content -NoNewline
             Write-Host (' ' * $pad) -NoNewline
-            Write-Host ' │' -ForegroundColor DarkGray
+            Write-Host ' |' -ForegroundColor DarkGray
         }
 
         Write-Host ""
-        Write-Host "📦 codex-flow status" -ForegroundColor Cyan
+        Write-Host "codex-flow status" -ForegroundColor Cyan
         Write-Host ""
-        Write-Host '  ╭─ Version & Paths ─────────────────────────────────────────────────╮' -ForegroundColor DarkGray
-        Write-StatusLine "• Installed:   v$installed"
-        Write-StatusLine "• Checkout:    $dispSrc (v$available)"
-        Write-StatusLine "• Skill:       FlowPilot (flow-pilot)"
+        Write-Host '  +-- Version & Paths ------------------------------------------------+' -ForegroundColor DarkGray
+        Write-StatusLine "* Installed:   v$installed"
+        Write-StatusLine "* Checkout:    $dispSrc (v$available)"
+        Write-StatusLine "* Skill:       FlowPilot (flow-pilot)"
         if (Test-Path $Policy) {
             $pPolicy = Get-PolicyValue parent model_policy
             $pEffort = Get-PolicyValue parent min_reasoning_effort
@@ -59,16 +59,16 @@ switch ($cmd) {
             $wEffort = Get-PolicyValue worker min_reasoning_effort
             $tEnabled = Get-PolicyValue telemetry enabled
 
-            Write-Host '  ├─ Model Routing ───────────────────────────────────────────────────┤' -ForegroundColor DarkGray
-            Write-StatusLine "• Parent:      $pPolicy (min effort: $pEffort)"
-            Write-StatusLine "• Worker:      $wModel (min effort: $wEffort)"
+            Write-Host '  +-- Model Routing --------------------------------------------------+' -ForegroundColor DarkGray
+            Write-StatusLine "* Parent:      $pPolicy (min effort: $pEffort)"
+            Write-StatusLine "* Worker:      $wModel (min effort: $wEffort)"
             if ($tEnabled -eq 'true') {
-                Write-StatusLine "• Telemetry:   ● enabled"
+                Write-StatusLine "* Telemetry:   [+] enabled"
             } else {
-                Write-StatusLine "• Telemetry:   ○ disabled"
+                Write-StatusLine "* Telemetry:   [-] disabled"
             }
         }
-        Write-Host '  ╰───────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkGray
+        Write-Host '  +-------------------------------------------------------------------+' -ForegroundColor DarkGray
         Write-Host ""
     }
     'usage' {
@@ -123,7 +123,7 @@ switch ($cmd) {
         $after = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         & (Join-Path $src 'install.ps1')
         Write-Host ""
-        Write-Host "✨ Updated codex-flow $before -> $after" -ForegroundColor Green
+        Write-Host "Updated codex-flow $before -> $after" -ForegroundColor Green
         & (Join-Path $src 'scripts/doctor.ps1')
     }
     default {
@@ -146,7 +146,7 @@ Usage: codex-flow <command> [options]
   Maintenance
     uninstall           Remove codex-flow-managed files and hooks
 
-  💡 Quick Start:
+  Tip:
     Run `codex-flow benchmark-local quick` for your first validation run.
 
 '@

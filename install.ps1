@@ -170,30 +170,30 @@ function Write-BoxLine($content, $color = 'DarkGray') {
     $width = 68
     $pad = [Math]::Max(0, $width - $content.Length)
     Write-Host '  ' -NoNewline
-    Write-Host '│' -ForegroundColor $color -NoNewline
+    Write-Host '|' -ForegroundColor $color -NoNewline
     Write-Host "  $content" -NoNewline
     Write-Host (' ' * $pad) -NoNewline
-    Write-Host '│' -ForegroundColor $color
+    Write-Host '|' -ForegroundColor $color
 }
 
 Write-Host ""
-Write-Host "🚀 codex-flow v$Version installed successfully" -ForegroundColor Green
+Write-Host "codex-flow v$Version installed successfully" -ForegroundColor Green
 Write-Host ""
-Write-Host '  ╭─ Summary ──────────────────────────────────────────────────────────╮' -ForegroundColor DarkGray
-Write-BoxLine "• Policy:     $dispPolicy"
-Write-BoxLine "• CLI:        $dispBin"
-Write-BoxLine "• Skill:      FlowPilot (flow-pilot)"
-Write-BoxLine "• Routing:    parent ($ParentModelPolicy) ➔ worker ($WorkerModel)"
-Write-BoxLine "• Reasoning:  adaptive (high ➔ xhigh ➔ max)"
+Write-Host '  +-- Summary ---------------------------------------------------------+' -ForegroundColor DarkGray
+Write-BoxLine "* Policy:     $dispPolicy"
+Write-BoxLine "* CLI:        $dispBin"
+Write-BoxLine "* Skill:      FlowPilot (flow-pilot)"
+Write-BoxLine "* Routing:    parent ($ParentModelPolicy) -> worker ($WorkerModel)"
+Write-BoxLine "* Reasoning:  adaptive (high -> xhigh -> max)"
 if ($TelemetryEnabled -eq 'true') {
-    Write-BoxLine "• Telemetry:  ● enabled (deterministic hooks + app-server)"
+    Write-BoxLine "* Telemetry:  [+] enabled (deterministic hooks + app-server)"
 } else {
-    Write-BoxLine "• Telemetry:  ○ disabled"
+    Write-BoxLine "* Telemetry:  [-] disabled"
 }
-Write-Host '  ╰────────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkGray
+Write-Host '  +--------------------------------------------------------------------+' -ForegroundColor DarkGray
 Write-Host ""
 
-Write-Host '  ┌─ [!] REQUIRED NEXT STEPS ───────────────────────────────────────────┐' -ForegroundColor Yellow
+Write-Host '  +-- [!] REQUIRED NEXT STEPS -----------------------------------------+' -ForegroundColor Yellow
 Write-BoxLine "" -color Yellow
 $userPath = [Environment]::GetEnvironmentVariable('Path','User')
 if (($userPath -split ';') -contains $BinDir) {
@@ -217,10 +217,10 @@ if ($TelemetryEnabled -eq 'true') {
     Write-BoxLine "      Telemetry is disabled: no hook authorization is required." -color Yellow
 }
 Write-BoxLine "" -color Yellow
-Write-Host '  └────────────────────────────────────────────────────────────────────┘' -ForegroundColor Yellow
+Write-Host '  +--------------------------------------------------------------------+' -ForegroundColor Yellow
 Write-Host ""
 
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
-    Write-Host '  💡 Tip: Install Codex CLI for token quota reads & benchmarks: npm install -g @openai/codex' -ForegroundColor Cyan
+    Write-Host '  Tip: Install Codex CLI for token quota reads & benchmarks: npm install -g @openai/codex' -ForegroundColor Cyan
     Write-Host ""
 }

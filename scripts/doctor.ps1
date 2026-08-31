@@ -6,9 +6,9 @@ $Hooks = Join-Path $CodexHome 'hooks.json'
 $StateDir = Join-Path $CodexHome 'codex-flow'
 $Failed = $false
 $CodexAvailable = $true
-function Ok($m) { Write-Host '  ✔ ' -ForegroundColor Green -NoNewline; Write-Host $m }
-function Warn($m) { Write-Host '  ▲ ' -ForegroundColor Yellow -NoNewline; Write-Host $m }
-function Fail($m) { Write-Host '  ✖ ' -ForegroundColor Red -NoNewline; Write-Host $m; $script:Failed = $true }
+function Ok($m) { Write-Host '  [+] ' -ForegroundColor Green -NoNewline; Write-Host $m }
+function Warn($m) { Write-Host '  [!] ' -ForegroundColor Yellow -NoNewline; Write-Host $m }
+function Fail($m) { Write-Host '  [-] ' -ForegroundColor Red -NoNewline; Write-Host $m; $script:Failed = $true }
 function Section($title) { Write-Host ""; Write-Host "  $title" -ForegroundColor White }
 
 # Codex 0.151 is the known support baseline for thread attribution. Comparing
@@ -29,7 +29,7 @@ function Get-PolicyValue([string]$Section, [string]$Key) {
 }
 
 Write-Host ""
-Write-Host "🩺 codex-flow doctor" -ForegroundColor Cyan
+Write-Host "codex-flow doctor" -ForegroundColor Cyan
 
 Section "Environment & Tools"
 if (Get-Command codex -ErrorAction SilentlyContinue) {
@@ -80,16 +80,16 @@ if (Test-Path $Policy) {
 }
 
 Write-Host ""
-Write-Host '  ─────────────────────────────────────────────────────────────────────' -ForegroundColor DarkGray
+Write-Host '  ---------------------------------------------------------------------' -ForegroundColor DarkGray
 if ($Failed) {
-    Write-Host '  ✖ One or more required core checks failed. Re-run the installer, then restart Codex.' -ForegroundColor Red
+    Write-Host '  [-] One or more required core checks failed. Re-run the installer, then restart Codex.' -ForegroundColor Red
     Write-Host ""
     exit 1
 }
 
 if ($CodexAvailable) {
-    Write-Host '  ✨ Ready. FlowPilot routing and deterministic telemetry are installed.' -ForegroundColor Green
+    Write-Host '  Ready. FlowPilot routing and deterministic telemetry are installed.' -ForegroundColor Green
 } else {
-    Write-Host '  ✨ Ready. Core FlowPilot routing is installed; Codex CLI-dependent telemetry quota reads are unavailable.' -ForegroundColor Green
+    Write-Host '  Ready. Core FlowPilot routing is installed; Codex CLI-dependent telemetry quota reads are unavailable.' -ForegroundColor Green
 }
 Write-Host ""
