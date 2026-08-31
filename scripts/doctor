@@ -64,6 +64,7 @@ if command -v codex >/dev/null 2>&1; then
 else
   CODEX_CLI_AVAILABLE=0
   warn "Codex CLI not found in PATH; core routing remains usable, telemetry quota reads and real local benchmark execution are unavailable"
+  printf '    %s(Install via: npm install -g @openai/codex  or  brew install codex)%s\n' "$C_DIM" "$C_RESET"
 fi
 
 [[ -f "$CONFIG" ]] && ok "config.toml found" || fail "missing $CONFIG"

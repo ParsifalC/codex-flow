@@ -38,7 +38,11 @@ if (Get-Command codex -ErrorAction SilentlyContinue) {
     if ($CodexVersion -match '[0-9]+\.[0-9]+' -and -not (Test-CodexThreadUsage $CodexVersion)) {
         Warn "Codex CLI $CodexVersion is below the known 0.151 support baseline; thread-attributed telemetry may be unavailable; upgrade to 0.151+ recommended"
     }
-} else { $CodexAvailable = $false; Warn 'Codex CLI not found in PATH; telemetry quota reads and real benchmarks are unavailable' }
+} else {
+    $CodexAvailable = $false
+    Warn 'Codex CLI not found in PATH; telemetry quota reads and real benchmarks are unavailable'
+    Write-Host '      (Install via: npm install -g @openai/codex  or  brew install codex)' -ForegroundColor DarkGray
+}
 if (Test-Path $Config) { Ok 'config.toml found' } else { Fail "missing $Config" }
 if (Test-Path $Policy) { Ok 'codex-flow policy found' } else { Fail "missing $Policy" }
 

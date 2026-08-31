@@ -219,3 +219,8 @@ if ($TelemetryEnabled -eq 'true') {
 Write-BoxLine "" -color Yellow
 Write-Host '  └────────────────────────────────────────────────────────────────────┘' -ForegroundColor Yellow
 Write-Host ""
+
+if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
+    Write-Host '  💡 Tip: Install Codex CLI for token quota reads & benchmarks: npm install -g @openai/codex' -ForegroundColor Cyan
+    Write-Host ""
+}

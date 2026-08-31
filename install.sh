@@ -260,3 +260,7 @@ else
 fi
 step_box_line ""
 printf '  %s└────────────────────────────────────────────────────────────────────┘%s\n\n' "$C_YELLOW" "$C_RESET"
+
+if ! command -v codex >/dev/null 2>&1; then
+  printf '  %s💡 Tip:%s Install Codex CLI for token quota reads & benchmarks: %snpm install -g @openai/codex%s\n\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+fi
