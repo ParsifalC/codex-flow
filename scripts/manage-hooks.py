@@ -27,22 +27,43 @@ def load(path: Path) -> dict[str, Any]:
     return value
 
 
+def is_managed_hook(hook: Any) -> bool:
+    if not isinstance(hook, dict):
+        return False
+    command = hook.get("command")
+    return isinstance(command, str) and MARKER in command.replace("\\", "/")
+
+
 def is_managed_entry(entry: Any) -> bool:
     if not isinstance(entry, dict):
         return False
-    for hook in entry.get("hooks", []):
-        if isinstance(hook, dict) and MARKER in str(hook.get("command", "")).replace("\\", "/"):
-            return True
-    return False
+    hooks = entry.get("hooks", [])
+    return isinstance(hooks, list) and any(is_managed_hook(hook) for hook in hooks)
 
 
 def remove_managed(data: dict[str, Any]) -> None:
     hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return
     for event in list(hooks):
         entries = hooks[event]
         if not isinstance(entries, list):
             continue
-        kept = [entry for entry in entries if not is_managed_entry(entry)]
+        kept = []
+        for entry in entries:
+            # Keep malformed entries and entries with malformed `hooks` values
+            # unchanged; only a valid hook list is safe to filter.
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                kept.append(entry)
+                continue
+
+            entry_hooks = entry["hooks"]
+            filtered_hooks = [hook for hook in entry_hooks if not is_managed_hook(hook)]
+            if len(filtered_hooks) == len(entry_hooks):
+                kept.append(entry)
+            elif filtered_hooks:
+                entry["hooks"] = filtered_hooks
+                kept.append(entry)
         if kept:
             hooks[event] = kept
         else:

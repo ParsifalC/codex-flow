@@ -12,6 +12,15 @@ CODEX_CLI_AVAILABLE=1
 ok() { printf '✓ %s\n' "$1"; }
 warn() { printf '! %s\n' "$1"; }
 fail() { printf '✗ %s\n' "$1"; FAILED=1; }
+# Codex 0.151 is the known support baseline for thread attribution. Compare
+# major/minor so prereleases such as 0.151.0-alpha qualify conservatively.
+codex_thread_usage_capable() {
+  local version="$1" major minor
+  [[ "$version" =~ ([0-9]+)\.([0-9]+) ]] || return 2
+  major=$((10#${BASH_REMATCH[1]}))
+  minor=$((10#${BASH_REMATCH[2]}))
+  (( major > 0 || (major == 0 && minor >= 151) ))
+}
 value() { local key="$1" section="$2"; awk -v sec="[$section]" -v key="$key" '
   $0==sec {insec=1; next} /^\[/ {insec=0} insec && $0 ~ "^" key "[[:space:]]*=" {sub(/^[^=]*=[[:space:]]*/, ""); gsub(/^\"|\"$/, ""); print; exit}
 ' "$POLICY"; }
@@ -27,6 +36,9 @@ printf 'codex-flow doctor\n\n'
 if command -v codex >/dev/null 2>&1; then
   VERSION="$(codex --version 2>/dev/null || true)"
   ok "Codex CLI found${VERSION:+: $VERSION}"
+  if [[ "$VERSION" =~ ([0-9]+)\.([0-9]+) ]] && ! codex_thread_usage_capable "$VERSION"; then
+    warn "Codex CLI $VERSION is below the known 0.151 support baseline; thread-attributed telemetry may be unavailable; upgrade to 0.151+ recommended"
+  fi
 else
   CODEX_CLI_AVAILABLE=0
   warn "Codex CLI not found in PATH; core routing remains usable, telemetry quota reads and real local benchmark execution are unavailable"

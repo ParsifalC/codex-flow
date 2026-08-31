@@ -57,10 +57,14 @@ jobs:
 
   windows-smoke:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
       - name: Parse PowerShell entrypoints
-        shell: pwsh
+        shell: ${{ matrix.shell }}
         run: |
           $files = @('install.ps1','bin/codex-flow.ps1','scripts/doctor.ps1','scripts/uninstall.ps1')
           foreach ($file in $files) {
@@ -72,33 +76,74 @@ jobs:
             }
           }
       - name: Installer and CLI smoke test
-        shell: pwsh
+        shell: ${{ matrix.shell }}
         run: |
           $root = (Get-Location).Path
-          $tmp = Join-Path $env:RUNNER_TEMP 'codex-flow-smoke'
+          $tmp = Join-Path $env:RUNNER_TEMP ('codex-flow-smoke-' + '${{ matrix.shell }}')
           $env:CODEX_HOME = Join-Path $tmp '.codex'
           $env:CODEX_FLOW_BIN_DIR = Join-Path $tmp 'bin-installed'
           $fakeBin = Join-Path $tmp 'bin'
           New-Item -ItemType Directory -Force -Path $env:CODEX_HOME,$env:CODEX_FLOW_BIN_DIR,$fakeBin | Out-Null
-          '@echo off\r\necho codex-test 0.0.0\r\n' | Set-Content (Join-Path $fakeBin 'codex.cmd') -NoNewline
+          $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+          [System.IO.File]::WriteAllText((Join-Path $fakeBin 'codex.cmd'), "@echo off" + [Environment]::NewLine + "echo codex-test 0.0.0" + [Environment]::NewLine, $utf8NoBom)
+          [System.IO.File]::WriteAllText((Join-Path $fakeBin 'git.cmd'), "@echo off" + [Environment]::NewLine + "exit /b 0" + [Environment]::NewLine, $utf8NoBom)
           $env:PATH = "$fakeBin;$env:CODEX_FLOW_BIN_DIR;$env:PATH"
-          @('model = "user-parent-model"','model_reasoning_effort = "high"','','[unrelated]','keep_me = true') | Set-Content (Join-Path $env:CODEX_HOME 'config.toml')
+          $sentinel = [string][char]0x4f60 + [string][char]0x597d
+          $configText = 'model = "user-parent-model"' + [Environment]::NewLine + 'model_reasoning_effort = "high"' + [Environment]::NewLine + '# non-ASCII sentinel: ' + $sentinel + [Environment]::NewLine + [Environment]::NewLine + '[unrelated]' + [Environment]::NewLine + 'keep_me = true' + [Environment]::NewLine
+          [System.IO.File]::WriteAllText((Join-Path $env:CODEX_HOME 'config.toml'), $configText, $utf8NoBom)
 
-          & "$root\install.ps1"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installExit = 0
+          try {
+            $installOutput = (& "$root\install.ps1" 2>&1 | Out-String)
+            if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { $installExit = $LASTEXITCODE }
+          } catch {
+            $installOutput = $_ | Out-String
+            $installExit = 1
+          }
+          $installOutput
+          if ($installExit -ne 0) { exit $installExit }
+          foreach ($expected in @(
+            'IMPORTANT: FULL CODEX RESTART REQUIRED',
+            'Fully quit Codex and open it again; starting a new task alone',
+            'Telemetry is enabled: run /hooks; approve FlowPilot telemetry',
+            'After restarting, start a new task and a new turn',
+            'already-running turn cannot rebuild its starting snapshot.'
+          )) {
+            if (-not $installOutput.Contains($expected)) { throw "installer reminder missing: $expected" }
+          }
           & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') status
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') doctor
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $doctorOutput = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') doctor 2>&1 | Out-String)
+          $doctorExit = $LASTEXITCODE
+          if ($doctorExit -ne 0) { exit $doctorExit }
+          if ($doctorOutput -notmatch 'thread-attributed telemetry may be unavailable') { throw 'old Codex compatibility warning missing' }
 
-          $config = Get-Content (Join-Path $env:CODEX_HOME 'config.toml') -Raw
+          $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
+          if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after install' }
           if ($config -notmatch 'default_subagent_model\s*=\s*"gpt-5\.6-luna"') { throw 'worker model was not installed' }
-          $policy = Get-Content (Join-Path $env:CODEX_HOME 'codex-flow.toml') -Raw
+          $policy = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'codex-flow.toml'), $utf8NoBom)
           if ($policy -notmatch 'schema_version\s*=\s*3') { throw 'policy schema was not upgraded' }
           if ($policy -notmatch 'model\s*=\s*"auto"') { throw 'auto worker policy was not preserved' }
+          $binState = Join-Path $env:CODEX_HOME 'codex-flow/bin_dir'
+          if (-not ([System.IO.File]::ReadAllText($binState, $utf8NoBom).Trim() -eq $env:CODEX_FLOW_BIN_DIR)) { throw 'custom bin directory was not persisted' }
+          $policyBytes = [System.IO.File]::ReadAllBytes((Join-Path $env:CODEX_HOME 'codex-flow.toml'))
+          if ($policyBytes.Length -ge 3 -and $policyBytes[0] -eq 0xef -and $policyBytes[1] -eq 0xbb -and $policyBytes[2] -eq 0xbf) { throw 'policy unexpectedly has a UTF-8 BOM' }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'skills/flow-pilot/SKILL.md'))) { throw 'FlowPilot skill missing' }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'hooks.json'))) { throw 'telemetry hooks missing' }
 
-          & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') uninstall
+          Remove-Item Env:CODEX_FLOW_BIN_DIR
+          & (Join-Path $tmp 'bin-installed/codex-flow.cmd') update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.cmd'))) { throw 'custom bin directory was not reused by update' }
+          if (-not (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.ps1'))) { throw 'PowerShell wrapper was not refreshed in custom bin directory' }
+          $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
+          if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after update' }
+
+          & (Join-Path $tmp 'bin-installed/codex-flow.cmd') uninstall
           if (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow.toml')) { throw 'policy survived uninstall' }
           if (Test-Path (Join-Path $env:CODEX_HOME 'skills/flow-pilot')) { throw 'FlowPilot skill survived uninstall' }
+          if (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow')) { throw 'state survived uninstall' }
+          if (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.cmd')) { throw 'custom cmd wrapper survived uninstall' }
+          if (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.ps1')) { throw 'custom PowerShell wrapper survived uninstall' }
+          $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
+          if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after uninstall' }

@@ -9,6 +9,14 @@ $CodexAvailable = $true
 function Ok($m) { Write-Host "[OK] $m" }
 function Warn($m) { Write-Warning $m }
 function Fail($m) { Write-Host "[FAIL] $m"; $script:Failed = $true }
+# Codex 0.151 is the known support baseline for thread attribution. Comparing
+# major/minor treats 0.151 prereleases as capable conservatively.
+function Test-CodexThreadUsage([string]$Version) {
+    if ($Version -notmatch '([0-9]+)\.([0-9]+)') { return $false }
+    $major = [int]$Matches[1]
+    $minor = [int]$Matches[2]
+    return ($major -gt 0 -or ($major -eq 0 -and $minor -ge 151))
+}
 function Get-PolicyValue([string]$Section, [string]$Key) {
     $text = Get-Content $Policy -Raw
     $m = [regex]::Match($text, '(?ms)^\[' + [regex]::Escape($Section) + '\]\s*(.*?)(?=^\[[^\r\n]+\]|\z)')
@@ -19,7 +27,13 @@ function Get-PolicyValue([string]$Section, [string]$Key) {
 }
 
 Write-Host 'codex-flow doctor'
-if (Get-Command codex -ErrorAction SilentlyContinue) { Ok "Codex CLI found: $(& codex --version 2>$null)" } else { $CodexAvailable = $false; Warn 'Codex CLI not found in PATH; telemetry quota reads and real benchmarks are unavailable' }
+if (Get-Command codex -ErrorAction SilentlyContinue) {
+    $CodexVersion = (& codex --version 2>$null | Out-String).Trim()
+    Ok "Codex CLI found: $CodexVersion"
+    if ($CodexVersion -match '[0-9]+\.[0-9]+' -and -not (Test-CodexThreadUsage $CodexVersion)) {
+        Warn "Codex CLI $CodexVersion is below the known 0.151 support baseline; thread-attributed telemetry may be unavailable; upgrade to 0.151+ recommended"
+    }
+} else { $CodexAvailable = $false; Warn 'Codex CLI not found in PATH; telemetry quota reads and real benchmarks are unavailable' }
 if (Test-Path $Config) { Ok 'config.toml found' } else { Fail "missing $Config" }
 if (Test-Path $Policy) { Ok 'codex-flow policy found' } else { Fail "missing $Policy" }
 foreach ($p in @('agents/worker-explorer.toml','agents/worker-implementer.toml','skills/flow-pilot/SKILL.md')) {

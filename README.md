@@ -88,9 +88,11 @@ cd codex-flow
 .\install.ps1
 ```
 
-管理命令默认安装到 `~/.local/bin`。如果当前默认 shell 是 Bash 或 zsh，安装器还会向对应的 rc 文件写入一个带明确标记、可重复执行的托管块。该托管块会自动把 CLI 目录加入 `PATH`，并注册 `codex-flow` 子命令补全，包括 `usage last`、`benchmark-local quick|full` 和 `benchmark-corpus quick|full`。安装完成后，安装器会明确提示执行 `source ~/.zshrc`（Bash 为 `source ~/.bashrc`）立即更新当前终端，或者打开一个新终端。Codex 本身仍需重启，之后正常使用即可，不需要每次手动调用特殊命令或 Prompt。
+管理命令默认安装到 `~/.local/bin`。如果当前默认 shell 是 Bash 或 zsh，安装器还会向对应的 rc 文件写入一个带明确标记、可重复执行的托管块。该托管块会自动把 CLI 目录加入 `PATH`，并注册 `codex-flow` 子命令补全，包括 `usage last`、`benchmark-local quick|full` 和 `benchmark-corpus quick|full`。安装完成后，安装器会明确提示执行 `source ~/.zshrc`（Bash 为 `source ~/.bashrc`）立即更新当前终端，或者打开一个新终端。
 
-FlowPilot telemetry 默认会把托管的 command hooks 合并进 `~/.codex/hooks.json`，不会覆盖用户已有 hooks。由于 Codex 对 command hooks 有安全信任机制，**首次安装或 hook 内容发生变化后，Codex 可能要求一次 trust approval**；出现提示时用 `/hooks` 查看并批准即可。批准以后正常任务不需要额外操作。
+安装完成后必须**完整退出 Codex，再重新打开 Codex**；只新建任务不够。重启后请开始一个新的 task/turn，因为已经运行中的 turn 无法补建它的起始快照。Telemetry 启用时，请运行 `/hooks`；如果 FlowPilot telemetry 处于待批准状态，请在那里授权。Telemetry 禁用时不需要 hook 授权，但仍必须完整重启 Codex 并开始新的 task/turn。
+
+FlowPilot telemetry 默认会把托管的 command hooks 合并进 `~/.codex/hooks.json`，不会覆盖用户已有 hooks。由于 Codex 对 command hooks 有安全信任机制，**首次安装或 hook 内容发生变化后，Codex 可能要求一次 trust approval**；出现提示时用 `/hooks` 查看并批准即可。批准以后正常任务不需要额外操作。关闭 telemetry 时不会安装这些 hooks，也不会要求 hook 授权。
 
 Shell 选择优先读取 `CODEX_FLOW_SHELL`，否则使用 `SHELL` 的 basename。`CODEX_FLOW_SHELL_CONFIG_DIR` 可将托管的 `.bashrc`、登录 profile 或 `.zshrc` 放到指定配置目录；无法识别 shell 时，安装器仍会输出手动添加 `PATH` 的提示。
 

@@ -1,9 +1,28 @@
 $ErrorActionPreference = 'Stop'
+
+function New-Utf8NoBomEncoding {
+    return New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+}
+function Read-Utf8NoBom([string]$Path) {
+    return [System.IO.File]::ReadAllText($Path, (New-Utf8NoBomEncoding))
+}
+function Write-Utf8NoBom([string]$Path, [string]$Value) {
+    [System.IO.File]::WriteAllText($Path, $Value, (New-Utf8NoBomEncoding))
+}
+
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $Config = Join-Path $CodexHome 'config.toml'
 $Hooks = Join-Path $CodexHome 'hooks.json'
 $StateDir = Join-Path $CodexHome 'codex-flow'
-$BinDir = if ($env:CODEX_FLOW_BIN_DIR) { $env:CODEX_FLOW_BIN_DIR } else { Join-Path $HOME '.local/bin' }
+$BinDirState = Join-Path $StateDir 'bin_dir'
+$PersistedBinDir = if (Test-Path $BinDirState) { (Read-Utf8NoBom $BinDirState).Trim() } else { '' }
+$BinDir = if ($env:CODEX_FLOW_BIN_DIR) {
+    $env:CODEX_FLOW_BIN_DIR
+} elseif ($PersistedBinDir) {
+    $PersistedBinDir
+} else {
+    Join-Path $HOME '.local/bin'
+}
 
 $hookManager = Join-Path $StateDir 'manage-hooks.py'
 if ((Test-Path $hookManager) -and (Get-Command python3 -ErrorAction SilentlyContinue)) {
@@ -28,7 +47,7 @@ if ($env:CODEX_FLOW_DEFER_WINDOWS_CLI_DELETE -ne '1') {
 }
 
 if (Test-Path $Config) {
-    $text = Get-Content $Config -Raw
+    $text = Read-Utf8NoBom $Config
     $pattern = '(?ms)^\[agents\]\s*\r?\n(.*?)(?=^\[[^\r\n]+\]\s*$|\z)'
     $match = [regex]::Match($text, $pattern)
     if ($match.Success) {
@@ -46,7 +65,7 @@ if (Test-Path $Config) {
             $text = $text.Substring(0,$match.Index) + $text.Substring($match.Index + $match.Length)
             $text = [regex]::Replace($text, "`n{3,}", "`n`n")
         }
-        Set-Content -Path $Config -Value $text -NoNewline
+        Write-Utf8NoBom $Config $text
     }
 }
 

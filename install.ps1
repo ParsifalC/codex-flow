@@ -1,5 +1,15 @@
 $ErrorActionPreference = 'Stop'
 
+function New-Utf8NoBomEncoding {
+    return New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+}
+function Read-Utf8NoBom([string]$Path) {
+    return [System.IO.File]::ReadAllText($Path, (New-Utf8NoBomEncoding))
+}
+function Write-Utf8NoBom([string]$Path, [string]$Value) {
+    [System.IO.File]::WriteAllText($Path, $Value, (New-Utf8NoBomEncoding))
+}
+
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $Config = Join-Path $CodexHome 'config.toml'
@@ -7,9 +17,19 @@ $Policy = Join-Path $CodexHome 'codex-flow.toml'
 $Hooks = Join-Path $CodexHome 'hooks.json'
 $Defaults = Join-Path $RootDir 'policy/defaults.toml'
 $StateDir = Join-Path $CodexHome 'codex-flow'
-$BinDir = if ($env:CODEX_FLOW_BIN_DIR) { $env:CODEX_FLOW_BIN_DIR } else { Join-Path $HOME '.local/bin' }
+$BinDirState = Join-Path $StateDir 'bin_dir'
+$PersistedBinDir = if (Test-Path $BinDirState) { (Read-Utf8NoBom $BinDirState).Trim() } else { '' }
+$PreviousBinDir = $PersistedBinDir
+$BinDir = if ($env:CODEX_FLOW_BIN_DIR) {
+    $env:CODEX_FLOW_BIN_DIR
+} elseif ($PersistedBinDir) {
+    $PersistedBinDir
+} else {
+    Join-Path $HOME '.local/bin'
+}
+$BinDir = [System.IO.Path]::GetFullPath($BinDir)
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$Version = if (Test-Path (Join-Path $RootDir 'VERSION')) { (Get-Content (Join-Path $RootDir 'VERSION') -Raw).Trim() } else { 'dev' }
+$Version = if (Test-Path (Join-Path $RootDir 'VERSION')) { (Read-Utf8NoBom (Join-Path $RootDir 'VERSION')).Trim() } else { 'dev' }
 
 function Get-TomlString([string]$Text, [string]$Section, [string]$Key) {
     $m = [regex]::Match($Text, '(?ms)^\[' + [regex]::Escape($Section) + '\]\s*(.*?)(?=^\[[^\r\n]+\]|\z)')
@@ -27,7 +47,7 @@ function Get-TomlInt([string]$Text, [string]$Section, [string]$Key) {
 }
 
 if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) { throw 'python3 is required' }
-$defaultsText = Get-Content $Defaults -Raw
+$defaultsText = Read-Utf8NoBom $Defaults
 $DefaultWorkerModel = Get-TomlString $defaultsText 'models' 'worker_model'
 $DefaultParentPolicy = Get-TomlString $defaultsText 'models' 'parent_policy'
 $DefaultParentMinModel = Get-TomlString $defaultsText 'models' 'parent_min_model'
@@ -55,7 +75,7 @@ New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 if (Test-Path $Config) { Copy-Item $Config "$Config.codex-flow.$Stamp.bak" } else { New-Item -ItemType File -Force -Path $Config | Out-Null }
 
-$text = Get-Content $Config -Raw
+$text = Read-Utf8NoBom $Config
 $managed = [ordered]@{
     enabled = 'true'
     max_concurrent_threads_per_session = $MaxThreads
@@ -79,7 +99,7 @@ if ($match.Success) {
     $text += "[agents]`n"
     foreach ($entry in $managed.GetEnumerator()) { $text += "$($entry.Key) = $($entry.Value)`n" }
 }
-Set-Content -Path $Config -Value $text -NoNewline
+Write-Utf8NoBom $Config $text
 
 @"
 schema_version = 3
@@ -111,7 +131,7 @@ max_repair_cycles = $MaxRepairs
 enabled = $TelemetryEnabled
 summary = true
 source = "hooks+app-server"
-"@ | Set-Content -Path $Policy
+"@ | ForEach-Object { Write-Utf8NoBom $Policy $_ }
 
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-explorer.toml') (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-implementer.toml') (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force
@@ -120,8 +140,9 @@ Remove-Item (Join-Path $CodexHome 'skills/cost-aware-development') -Force -Recur
 Remove-Item (Join-Path $CodexHome 'agents/luna-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorAction SilentlyContinue
 
-Set-Content -Path (Join-Path $StateDir 'source') -Value $RootDir -NoNewline
-Set-Content -Path (Join-Path $StateDir 'version') -Value $Version -NoNewline
+Write-Utf8NoBom (Join-Path $StateDir 'source') $RootDir
+Write-Utf8NoBom (Join-Path $StateDir 'version') $Version
+Write-Utf8NoBom $BinDirState $BinDir
 Copy-Item (Join-Path $RootDir 'scripts/telemetry.py') (Join-Path $StateDir 'telemetry.py') -Force
 Copy-Item (Join-Path $RootDir 'scripts/manage-hooks.py') (Join-Path $StateDir 'manage-hooks.py') -Force
 if ($TelemetryEnabled -eq 'true') {
@@ -133,6 +154,15 @@ if ($TelemetryEnabled -eq 'true') {
 Copy-Item (Join-Path $RootDir 'bin/codex-flow.ps1') (Join-Path $BinDir 'codex-flow.ps1') -Force
 Copy-Item (Join-Path $RootDir 'bin/codex-flow.cmd') (Join-Path $BinDir 'codex-flow.cmd') -Force
 
+if ($PreviousBinDir) {
+    $previousFullPath = [System.IO.Path]::GetFullPath($PreviousBinDir)
+    $currentFullPath = [System.IO.Path]::GetFullPath($BinDir)
+    if (-not [string]::Equals($previousFullPath, $currentFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Remove-Item (Join-Path $PreviousBinDir 'codex-flow.ps1') -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $PreviousBinDir 'codex-flow.cmd') -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "codex-flow $Version installed."
 Write-Host "  config:    $Config"
 Write-Host "  policy:    $Policy"
@@ -142,9 +172,21 @@ Write-Host "  parent:    $ParentModelPolicy / min=$ParentMinModel / reasoning >=
 Write-Host "  worker:    $WorkerModelPolicy / requested=$WorkerRequested / resolved=$WorkerModel / reasoning >= $WorkerMinEffort"
 Write-Host "  telemetry: $TelemetryEnabled (deterministic hooks + app-server; no model call)"
 Write-Host '  adaptive effort: high -> xhigh -> max only when justified'
-Write-Host ''
-Write-Host 'Restart Codex, then use it normally.'
-if ($TelemetryEnabled -eq 'true') { Write-Host 'Codex may ask once to trust the new command hooks. If prompted, review/approve them with /hooks.' }
 
 $userPath = [Environment]::GetEnvironmentVariable('Path','User')
 if (($userPath -split ';') -contains $BinDir) { Write-Host 'Run: codex-flow status' } else { Write-Host "Add $BinDir to your user PATH to run: codex-flow status" }
+
+Write-Host ''
+Write-Host '+------------------------------------------------------------------+'
+Write-Host '| IMPORTANT: FULL CODEX RESTART REQUIRED                           |'
+Write-Host '| Fully quit Codex and open it again; starting a new task alone    |'
+Write-Host '| is not enough.                                                   |'
+if ($TelemetryEnabled -eq 'true') {
+    Write-Host '| Telemetry is enabled: run /hooks; approve FlowPilot telemetry    |'
+    Write-Host '| there if it is pending approval.                                 |'
+} else {
+    Write-Host '| Telemetry is disabled: no hook authorization is required.        |'
+}
+Write-Host '| After restarting, start a new task and a new turn; an            |'
+Write-Host '| already-running turn cannot rebuild its starting snapshot.       |'
+Write-Host '+------------------------------------------------------------------+'
