@@ -180,12 +180,7 @@ codex-flow $VERSION installed.
   telemetry: $TELEMETRY_ENABLED (deterministic hooks + app-server; no model call)
 
 Adaptive effort: high baseline -> xhigh for complex work -> max only for critical quality-first work.
-Restart Codex, then use it normally.
 EOF
-
-if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
-  printf '\nCodex may ask once to trust the new command hooks. If prompted, review/approve them with /hooks.\n'
-fi
 
 if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
   printf '\nShell integration installed for %s.\n' "$SHELL_NAME"
@@ -197,3 +192,22 @@ else
     *) printf 'Add %s to PATH to use: codex-flow status\n' "$BIN_DIR" ;;
   esac
 fi
+
+printf '\n'
+printf '%s\n' \
+  '+------------------------------------------------------------------+' \
+  '| IMPORTANT: FULL CODEX RESTART REQUIRED                           |' \
+  '| Fully quit Codex and open it again; starting a new task alone    |' \
+  '| is not enough.                                                   |'
+if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+  printf '%s\n' \
+    '| Telemetry is enabled: run /hooks; approve FlowPilot telemetry    |' \
+    '| there if it is pending approval.                                 |'
+else
+  printf '%s\n' \
+    '| Telemetry is disabled: no hook authorization is required.        |'
+fi
+printf '%s\n' \
+  '| After restarting, start a new task and a new turn; an            |' \
+  '| already-running turn cannot rebuild its starting snapshot.       |' \
+  '+------------------------------------------------------------------+'

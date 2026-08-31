@@ -24,6 +24,7 @@ STATE_ROOT = CODEX_HOME / "codex-flow" / "telemetry"
 RUNS_DIR = STATE_ROOT / "runs"
 LAST_FILE = STATE_ROOT / "last.json"
 TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_TIMEOUT", "3.0"))
+LOCK_TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT", "2.0"))
 
 
 def now_ms() -> int:
@@ -47,7 +48,7 @@ def atomic_json(path: Path, value: Any) -> None:
 def state_lock(key: str):
     STATE_ROOT.mkdir(parents=True, exist_ok=True)
     lock = STATE_ROOT / ("." + key.replace("/", "_") + ".lock")
-    deadline = time.monotonic() + 2.0
+    deadline = time.monotonic() + LOCK_TIMEOUT
     acquired = False
     while True:
         try:
@@ -59,7 +60,10 @@ def state_lock(key: str):
                 break
             time.sleep(0.025)
     try:
-        yield
+        # Callers must not enter a critical section unless this process owns
+        # the lock.  A timeout is a normal fail-open outcome for telemetry,
+        # not permission to proceed without serialization.
+        yield acquired
     finally:
         if acquired:
             try:
@@ -280,13 +284,18 @@ def usage_summary(usage: dict[str, Any] | None) -> dict[str, Any] | None:
     if not usage:
         return None
     groups = usage.get("groups") if isinstance(usage.get("groups"), list) else []
+    estimated_credits = usage.get("estimatedUsageCreditsMicros")
     totals: dict[str, Any] = {
         "input_tokens": 0,
         "cached_input_tokens": 0,
         "net_new_input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
-        "estimated_credits_micros": int(usage.get("estimatedUsageCreditsMicros") or 0),
+        "estimated_credits_micros": (
+            int(estimated_credits)
+            if isinstance(estimated_credits, (int, float))
+            else None
+        ),
         "estimated_usd_micros": usage.get("estimatedUsageUsdMicros"),
     }
     normalized_groups = []
@@ -304,7 +313,11 @@ def usage_summary(usage: dict[str, Any] | None) -> dict[str, Any] | None:
             "model": group.get("model"),
             "reasoning_effort": group.get("reasoningEffort"),
             "speed": group.get("speed"),
-            "estimated_credits_micros": int(group.get("estimatedUsageCreditsMicros") or 0),
+            "estimated_credits_micros": (
+                int(group["estimatedUsageCreditsMicros"])
+                if isinstance(group.get("estimatedUsageCreditsMicros"), (int, float))
+                else None
+            ),
         }
         for source, target in mapping.items():
             value = group.get(source)
@@ -317,7 +330,7 @@ def usage_summary(usage: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def usage_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not after:
+    if not before or not after:
         return None
     numeric = [
         "input_tokens",
@@ -330,14 +343,73 @@ def usage_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) -> 
     result: dict[str, Any] = {}
     for key in numeric:
         end = after.get(key)
-        start = before.get(key, 0) if before else 0
+        start = before.get(key)
         if isinstance(end, (int, float)) and isinstance(start, (int, float)):
             result[key] = max(0, int(end - start))
     usd_after = after.get("estimated_usd_micros")
-    usd_before = before.get("estimated_usd_micros", 0) if before else 0
+    usd_before = before.get("estimated_usd_micros")
     if isinstance(usd_after, (int, float)) and isinstance(usd_before, (int, float)):
         result["estimated_usd_micros"] = max(0, int(usd_after - usd_before))
-    result["groups"] = after.get("groups", [])
+    # Group totals are cumulative too.  Only subtract groups whose complete
+    # stable identity exists in both snapshots; newly appearing groups have
+    # no defensible baseline and must not be attributed to this run.
+    identity_fields = ("model", "reasoning_effort", "speed")
+    group_numeric = (
+        "input_tokens",
+        "cached_input_tokens",
+        "net_new_input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "estimated_credits_micros",
+        "estimated_usd_micros",
+    )
+
+    def group_identity(group: Any) -> tuple[Any, ...] | None:
+        if not isinstance(group, dict):
+            return None
+        identity = tuple(group.get(field) for field in identity_fields)
+        if any(value is None for value in identity):
+            return None
+        return identity
+
+    before_groups: dict[tuple[Any, ...], dict[str, Any]] = {}
+    duplicate_before: set[tuple[Any, ...]] = set()
+    before_group_values = before.get("groups")
+    if not isinstance(before_group_values, list):
+        before_group_values = []
+    for group in before_group_values:
+        identity = group_identity(group)
+        if identity is None:
+            continue
+        if identity in before_groups:
+            duplicate_before.add(identity)
+        else:
+            before_groups[identity] = group
+
+    delta_groups: list[dict[str, Any]] = []
+    after_group_values = after.get("groups")
+    if not isinstance(after_group_values, list):
+        after_group_values = []
+    for group in after_group_values:
+        identity = group_identity(group)
+        if identity is None or identity in duplicate_before:
+            continue
+        old = before_groups.get(identity)
+        if old is None:
+            continue
+        delta_group: dict[str, Any] = {
+            field: group[field] for field in identity_fields
+        }
+        comparable = False
+        for key in group_numeric:
+            end = group.get(key)
+            start = old.get(key)
+            if isinstance(end, (int, float)) and isinstance(start, (int, float)):
+                delta_group[key] = max(0, int(end - start))
+                comparable = True
+        if comparable:
+            delta_groups.append(delta_group)
+    result["groups"] = delta_groups
     return result
 
 
@@ -384,16 +456,36 @@ def window_label(minutes: Any) -> str:
     return "quota"
 
 
+def aggregate_usage_value(
+    usages: list[dict[str, Any] | None], key: str
+) -> int | None:
+    """Return a complete participant aggregate, or None when any is unknown."""
+    values: list[int] = []
+    for usage in usages:
+        if not isinstance(usage, dict):
+            return None
+        value = usage.get(key)
+        if not isinstance(value, (int, float)):
+            return None
+        values.append(int(value))
+    return sum(values) if values else None
+
+
 def render_summary(run: dict[str, Any]) -> str:
     workers = list((run.get("workers") or {}).values())
-    parent_usage = run.get("parent", {}).get("usage_delta") or {}
+    parent = run.get("parent") or {}
+    parent_usage = parent.get("usage_delta") if isinstance(parent, dict) else None
+    participant_usages = [parent_usage]
+    participant_usages.extend(
+        worker.get("usage") if isinstance(worker, dict) else None for worker in workers
+    )
     lines = ["", "FlowPilot summary"]
     lines.append(
         f"  participants  1 parent + {len(workers)} worker{'s' if len(workers) != 1 else ''}"
     )
     lines.append(
-        f"  parent        {run.get('parent', {}).get('model') or 'unknown'}  "
-        f"{fmt_tokens(parent_usage.get('total_tokens'))} tokens"
+        f"  parent        {parent.get('model') or 'unknown'}  "
+        f"{fmt_tokens(parent_usage.get('total_tokens') if isinstance(parent_usage, dict) else None)} tokens"
     )
     for worker in workers:
         usage = worker.get("usage") or {}
@@ -403,15 +495,10 @@ def render_summary(run: dict[str, Any]) -> str:
             f"{worker.get('model') or 'unknown'}  "
             f"{fmt_tokens(usage.get('total_tokens'))} tokens  {state}"
         )
-    total_tokens = int(parent_usage.get("total_tokens") or 0) + sum(
-        int((worker.get("usage") or {}).get("total_tokens") or 0) for worker in workers
-    )
-    credits = int(parent_usage.get("estimated_credits_micros") or 0) + sum(
-        int((worker.get("usage") or {}).get("estimated_credits_micros") or 0)
-        for worker in workers
-    )
+    total_tokens = aggregate_usage_value(participant_usages, "total_tokens")
+    credits = aggregate_usage_value(participant_usages, "estimated_credits_micros")
     attributed = f"  attributed    {fmt_tokens(total_tokens)} tokens"
-    if credits:
+    if credits is not None:
         attributed += f"  {credits / 1_000_000:.3f} credits"
     lines.append(attributed)
 
@@ -446,18 +533,17 @@ def render_summary(run: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_terminal(text: str) -> None:
-    if os.environ.get("CODEX_FLOW_TELEMETRY_STDOUT") == "1":
+def write_stop_output(text: str) -> None:
+    # Codex command hooks consume JSON on stdout.  Keep a deliberately named
+    # plain-text escape hatch for shell tests; production hooks always use the
+    # supported systemMessage field so Desktop/UI can surface the summary.
+    if os.environ.get("CODEX_FLOW_TELEMETRY_TEST_PLAIN_OUTPUT") == "1":
         sys.stdout.write(text)
         return
-    targets = ["/dev/tty"] if os.name != "nt" else ["CONOUT$"]
-    for target in targets:
-        try:
-            with open(target, "w", encoding="utf-8", buffering=1) as handle:
-                handle.write(text)
-            return
-        except OSError:
-            pass
+    sys.stdout.write(
+        json.dumps({"systemMessage": text}, ensure_ascii=False, separators=(",", ":"))
+        + "\n"
+    )
 
 
 def collect_hook(event: dict[str, Any]) -> None:
@@ -465,7 +551,9 @@ def collect_hook(event: dict[str, Any]) -> None:
     if kind not in {"UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"}:
         return
     key = run_key(event)
-    with state_lock(key):
+    with state_lock(key) as acquired:
+        if not acquired:
+            return
         run = load_run(event)
         path = run_path(event)
 
@@ -537,7 +625,7 @@ def collect_hook(event: dict[str, Any]) -> None:
                     worker["status"] = "observed"
         atomic_json(path, run)
         atomic_json(LAST_FILE, run)
-        write_terminal(render_summary(run))
+        write_stop_output(render_summary(run))
 
 
 def show_last(as_json: bool = False) -> int:

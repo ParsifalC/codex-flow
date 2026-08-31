@@ -78,9 +78,11 @@ cd codex-flow
 .\install.ps1
 ```
 
-The management command is installed under `~/.local/bin`. When the default shell is Bash or zsh, installation also adds one marked, idempotent block to the corresponding shell rc file. That block adds the CLI directory to `PATH` and registers subcommand completion, including `usage last`, `benchmark-local quick|full`, and `benchmark-corpus quick|full`. Restart Codex after installation, then use it normally.
+The management command is installed under `~/.local/bin`. When the default shell is Bash or zsh, installation also adds one marked, idempotent block to the corresponding shell rc file. That block adds the CLI directory to `PATH` and registers subcommand completion, including `usage last`, `benchmark-local quick|full`, and `benchmark-corpus quick|full`.
 
-FlowPilot telemetry merges managed command hooks into `~/.codex/hooks.json` without replacing unrelated user hooks. Because Codex applies a security trust flow to command hooks, **the first installation or a later hook-content change may require one trust approval**. If Codex prompts, inspect and approve the hooks with `/hooks`. Normal tasks require no additional action after approval.
+After installation, **fully quit Codex and open it again**; starting a new task alone is not enough. After the restart, start a new task/turn because an already-running turn cannot rebuild its starting snapshot. When telemetry is enabled, run `/hooks` and approve FlowPilot telemetry there if it is pending approval. When telemetry is disabled, no hook authorization is required, but you must still fully restart Codex and start a new task/turn.
+
+FlowPilot telemetry merges managed command hooks into `~/.codex/hooks.json` without replacing unrelated user hooks. Because Codex applies a security trust flow to command hooks, **the first installation or a later hook-content change may require one trust approval**. If Codex prompts, inspect and approve the hooks with `/hooks`. Normal tasks require no additional action after approval. With telemetry disabled, these hooks are not installed and no hook authorization is required.
 
 Shell selection follows `CODEX_FLOW_SHELL` when set, otherwise the basename of `SHELL`. Use `CODEX_FLOW_SHELL_CONFIG_DIR` to place the managed shell files in another configuration directory.
 

@@ -16,9 +16,10 @@ printf '%s\n' '# profile sentinel' > "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile"
 
 cat > "$TMP/bin/codex" <<'EOF'
 #!/usr/bin/env bash
-[[ "${1:-}" == "--version" ]] && echo "codex-test 0.0.0" || exit 0
+[[ "${1:-}" == "--version" ]] && echo "codex-test ${CODEX_TEST_VERSION:-0.147.0}" || exit 0
 EOF
 chmod +x "$TMP/bin/codex"
+export CODEX_TEST_VERSION=0.147.0
 export PATH="$TMP/bin:$CODEX_FLOW_BIN_DIR:$PATH"
 
 cat > "$CODEX_HOME/config.toml" <<'EOF'
@@ -35,6 +36,27 @@ printf '%s\n' "$install_output"
 [[ "$install_output" == *"telemetry: true"* ]]
 [[ "$install_output" == *"source $CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"* ]]
 [[ "$install_output" == *"Or open a new terminal."* ]]
+[[ "$install_output" == *"IMPORTANT: FULL CODEX RESTART REQUIRED"* ]]
+[[ "$install_output" == *"Fully quit Codex and open it again; starting a new task alone"* ]]
+[[ "$install_output" == *"Telemetry is enabled: run /hooks; approve FlowPilot telemetry"* ]]
+[[ "$install_output" == *"After restarting, start a new task and a new turn"* ]]
+[[ "$install_output" == *"already-running turn cannot rebuild its starting snapshot."* ]]
+[[ "${install_output##*$'\n'}" == '+------------------------------------------------------------------+' ]]
+
+disabled_output="$(
+  CODEX_HOME="$TMP/.codex-disabled" \
+  CODEX_FLOW_BIN_DIR="$TMP/bin-disabled" \
+  CODEX_FLOW_SHELL=none \
+  CODEX_FLOW_TELEMETRY_ENABLED=false \
+  bash "$ROOT_DIR/install.sh"
+)"
+printf '%s\n' "$disabled_output"
+[[ "$disabled_output" == *"Telemetry is disabled: no hook authorization is required."* ]]
+[[ "$disabled_output" == *"IMPORTANT: FULL CODEX RESTART REQUIRED"* ]]
+[[ "$disabled_output" == *"After restarting, start a new task and a new turn"* ]]
+! [[ "$disabled_output" == *"run /hooks"* ]]
+! [[ "$disabled_output" == *"approve FlowPilot telemetry"* ]]
+[[ "${disabled_output##*$'\n'}" == '+------------------------------------------------------------------+' ]]
 
 [[ -f "$CODEX_HOME/codex-flow.toml" ]]
 [[ -f "$CODEX_HOME/codex-flow/source" ]]
@@ -81,12 +103,33 @@ doctor_output="$(codex-flow doctor 2>&1)"
 printf '%s\n' "$doctor_output"
 [[ "$doctor_output" == *"✓ policy schema v3"* ]]
 [[ "$doctor_output" == *"✓ FlowPilot lifecycle hooks installed"* ]]
+[[ "$doctor_output" == *"thread-attributed telemetry may be unavailable"* ]]
 [[ "$doctor_output" == *"Ready. FlowPilot routing and deterministic telemetry are installed."* ]]
+
+for CODEX_TEST_VERSION in 0.151.0 0.151.0-alpha.1; do
+  export CODEX_TEST_VERSION
+  capable_doctor_output="$(codex-flow doctor 2>&1)"
+  ! [[ "$capable_doctor_output" == *"thread-attributed telemetry may be unavailable"* ]]
+done
 
 no_cli_output="$(env PATH="$CODEX_FLOW_BIN_DIR:/usr/bin:/bin" "$CODEX_FLOW_BIN_DIR/codex-flow" doctor 2>&1)"
 printf '%s\n' "$no_cli_output"
 [[ "$no_cli_output" == *"Codex CLI not found in PATH"* ]]
 [[ "$no_cli_output" == *"Core FlowPilot routing is installed and healthy"* ]]
+
+# A mixed hook group must preserve user handlers across reinstall and uninstall.
+python3 - "$CODEX_HOME/hooks.json" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as stream:
+    data = json.load(stream)
+entry = data["hooks"]["Stop"][0]
+entry["hooks"].append({"type": "command", "command": "user-stop-handler"})
+with open(path, "w", encoding="utf-8") as stream:
+    json.dump(data, stream, ensure_ascii=False, indent=2)
+    stream.write("\n")
+PY
 
 # A second install must replace managed hooks and shell blocks, not duplicate them.
 bash "$ROOT_DIR/install.sh"
@@ -98,6 +141,8 @@ hooks=json.load(open(sys.argv[1]))["hooks"]
 for event in ("UserPromptSubmit","SubagentStart","SubagentStop","Stop"):
     managed=[entry for entry in hooks[event] if any("codex-flow/telemetry.py" in hook.get("command", "").replace("\\", "/") for hook in entry.get("hooks", []))]
     assert len(managed) == 1, (event, managed)
+stop_hooks = hooks["Stop"][0]["hooks"]
+assert any(hook.get("command") == "user-stop-handler" for hook in stop_hooks), stop_hooks
 PY
 
 grep -Fq '# bashrc sentinel' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
@@ -135,6 +180,14 @@ env -u CODEX_FLOW_BIN_DIR codex-flow uninstall
 [[ ! -e "$CODEX_HOME/skills/flow-pilot" ]]
 [[ ! -e "$CODEX_HOME/skills/cost-aware-development" ]]
 ! grep -qF 'codex-flow/telemetry.py' "$CODEX_HOME/hooks.json"
+python3 - "$CODEX_HOME/hooks.json" <<'PY'
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    hooks = json.load(stream)["hooks"]
+stop_hooks = hooks["Stop"][0]["hooks"]
+assert stop_hooks == [{"type": "command", "command": "user-stop-handler"}], stop_hooks
+PY
 ! grep -qF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"
 ! grep -qF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile"
 ! grep -qF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.zshrc"

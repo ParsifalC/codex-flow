@@ -1,5 +1,12 @@
 $ErrorActionPreference = 'Stop'
 
+function New-Utf8NoBomEncoding {
+    return New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+}
+function Read-Utf8NoBom([string]$Path) {
+    return [System.IO.File]::ReadAllText($Path, (New-Utf8NoBomEncoding))
+}
+
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $StateDir = Join-Path $CodexHome 'codex-flow'
 $SourceFile = Join-Path $StateDir 'source'
@@ -7,12 +14,12 @@ $Policy = Join-Path $CodexHome 'codex-flow.toml'
 
 function Get-SourceDir {
     if (-not (Test-Path $SourceFile)) { throw 'missing source metadata; reinstall codex-flow' }
-    $dir = (Get-Content $SourceFile -Raw).Trim()
+    $dir = (Read-Utf8NoBom $SourceFile).Trim()
     if (-not (Test-Path $dir)) { throw "source checkout no longer exists: $dir" }
     return $dir
 }
 function Get-PolicyValue([string]$Section, [string]$Key) {
-    $text = Get-Content $Policy -Raw
+    $text = Read-Utf8NoBom $Policy
     $m = [regex]::Match($text, '(?ms)^\[' + [regex]::Escape($Section) + '\]\s*(.*?)(?=^\[[^\r\n]+\]|\z)')
     if (-not $m.Success) { return '' }
     $k = [regex]::Match($m.Groups[1].Value, '(?m)^\s*' + [regex]::Escape($Key) + '\s*=\s*"?([^"\r\n]+)"?\s*$')
@@ -25,8 +32,8 @@ $rest = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
 switch ($cmd) {
     'status' {
         $src = Get-SourceDir
-        $installed = if (Test-Path (Join-Path $StateDir 'version')) { (Get-Content (Join-Path $StateDir 'version') -Raw).Trim() } else { 'unknown' }
-        $available = if (Test-Path (Join-Path $src 'VERSION')) { (Get-Content (Join-Path $src 'VERSION') -Raw).Trim() } else { 'unknown' }
+        $installed = if (Test-Path (Join-Path $StateDir 'version')) { (Read-Utf8NoBom (Join-Path $StateDir 'version')).Trim() } else { 'unknown' }
+        $available = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         Write-Host 'codex-flow'
         Write-Host "  installed: $installed"
         Write-Host "  checkout:  $src"
@@ -84,10 +91,10 @@ switch ($cmd) {
         $telemetryEnabled = Get-PolicyValue telemetry enabled
         $env:CODEX_FLOW_TELEMETRY_ENABLED = if ($telemetryEnabled) { $telemetryEnabled } else { 'true' }
 
-        $before = if (Test-Path (Join-Path $src 'VERSION')) { (Get-Content (Join-Path $src 'VERSION') -Raw).Trim() } else { 'unknown' }
+        $before = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         git -C $src pull --ff-only
         if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
-        $after = if (Test-Path (Join-Path $src 'VERSION')) { (Get-Content (Join-Path $src 'VERSION') -Raw).Trim() } else { 'unknown' }
+        $after = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         & (Join-Path $src 'install.ps1')
         Write-Host "updated $before -> $after"
     }
