@@ -44,13 +44,13 @@ summary_json="$(hook '{"hook_event_name":"Stop","session_id":"parent-1","turn_id
 summary="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["systemMessage"], end="")' <<<"$summary_json")"
 python3 -c 'import json,sys; assert isinstance(json.load(sys.stdin)["systemMessage"], str)' <<<"$summary_json"
 printf '%s\n' "$summary"
-[[ "$summary" == *"FlowPilot summary"* ]]
+[[ "$summary" == *"FlowPilot Telemetry Summary"* ]]
 [[ "$summary" == *"1 parent + 1 worker"* ]]
 [[ "$summary" == *"worker-implementer"* ]]
 [[ "$summary" == *"2.3k tokens"* ]]
 [[ "$summary" == *"3.000 credits"* ]]
-[[ "$summary" == *"5h 31%→34% (+3 pp)"* ]]
-[[ "$summary" == *"7d 18%→19% (+1 pp)"* ]]
+[[ "$summary" == *"5h 31% → 34% (+3 pp)"* ]]
+[[ "$summary" == *"7d 18% → 19% (+1 pp)"* ]]
 
 last="$(python3 "$ROOT_DIR/scripts/telemetry.py" last)"
 [[ "$last" == *"2.3k tokens"* ]]
@@ -82,10 +82,10 @@ unavailable = {
     },
 }
 summary = telemetry.render_summary(unavailable)
-assert "parent        gpt-parent  n/a tokens" in summary, summary
-assert "worker        worker-implementer  gpt-worker  n/a tokens" in summary, summary
-assert "attributed    n/a tokens" in summary, summary
-assert "attributed    0 tokens" not in summary, summary
+assert "gpt-parent" in summary and "n/a tokens" in summary, summary
+assert "worker-implementer" in summary and "gpt-worker" in summary, summary
+assert "• Attributed:     n/a tokens" in summary, summary
+assert "• Attributed:     0 tokens" not in summary, summary
 assert "credits" not in summary, summary
 
 partial = {
@@ -103,9 +103,9 @@ partial = {
     },
 }
 summary = telemetry.render_summary(partial)
-assert "parent        gpt-parent  12 tokens" in summary, summary
-assert "attributed    n/a tokens" in summary, summary
-assert "attributed    12 tokens" not in summary, summary
+assert "gpt-parent" in summary and "12 tokens" in summary, summary
+assert "• Attributed:     n/a tokens" in summary, summary
+assert "• Attributed:     12 tokens" not in summary, summary
 
 zero = {
     "parent": {
@@ -122,9 +122,9 @@ zero = {
     },
 }
 summary = telemetry.render_summary(zero)
-assert "parent        gpt-parent  0 tokens" in summary, summary
-assert "worker        worker-implementer  gpt-worker  0 tokens" in summary, summary
-assert "attributed    0 tokens" in summary, summary
+assert "gpt-parent" in summary and "0 tokens" in summary, summary
+assert "worker-implementer" in summary and "gpt-worker" in summary, summary
+assert "• Attributed:     0 tokens" in summary, summary
 assert "0.000 credits" in summary, summary
 PY
 

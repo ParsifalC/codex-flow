@@ -34,16 +34,65 @@ case "$cmd" in
     src="$(source_dir)"
     installed="$(cat "$STATE_DIR/version" 2>/dev/null || echo unknown)"
     available="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
-    printf 'codex-flow\n'
-    printf '  installed: %s\n' "$installed"
-    printf '  checkout:  %s\n' "$src"
-    printf '  checkout version: %s\n' "$available"
-    if [[ -f "$POLICY" ]]; then
-      printf '  skill:     FlowPilot\n'
-      printf '  parent:    %s / min effort %s\n' "$(read_policy_value parent model_policy "$POLICY")" "$(read_policy_value parent min_reasoning_effort "$POLICY")"
-      printf '  worker:    %s / %s\n' "$(read_policy_value worker resolved_model "$POLICY")" "$(read_policy_value worker min_reasoning_effort "$POLICY")"
-      printf '  telemetry: %s\n' "$(read_policy_value telemetry enabled "$POLICY")"
+
+    if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
+      C_BOLD=$'\033[1m'
+      C_DIM=$'\033[2m'
+      C_GREEN=$'\033[32m'
+      C_CYAN=$'\033[36m'
+      C_RESET=$'\033[0m'
+    else
+      C_BOLD=""
+      C_DIM=""
+      C_GREEN=""
+      C_CYAN=""
+      C_RESET=""
     fi
+
+    display_path() {
+      local p="$1"
+      if [[ -n "${HOME:-}" && "$p" == "$HOME"* ]]; then
+        printf '~%s' "${p#$HOME}"
+      else
+        printf '%s' "$p"
+      fi
+    }
+
+    disp_src="$(display_path "$src")"
+
+    box_line() {
+      local content="$1"
+      local width=68
+      local plain
+      plain="$(printf '%s' "$content" | sed -E 's/\x1b\[[0-9;]*m//g')"
+      local len=${#plain}
+      local pad=$((width - len))
+      if (( pad < 0 )); then pad=0; fi
+      printf '  %s│%s  %s%*s %s│%s\n' "$C_DIM" "$C_RESET" "$content" "$pad" "" "$C_DIM" "$C_RESET"
+    }
+
+    printf '\n%s📦 codex-flow status%s\n\n' "$C_BOLD" "$C_RESET"
+    printf '  %s╭─ Version & Paths ─────────────────────────────────────────────────╮%s\n' "$C_DIM" "$C_RESET"
+    box_line "${C_BOLD}• Installed:${C_RESET}   v${installed}"
+    box_line "${C_BOLD}• Checkout:${C_RESET}    ${disp_src} ${C_DIM}(v${available})${C_RESET}"
+    box_line "${C_BOLD}• Skill:${C_RESET}       FlowPilot ${C_DIM}(flow-pilot)${C_RESET}"
+    if [[ -f "$POLICY" ]]; then
+      p_policy="$(read_policy_value parent model_policy "$POLICY")"
+      p_effort="$(read_policy_value parent min_reasoning_effort "$POLICY")"
+      w_model="$(read_policy_value worker resolved_model "$POLICY")"
+      w_effort="$(read_policy_value worker min_reasoning_effort "$POLICY")"
+      t_enabled="$(read_policy_value telemetry enabled "$POLICY")"
+
+      printf '  %s├─ Model Routing ───────────────────────────────────────────────────┤%s\n' "$C_DIM" "$C_RESET"
+      box_line "${C_BOLD}• Parent:${C_RESET}      ${p_policy} ${C_DIM}(min effort: ${p_effort})${C_RESET}"
+      box_line "${C_BOLD}• Worker:${C_RESET}      ${w_model} ${C_DIM}(min effort: ${w_effort})${C_RESET}"
+      if [[ "$t_enabled" == "true" ]]; then
+        box_line "${C_BOLD}• Telemetry:${C_RESET}   ${C_GREEN}● enabled${C_RESET}"
+      else
+        box_line "${C_BOLD}• Telemetry:${C_RESET}   ${C_DIM}○ disabled${C_RESET}"
+      fi
+    fi
+    printf '  %s╰───────────────────────────────────────────────────────────────────╯%s\n\n' "$C_DIM" "$C_RESET"
     ;;
   usage)
     shift
@@ -97,27 +146,37 @@ case "$cmd" in
     CODEX_FLOW_MAX_THREADS="$max_threads" CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" CODEX_FLOW_TELEMETRY_ENABLED="$telemetry_enabled" \
       bash "$src/install.sh"
 
-    printf '\nupdated %s -> %s\n' "$before" "$after"
+    printf '\n✨ Updated codex-flow %s -> %s\n' "$before" "$after"
     bash "$src/scripts/doctor"
     ;;
   help|-h|--help)
-    cat <<'EOF'
-codex-flow <command>
+    if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
+      C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_CYAN=$'\033[36m'; C_RESET=$'\033[0m'
+    else
+      C_BOLD=""; C_DIM=""; C_CYAN=""; C_RESET=""
+    fi
+    cat <<EOF
 
-Commands:
-  status              Show installed version and effective FlowPilot policy
-  update              Pull checkout, preserve policy, refresh auto recommendations
-  doctor              Verify installation, routing, and telemetry wiring
-  usage last          Show the last deterministic task summary
-  usage last --json   Show raw telemetry for the last completed task
-  benchmark-local     Run built-in benchmark through the local Codex login session
-  benchmark-corpus    Materialize the built-in corpus without calling any model
-  benchmark           Run a reproducible Codex benchmark manifest
-  benchmark-analyze   Analyze benchmark JSONL with quality-first routing
-  uninstall           Remove codex-flow-managed files
+${C_BOLD}Usage:${C_RESET} codex-flow <command> [options]
 
-Recommended first real run:
-  codex-flow benchmark-local quick
+  ${C_BOLD}Core Commands${C_RESET}
+    ${C_CYAN}status${C_RESET}              Show installed version and effective FlowPilot policy
+    ${C_CYAN}update${C_RESET}              Pull checkout, preserve policy, refresh recommendations
+    ${C_CYAN}doctor${C_RESET}              Verify installation, routing, and telemetry wiring
+    ${C_CYAN}usage last${C_RESET}          Show the last task telemetry summary (--json for raw)
+
+  ${C_BOLD}Benchmark Commands${C_RESET}
+    ${C_CYAN}benchmark-local${C_RESET}     Run built-in benchmark via local Codex session
+    ${C_CYAN}benchmark-corpus${C_RESET}    Materialize corpus without calling any model
+    ${C_CYAN}benchmark${C_RESET}           Run a reproducible Codex benchmark manifest
+    ${C_CYAN}benchmark-analyze${C_RESET}   Analyze benchmark JSONL with quality-first routing
+
+  ${C_BOLD}Maintenance${C_RESET}
+    ${C_CYAN}uninstall${C_RESET}           Remove codex-flow-managed files and hooks
+
+  ${C_DIM}💡 Quick Start:${C_RESET}
+    Run ${C_CYAN}codex-flow benchmark-local quick${C_RESET} for your first validation run.
+
 EOF
     ;;
   *) fail "unknown command: $cmd" ;;

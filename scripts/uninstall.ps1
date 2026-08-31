@@ -69,4 +69,11 @@ if (Test-Path $Config) {
     }
 }
 
-Write-Host 'codex-flow FlowPilot, telemetry hooks, CLI, and policy removed. Existing backups were preserved.'
+Write-Host ""
+Write-Host "🗑️  codex-flow uninstalled successfully" -ForegroundColor Green
+Write-Host ""
+Write-Host '  ✔ ' -ForegroundColor Green -NoNewline; Write-Host 'FlowPilot skill and worker agents removed'
+Write-Host '  ✔ ' -ForegroundColor Green -NoNewline; Write-Host 'Telemetry hooks and shell integration removed'
+Write-Host '  ✔ ' -ForegroundColor Green -NoNewline; Write-Host "CLI binary ($(Join-Path $BinDir 'codex-flow.cmd')) removed"
+Write-Host '  ✔ ' -ForegroundColor Green -NoNewline; Write-Host 'Configuration cleaned up (existing backups preserved)'
+Write-Host ""

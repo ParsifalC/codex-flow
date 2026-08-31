@@ -6,9 +6,11 @@ $Hooks = Join-Path $CodexHome 'hooks.json'
 $StateDir = Join-Path $CodexHome 'codex-flow'
 $Failed = $false
 $CodexAvailable = $true
-function Ok($m) { Write-Host "[OK] $m" }
-function Warn($m) { Write-Warning $m }
-function Fail($m) { Write-Host "[FAIL] $m"; $script:Failed = $true }
+function Ok($m) { Write-Host '  ✔ ' -ForegroundColor Green -NoNewline; Write-Host $m }
+function Warn($m) { Write-Host '  ▲ ' -ForegroundColor Yellow -NoNewline; Write-Host $m }
+function Fail($m) { Write-Host '  ✖ ' -ForegroundColor Red -NoNewline; Write-Host $m; $script:Failed = $true }
+function Section($title) { Write-Host ""; Write-Host "  $title" -ForegroundColor White }
+
 # Codex 0.151 is the known support baseline for thread attribution. Comparing
 # major/minor treats 0.151 prereleases as capable conservatively.
 function Test-CodexThreadUsage([string]$Version) {
@@ -26,7 +28,10 @@ function Get-PolicyValue([string]$Section, [string]$Key) {
     return ''
 }
 
-Write-Host 'codex-flow doctor'
+Write-Host ""
+Write-Host "🩺 codex-flow doctor" -ForegroundColor Cyan
+
+Section "Environment & Tools"
 if (Get-Command codex -ErrorAction SilentlyContinue) {
     $CodexVersion = (& codex --version 2>$null | Out-String).Trim()
     Ok "Codex CLI found: $CodexVersion"
@@ -36,6 +41,8 @@ if (Get-Command codex -ErrorAction SilentlyContinue) {
 } else { $CodexAvailable = $false; Warn 'Codex CLI not found in PATH; telemetry quota reads and real benchmarks are unavailable' }
 if (Test-Path $Config) { Ok 'config.toml found' } else { Fail "missing $Config" }
 if (Test-Path $Policy) { Ok 'codex-flow policy found' } else { Fail "missing $Policy" }
+
+Section "Routing & Skills"
 foreach ($p in @('agents/worker-explorer.toml','agents/worker-implementer.toml','skills/flow-pilot/SKILL.md')) {
     if (Test-Path (Join-Path $CodexHome $p)) { Ok "$p installed" } else { Fail "$p missing" }
 }
@@ -49,6 +56,8 @@ if (Test-Path $Policy) {
     if ($workerEffort -in @('high','xhigh','max')) { Ok "worker minimum reasoning: $workerEffort" } else { Fail "invalid worker effort: $workerEffort" }
     $worker = Get-PolicyValue worker resolved_model
     if ($worker) { Ok "resolved worker: $worker" } else { Fail 'resolved worker is empty' }
+    
+    Section "Hooks & Telemetry"
     $telemetryEnabled = Get-PolicyValue telemetry enabled
     if ($telemetryEnabled -eq 'true') {
         $collector = Join-Path $StateDir 'telemetry.py'
@@ -65,5 +74,18 @@ if (Test-Path $Policy) {
         if ($cfg -match ('default_subagent_reasoning_effort\s*=\s*"' + [regex]::Escape($workerEffort) + '"')) { Ok 'Codex worker effort matches policy' } else { Fail 'Codex worker effort does not match policy' }
     }
 }
-if ($Failed) { exit 1 }
-if ($CodexAvailable) { Write-Host 'Ready. FlowPilot routing and deterministic telemetry are installed.' } else { Write-Host 'Ready. Core FlowPilot routing is installed; Codex CLI-dependent telemetry quota reads are unavailable.' }
+
+Write-Host ""
+Write-Host '  ─────────────────────────────────────────────────────────────────────' -ForegroundColor DarkGray
+if ($Failed) {
+    Write-Host '  ✖ One or more required core checks failed. Re-run the installer, then restart Codex.' -ForegroundColor Red
+    Write-Host ""
+    exit 1
+}
+
+if ($CodexAvailable) {
+    Write-Host '  ✨ Ready. FlowPilot routing and deterministic telemetry are installed.' -ForegroundColor Green
+} else {
+    Write-Host '  ✨ Ready. Core FlowPilot routing is installed; Codex CLI-dependent telemetry quota reads are unavailable.' -ForegroundColor Green
+}
+Write-Host ""

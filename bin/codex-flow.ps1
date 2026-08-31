@@ -34,16 +34,42 @@ switch ($cmd) {
         $src = Get-SourceDir
         $installed = if (Test-Path (Join-Path $StateDir 'version')) { (Read-Utf8NoBom (Join-Path $StateDir 'version')).Trim() } else { 'unknown' }
         $available = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
-        Write-Host 'codex-flow'
-        Write-Host "  installed: $installed"
-        Write-Host "  checkout:  $src"
-        Write-Host "  checkout version: $available"
-        if (Test-Path $Policy) {
-            Write-Host '  skill:     FlowPilot'
-            Write-Host "  parent:    $(Get-PolicyValue parent model_policy) / min effort $(Get-PolicyValue parent min_reasoning_effort)"
-            Write-Host "  worker:    $(Get-PolicyValue worker resolved_model) / $(Get-PolicyValue worker min_reasoning_effort)"
-            Write-Host "  telemetry: $(Get-PolicyValue telemetry enabled)"
+        $dispSrc = $src.Replace($HOME, '~')
+
+        function Write-StatusLine($content) {
+            $width = 68
+            $pad = [Math]::Max(0, $width - $content.Length)
+            Write-Host '  │  ' -ForegroundColor DarkGray -NoNewline
+            Write-Host $content -NoNewline
+            Write-Host (' ' * $pad) -NoNewline
+            Write-Host ' │' -ForegroundColor DarkGray
         }
+
+        Write-Host ""
+        Write-Host "📦 codex-flow status" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host '  ╭─ Version & Paths ─────────────────────────────────────────────────╮' -ForegroundColor DarkGray
+        Write-StatusLine "• Installed:   v$installed"
+        Write-StatusLine "• Checkout:    $dispSrc (v$available)"
+        Write-StatusLine "• Skill:       FlowPilot (flow-pilot)"
+        if (Test-Path $Policy) {
+            $pPolicy = Get-PolicyValue parent model_policy
+            $pEffort = Get-PolicyValue parent min_reasoning_effort
+            $wModel = Get-PolicyValue worker resolved_model
+            $wEffort = Get-PolicyValue worker min_reasoning_effort
+            $tEnabled = Get-PolicyValue telemetry enabled
+
+            Write-Host '  ├─ Model Routing ───────────────────────────────────────────────────┤' -ForegroundColor DarkGray
+            Write-StatusLine "• Parent:      $pPolicy (min effort: $pEffort)"
+            Write-StatusLine "• Worker:      $wModel (min effort: $wEffort)"
+            if ($tEnabled -eq 'true') {
+                Write-StatusLine "• Telemetry:   ● enabled"
+            } else {
+                Write-StatusLine "• Telemetry:   ○ disabled"
+            }
+        }
+        Write-Host '  ╰───────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkGray
+        Write-Host ""
     }
     'usage' {
         $telemetry = Join-Path $StateDir 'telemetry.py'
@@ -96,23 +122,33 @@ switch ($cmd) {
         if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
         $after = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         & (Join-Path $src 'install.ps1')
-        Write-Host "updated $before -> $after"
+        Write-Host ""
+        Write-Host "✨ Updated codex-flow $before -> $after" -ForegroundColor Green
+        & (Join-Path $src 'scripts/doctor.ps1')
     }
     default {
         Write-Host @'
-codex-flow <command>
 
-Commands:
-  status              Show installed version and effective FlowPilot policy
-  update              Pull checkout, preserve policy, refresh auto recommendations
-  doctor              Verify installation, routing, and telemetry wiring
-  usage last          Show the last deterministic task summary
-  usage last --json   Show raw telemetry for the last completed task
-  benchmark-local     Run built-in benchmark through the local Codex login session
-  benchmark-corpus    Materialize the built-in corpus without calling any model
-  benchmark           Run a reproducible Codex benchmark manifest
-  benchmark-analyze   Analyze benchmark JSONL with quality-first routing
-  uninstall           Remove codex-flow-managed files
+Usage: codex-flow <command> [options]
+
+  Core Commands
+    status              Show installed version and effective FlowPilot policy
+    update              Pull checkout, preserve policy, refresh recommendations
+    doctor              Verify installation, routing, and telemetry wiring
+    usage last          Show the last task telemetry summary (--json for raw)
+
+  Benchmark Commands
+    benchmark-local     Run built-in benchmark via local Codex session
+    benchmark-corpus    Materialize corpus without calling any model
+    benchmark           Run a reproducible Codex benchmark manifest
+    benchmark-analyze   Analyze benchmark JSONL with quality-first routing
+
+  Maintenance
+    uninstall           Remove codex-flow-managed files and hooks
+
+  💡 Quick Start:
+    Run `codex-flow benchmark-local quick` for your first validation run.
+
 '@
     }
 }

@@ -479,28 +479,33 @@ def render_summary(run: dict[str, Any]) -> str:
     participant_usages.extend(
         worker.get("usage") if isinstance(worker, dict) else None for worker in workers
     )
-    lines = ["", "FlowPilot summary"]
-    lines.append(
-        f"  participants  1 parent + {len(workers)} worker{'s' if len(workers) != 1 else ''}"
-    )
-    lines.append(
-        f"  parent        {parent.get('model') or 'unknown'}  "
-        f"{fmt_tokens(parent_usage.get('total_tokens') if isinstance(parent_usage, dict) else None)} tokens"
-    )
+
+    p_count = f"1 parent + {len(workers)} worker{'s' if len(workers) != 1 else ''}"
+    p_model = parent.get("model") or "unknown"
+    p_tokens = f"{fmt_tokens(parent_usage.get('total_tokens') if isinstance(parent_usage, dict) else None)} tokens"
+
+    total_tokens = aggregate_usage_value(participant_usages, "total_tokens")
+    credits = aggregate_usage_value(participant_usages, "estimated_credits_micros")
+    attr_tokens = f"{fmt_tokens(total_tokens)} tokens"
+    attr_credits = f" · {credits / 1_000_000:.3f} credits" if credits is not None else ""
+
+    def pad_line(content: str, width: int = 68) -> str:
+        pad = max(0, width - len(content))
+        return f"  │  {content}{' ' * pad} │"
+
+    lines = ["", "📊 FlowPilot Telemetry Summary", ""]
+    lines.append("  ╭─ Run Overview ────────────────────────────────────────────────────╮")
+    lines.append(pad_line(f"• Participants:   {p_count}"))
+    lines.append(pad_line(f"• Parent:         {p_model:<20} {p_tokens}"))
     for worker in workers:
         usage = worker.get("usage") or {}
         state = worker.get("status") or "observed"
-        lines.append(
-            f"  worker        {worker.get('agent_type') or 'subagent'}  "
-            f"{worker.get('model') or 'unknown'}  "
-            f"{fmt_tokens(usage.get('total_tokens'))} tokens  {state}"
-        )
-    total_tokens = aggregate_usage_value(participant_usages, "total_tokens")
-    credits = aggregate_usage_value(participant_usages, "estimated_credits_micros")
-    attributed = f"  attributed    {fmt_tokens(total_tokens)} tokens"
-    if credits is not None:
-        attributed += f"  {credits / 1_000_000:.3f} credits"
-    lines.append(attributed)
+        w_type = worker.get("agent_type") or "worker"
+        w_model = worker.get("model") or "unknown"
+        w_tokens = f"{fmt_tokens(usage.get('total_tokens'))} tokens ({state})"
+        label = f"• Worker [{w_type}]:"
+        lines.append(pad_line(f"{label:<18} {w_model:<20} {w_tokens}"))
+    lines.append(pad_line(f"• Attributed:     {attr_tokens}{attr_credits}"))
 
     windows = run.get("quota_change_during_run") or []
     if windows:
@@ -522,15 +527,14 @@ def render_summary(run: dict[str, Any]) -> str:
             delta_text = "n/a" if delta is None else f"{delta:+g} pp"
             pieces.append(
                 f"{window_label(window.get('window_duration_mins'))} "
-                f"{old}%→{new}% ({delta_text})"
+                f"{old}% → {new}% ({delta_text})"
             )
         if pieces:
-            lines.append("  account quota " + "; ".join(pieces))
-    lines.append(
-        "  note          quota delta is account-wide during this run; "
-        "attributed usage is thread-based"
-    )
-    return "\n".join(lines) + "\n"
+            lines.append("  ├─ Quota & Windows ─────────────────────────────────────────────────┤")
+            lines.append(pad_line(f"• Account Quota:  {' | '.join(pieces)}"))
+    lines.append("  ╰───────────────────────────────────────────────────────────────────╯")
+    lines.append("  ℹ  Note: Quota delta is account-wide; attributed usage is thread-based.\n")
+    return "\n".join(lines)
 
 
 def write_stop_output(text: str) -> None:

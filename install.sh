@@ -168,46 +168,95 @@ if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
   python3 "$STATE_DIR/shell/manage-shell.py" install --state-dir "$STATE_DIR" --shell "$SHELL_NAME" --config-dir "$SHELL_CONFIG_DIR" --bin-dir "$BIN_DIR"
 fi
 
-cat <<EOF
-codex-flow $VERSION installed.
-
-  config:    $CONFIG
-  policy:    $POLICY
-  cli:       $BIN_DIR/codex-flow
-  skill:     FlowPilot (flow-pilot)
-  parent:    $PARENT_MODEL_POLICY / min=$PARENT_MIN_MODEL / reasoning >= $PARENT_MIN_EFFORT
-  worker:    $WORKER_MODEL_POLICY / requested=$WORKER_MODEL_REQUESTED / resolved=$WORKER_MODEL / reasoning >= $WORKER_MIN_EFFORT
-  telemetry: $TELEMETRY_ENABLED (deterministic hooks + app-server; no model call)
-
-Adaptive effort: high baseline -> xhigh for complex work -> max only for critical quality-first work.
-EOF
-
-if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
-  printf '\nShell integration installed for %s.\n' "$SHELL_NAME"
-  printf 'Activate completion in this terminal now:\n  source %q\n' "$SHELL_CONFIG_DIR/.${SHELL_NAME}rc"
-  printf 'Or open a new terminal.\n'
+if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_GREEN=$'\033[32m'
+  C_CYAN=$'\033[36m'
+  C_YELLOW=$'\033[33m'
+  C_RESET=$'\033[0m'
 else
+  C_BOLD=""
+  C_DIM=""
+  C_GREEN=""
+  C_CYAN=""
+  C_YELLOW=""
+  C_RESET=""
+fi
+
+display_path() {
+  local p="$1"
+  if [[ -n "${HOME:-}" && "$p" == "$HOME"* ]]; then
+    printf '~%s' "${p#$HOME}"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+disp_policy="$(display_path "$POLICY")"
+disp_cli="$(display_path "$BIN_DIR/codex-flow")"
+disp_shell_rc="$(display_path "$SHELL_CONFIG_DIR/.${SHELL_NAME}rc")"
+
+box_line() {
+  local content="$1"
+  local width=68
+  local plain
+  plain="$(printf '%s' "$content" | sed -E 's/\x1b\[[0-9;]*m//g')"
+  local len=${#plain}
+  local pad=$((width - len))
+  if (( pad < 0 )); then pad=0; fi
+  printf '  %s│%s  %s%*s %s│%s\n' "$C_DIM" "$C_RESET" "$content" "$pad" "" "$C_DIM" "$C_RESET"
+}
+
+step_box_line() {
+  local content="$1"
+  local width=68
+  local plain
+  plain="$(printf '%s' "$content" | sed -E 's/\x1b\[[0-9;]*m//g')"
+  local len=${#plain}
+  local pad=$((width - len))
+  if (( pad < 0 )); then pad=0; fi
+  printf '  %s│%s  %s%*s %s│%s\n' "$C_YELLOW" "$C_RESET" "$content" "$pad" "" "$C_YELLOW" "$C_RESET"
+}
+
+printf '\n%s🚀 codex-flow v%s installed successfully%s\n\n' "$C_BOLD$C_GREEN" "$VERSION" "$C_RESET"
+printf '  %s╭─ Summary ──────────────────────────────────────────────────────────╮%s\n' "$C_DIM" "$C_RESET"
+box_line "${C_BOLD}• Policy:${C_RESET}     ${C_CYAN}${disp_policy}${C_RESET}"
+box_line "${C_BOLD}• CLI:${C_RESET}        ${disp_cli}"
+box_line "${C_BOLD}• Skill:${C_RESET}      FlowPilot ${C_DIM}(flow-pilot)${C_RESET}"
+box_line "${C_BOLD}• Routing:${C_RESET}    parent (${PARENT_MODEL_POLICY}) ➔ worker (${WORKER_MODEL})"
+box_line "${C_BOLD}• Reasoning:${C_RESET}  adaptive ${C_DIM}(high ➔ xhigh ➔ max)${C_RESET}"
+if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+  box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_GREEN}● enabled${C_RESET} ${C_DIM}(deterministic hooks + app-server)${C_RESET}"
+else
+  box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_DIM}○ disabled${C_RESET}"
+fi
+printf '  %s╰────────────────────────────────────────────────────────────────────╯%s\n\n' "$C_DIM" "$C_RESET"
+
+printf '  %s┌─ ⚠️  REQUIRED NEXT STEPS ───────────────────────────────────────────┐%s\n' "$C_YELLOW" "$C_RESET"
+step_box_line ""
+if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
+  step_box_line "${C_BOLD}[1/3] Shell Completion${C_RESET}"
+  step_box_line "      Run: ${C_CYAN}source ${disp_shell_rc}${C_RESET} (or open a new terminal tab)"
+else
+  step_box_line "${C_BOLD}[1/3] PATH Configuration${C_RESET}"
   case ":${PATH}:" in
-    *":$BIN_DIR:"*) printf 'Run: codex-flow status\n' ;;
-    *) printf 'Add %s to PATH to use: codex-flow status\n' "$BIN_DIR" ;;
+    *":$BIN_DIR:"*) step_box_line "      Run: ${C_CYAN}codex-flow status${C_RESET}" ;;
+    *) step_box_line "      Add ${C_CYAN}${disp_cli%/*}${C_RESET} to PATH to run: ${C_CYAN}codex-flow status${C_RESET}" ;;
   esac
 fi
-
-printf '\n'
-printf '%s\n' \
-  '+------------------------------------------------------------------+' \
-  '| IMPORTANT: FULL CODEX RESTART REQUIRED                           |' \
-  '| Fully quit Codex and open it again; starting a new task alone    |' \
-  '| is not enough.                                                   |'
+step_box_line ""
+step_box_line "${C_BOLD}[2/3] Complete Codex Restart${C_RESET}"
+step_box_line "      Fully quit Codex and relaunch it. Starting a new task"
+step_box_line "      alone is NOT enough to load new hooks and snapshots."
+step_box_line ""
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
-  printf '%s\n' \
-    '| Telemetry is enabled: run /hooks; approve FlowPilot telemetry    |' \
-    '| there if it is pending approval.                                 |'
+  step_box_line "${C_BOLD}[3/3] Authorize Hooks${C_RESET}"
+  step_box_line "      Run ${C_CYAN}/hooks${C_RESET} in Codex and approve FlowPilot telemetry"
+  step_box_line "      if it is pending approval."
 else
-  printf '%s\n' \
-    '| Telemetry is disabled: no hook authorization is required.        |'
+  step_box_line "${C_BOLD}[3/3] Hooks Status${C_RESET}"
+  step_box_line "      Telemetry is disabled: no hook authorization is required."
 fi
-printf '%s\n' \
-  '| After restarting, start a new task and a new turn; an            |' \
-  '| already-running turn cannot rebuild its starting snapshot.       |' \
-  '+------------------------------------------------------------------+'
+step_box_line ""
+printf '  %s└────────────────────────────────────────────────────────────────────┘%s\n\n' "$C_YELLOW" "$C_RESET"

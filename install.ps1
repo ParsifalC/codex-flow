@@ -163,30 +163,59 @@ if ($PreviousBinDir) {
     }
 }
 
-Write-Host "codex-flow $Version installed."
-Write-Host "  config:    $Config"
-Write-Host "  policy:    $Policy"
-Write-Host "  cli:       $(Join-Path $BinDir 'codex-flow.cmd')"
-Write-Host '  skill:     FlowPilot (flow-pilot)'
-Write-Host "  parent:    $ParentModelPolicy / min=$ParentMinModel / reasoning >= $ParentMinEffort"
-Write-Host "  worker:    $WorkerModelPolicy / requested=$WorkerRequested / resolved=$WorkerModel / reasoning >= $WorkerMinEffort"
-Write-Host "  telemetry: $TelemetryEnabled (deterministic hooks + app-server; no model call)"
-Write-Host '  adaptive effort: high -> xhigh -> max only when justified'
+$dispPolicy = $Policy.Replace($HOME, '~')
+$dispBin = (Join-Path $BinDir 'codex-flow.cmd').Replace($HOME, '~')
 
-$userPath = [Environment]::GetEnvironmentVariable('Path','User')
-if (($userPath -split ';') -contains $BinDir) { Write-Host 'Run: codex-flow status' } else { Write-Host "Add $BinDir to your user PATH to run: codex-flow status" }
-
-Write-Host ''
-Write-Host '+------------------------------------------------------------------+'
-Write-Host '| IMPORTANT: FULL CODEX RESTART REQUIRED                           |'
-Write-Host '| Fully quit Codex and open it again; starting a new task alone    |'
-Write-Host '| is not enough.                                                   |'
-if ($TelemetryEnabled -eq 'true') {
-    Write-Host '| Telemetry is enabled: run /hooks; approve FlowPilot telemetry    |'
-    Write-Host '| there if it is pending approval.                                 |'
-} else {
-    Write-Host '| Telemetry is disabled: no hook authorization is required.        |'
+function Write-BoxLine($content, $color = 'DarkGray') {
+    $width = 68
+    $pad = [Math]::Max(0, $width - $content.Length)
+    Write-Host '  ' -NoNewline
+    Write-Host '│' -ForegroundColor $color -NoNewline
+    Write-Host "  $content" -NoNewline
+    Write-Host (' ' * $pad) -NoNewline
+    Write-Host '│' -ForegroundColor $color
 }
-Write-Host '| After restarting, start a new task and a new turn; an            |'
-Write-Host '| already-running turn cannot rebuild its starting snapshot.       |'
-Write-Host '+------------------------------------------------------------------+'
+
+Write-Host ""
+Write-Host "🚀 codex-flow v$Version installed successfully" -ForegroundColor Green
+Write-Host ""
+Write-Host '  ╭─ Summary ──────────────────────────────────────────────────────────╮' -ForegroundColor DarkGray
+Write-BoxLine "• Policy:     $dispPolicy"
+Write-BoxLine "• CLI:        $dispBin"
+Write-BoxLine "• Skill:      FlowPilot (flow-pilot)"
+Write-BoxLine "• Routing:    parent ($ParentModelPolicy) ➔ worker ($WorkerModel)"
+Write-BoxLine "• Reasoning:  adaptive (high ➔ xhigh ➔ max)"
+if ($TelemetryEnabled -eq 'true') {
+    Write-BoxLine "• Telemetry:  ● enabled (deterministic hooks + app-server)"
+} else {
+    Write-BoxLine "• Telemetry:  ○ disabled"
+}
+Write-Host '  ╰────────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkGray
+Write-Host ""
+
+Write-Host '  ┌─ ⚠️  REQUIRED NEXT STEPS ───────────────────────────────────────────┐' -ForegroundColor Yellow
+Write-BoxLine "" -color Yellow
+$userPath = [Environment]::GetEnvironmentVariable('Path','User')
+if (($userPath -split ';') -contains $BinDir) {
+    Write-BoxLine "[1/3] CLI Availability" -color Yellow
+    Write-BoxLine "      Run: codex-flow status" -color Yellow
+} else {
+    Write-BoxLine "[1/3] PATH Configuration" -color Yellow
+    Write-BoxLine "      Add $BinDir to your user PATH" -color Yellow
+}
+Write-BoxLine "" -color Yellow
+Write-BoxLine "[2/3] Complete Codex Restart" -color Yellow
+Write-BoxLine "      Fully quit Codex and relaunch it. Starting a new task" -color Yellow
+Write-BoxLine "      alone is NOT enough to load new hooks and snapshots." -color Yellow
+Write-BoxLine "" -color Yellow
+if ($TelemetryEnabled -eq 'true') {
+    Write-BoxLine "[3/3] Authorize Hooks" -color Yellow
+    Write-BoxLine "      Run /hooks in Codex and approve FlowPilot telemetry" -color Yellow
+    Write-BoxLine "      if it is pending approval." -color Yellow
+} else {
+    Write-BoxLine "[3/3] Hooks Status" -color Yellow
+    Write-BoxLine "      Telemetry is disabled: no hook authorization is required." -color Yellow
+}
+Write-BoxLine "" -color Yellow
+Write-Host '  └────────────────────────────────────────────────────────────────────┘' -ForegroundColor Yellow
+Write-Host ""

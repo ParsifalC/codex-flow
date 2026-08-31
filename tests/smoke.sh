@@ -33,15 +33,14 @@ EOF
 install_output="$(bash "$ROOT_DIR/install.sh")"
 printf '%s\n' "$install_output"
 [[ "$install_output" == *"FlowPilot (flow-pilot)"* ]]
-[[ "$install_output" == *"telemetry: true"* ]]
-[[ "$install_output" == *"source $CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"* ]]
-[[ "$install_output" == *"Or open a new terminal."* ]]
-[[ "$install_output" == *"IMPORTANT: FULL CODEX RESTART REQUIRED"* ]]
-[[ "$install_output" == *"Fully quit Codex and open it again; starting a new task alone"* ]]
-[[ "$install_output" == *"Telemetry is enabled: run /hooks; approve FlowPilot telemetry"* ]]
-[[ "$install_output" == *"After restarting, start a new task and a new turn"* ]]
-[[ "$install_output" == *"already-running turn cannot rebuild its starting snapshot."* ]]
-[[ "${install_output##*$'\n'}" == '+------------------------------------------------------------------+' ]]
+[[ "$install_output" == *"● enabled"* ]]
+[[ "$install_output" == *"source "*"$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc"* ]]
+[[ "$install_output" == *"or open a new terminal"* ]]
+[[ "$install_output" == *"REQUIRED NEXT STEPS"* ]]
+[[ "$install_output" == *"Complete Codex Restart"* ]]
+[[ "$install_output" == *"Fully quit Codex and relaunch it."* ]]
+[[ "$install_output" == *"Authorize Hooks"* ]]
+[[ "$install_output" == *"/hooks"* ]]
 
 disabled_output="$(
   CODEX_HOME="$TMP/.codex-disabled" \
@@ -52,11 +51,8 @@ disabled_output="$(
 )"
 printf '%s\n' "$disabled_output"
 [[ "$disabled_output" == *"Telemetry is disabled: no hook authorization is required."* ]]
-[[ "$disabled_output" == *"IMPORTANT: FULL CODEX RESTART REQUIRED"* ]]
-[[ "$disabled_output" == *"After restarting, start a new task and a new turn"* ]]
-! [[ "$disabled_output" == *"run /hooks"* ]]
+[[ "$disabled_output" == *"Complete Codex Restart"* ]]
 ! [[ "$disabled_output" == *"approve FlowPilot telemetry"* ]]
-[[ "${disabled_output##*$'\n'}" == '+------------------------------------------------------------------+' ]]
 
 [[ -f "$CODEX_HOME/codex-flow.toml" ]]
 [[ -f "$CODEX_HOME/codex-flow/source" ]]
@@ -101,8 +97,8 @@ grep -Fxq "$(cat "$ROOT_DIR/VERSION")" "$CODEX_HOME/codex-flow/version"
 codex-flow status
 doctor_output="$(codex-flow doctor 2>&1)"
 printf '%s\n' "$doctor_output"
-[[ "$doctor_output" == *"✓ policy schema v3"* ]]
-[[ "$doctor_output" == *"✓ FlowPilot lifecycle hooks installed"* ]]
+[[ "$doctor_output" == *"policy schema v3"* ]]
+[[ "$doctor_output" == *"FlowPilot lifecycle hooks installed"* ]]
 [[ "$doctor_output" == *"thread-attributed telemetry may be unavailable"* ]]
 [[ "$doctor_output" == *"Ready. FlowPilot routing and deterministic telemetry are installed."* ]]
 

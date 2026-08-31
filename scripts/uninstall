@@ -46,4 +46,20 @@ if m:
 PY
 fi
 
-printf 'codex-flow FlowPilot, telemetry hooks, CLI, and policy removed. Existing backups were preserved.\n'
+if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_GREEN=$'\033[32m'
+  C_RESET=$'\033[0m'
+else
+  C_BOLD=""
+  C_DIM=""
+  C_GREEN=""
+  C_RESET=""
+fi
+
+printf '\n%s🗑️  codex-flow uninstalled successfully%s\n\n' "$C_BOLD" "$C_RESET"
+printf '  %s✔%s FlowPilot skill and worker agents removed\n' "$C_GREEN" "$C_RESET"
+printf '  %s✔%s Telemetry hooks and shell integration removed\n' "$C_GREEN" "$C_RESET"
+printf '  %s✔%s CLI binary (%s) removed\n' "$C_GREEN" "$C_RESET" "$BIN_DIR/codex-flow"
+printf '  %s✔%s Configuration cleaned up (existing backups preserved)\n\n' "$C_GREEN" "$C_RESET"

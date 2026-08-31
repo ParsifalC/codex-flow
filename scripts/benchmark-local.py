@@ -47,8 +47,6 @@ def main() -> int:
     require("python3")
 
     version = run([codex, "--version"], capture=True).stdout.strip()
-    print(f"Codex CLI: {version}")
-    print("Authentication: local Codex session (ChatGPT login or other locally configured auth)")
 
     workspace = Path(args.workspace).resolve()
     manifest = workspace / "manifest.json"
@@ -76,17 +74,33 @@ def main() -> int:
     plan = json.loads(dry.stdout)
     planned = int(plan["planned_runs"])
 
-    print(f"Profile: {args.profile}")
-    print(f"Planned real model runs: {planned}")
-    print(f"Result file: {output}")
-    if args.profile == "quick":
-        print("Expected upper planning budget: roughly <=15M total tokens; flow planning/review and repairs can increase usage.")
-    else:
-        print("WARNING: full profile contains 90 real runs and can consume substantial Codex quota.")
+    disp_output = str(output)
+    home_str = str(Path.home())
+    if disp_output.startswith(home_str):
+        disp_output = "~" + disp_output[len(home_str):]
+
+    budget = "~15M tokens (planning + repairs may increase)" if args.profile == "quick" else "high (90 runs, substantial Codex quota)"
+
+    def pad_line(content: str, width: int = 68) -> str:
+        pad = max(0, width - len(content))
+        return f"  │  {content}{' ' * pad} │"
+
+    print(f"\n⚡ codex-flow benchmark-local\n")
+    print("  ╭─ Benchmark Plan ──────────────────────────────────────────────────╮")
+    print(pad_line(f"• Profile:       {args.profile} ({planned} real model runs)"))
+    print(pad_line(f"• Codex CLI:     {version} (local auth session)"))
+    print(pad_line(f"• Est. Budget:   {budget}"))
+    print(pad_line(f"• Output File:   {disp_output}"))
+    print("  ╰───────────────────────────────────────────────────────────────────╯\n")
+
+    print("┌─ ⚠️  REAL MODEL EXECUTION CONFIRMATION ────────────────────────────┐")
+    print("│  This will execute tasks using your authenticated Codex account    │")
+    print("│  and will consume real quota/credits.                              │")
+    print("└───────────────────────────────────────────────────────────────────┘\n")
 
     if not args.yes:
         expected = f"RUN {args.profile.upper()} {planned}"
-        typed = input(f"Type '{expected}' to start real model execution: ").strip()
+        typed = input(f"Type '{expected}' to proceed: ").strip()
         if typed != expected:
             print("Cancelled; no model run was started.")
             return 2

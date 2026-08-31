@@ -9,9 +9,29 @@ STATE_DIR="$CODEX_HOME/codex-flow"
 FAILED=0
 CODEX_CLI_AVAILABLE=1
 
-ok() { printf '✓ %s\n' "$1"; }
-warn() { printf '! %s\n' "$1"; }
-fail() { printf '✗ %s\n' "$1"; FAILED=1; }
+if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_GREEN=$'\033[32m'
+  C_CYAN=$'\033[36m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+  C_RESET=$'\033[0m'
+else
+  C_BOLD=""
+  C_DIM=""
+  C_GREEN=""
+  C_CYAN=""
+  C_YELLOW=""
+  C_RED=""
+  C_RESET=""
+fi
+
+ok() { printf '  %s✔%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
+warn() { printf '  %s▲%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
+fail() { printf '  %s✖%s %s\n' "$C_RED" "$C_RESET" "$1"; FAILED=1; }
+section() { printf '\n  %s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
+
 # Codex 0.151 is the known support baseline for thread attribution. Compare
 # major/minor so prereleases such as 0.151.0-alpha qualify conservatively.
 codex_thread_usage_capable() {
@@ -32,7 +52,9 @@ root_value() { local key="$1"; awk -v key="$key" '
   }
 ' "$POLICY"; }
 
-printf 'codex-flow doctor\n\n'
+printf '\n%s🩺 codex-flow doctor%s\n' "$C_BOLD" "$C_RESET"
+
+section "Environment & Tools"
 if command -v codex >/dev/null 2>&1; then
   VERSION="$(codex --version 2>/dev/null || true)"
   ok "Codex CLI found${VERSION:+: $VERSION}"
@@ -46,6 +68,8 @@ fi
 
 [[ -f "$CONFIG" ]] && ok "config.toml found" || fail "missing $CONFIG"
 [[ -f "$POLICY" ]] && ok "codex-flow policy found" || fail "missing $POLICY"
+
+section "Routing & Skills"
 [[ -f "$CODEX_HOME/agents/worker-explorer.toml" ]] && ok "worker-explorer installed" || fail "worker-explorer missing"
 [[ -f "$CODEX_HOME/agents/worker-implementer.toml" ]] && ok "worker-implementer installed" || fail "worker-implementer missing"
 [[ -f "$CODEX_HOME/skills/flow-pilot/SKILL.md" ]] && ok "FlowPilot skill installed" || fail "FlowPilot skill missing"
@@ -72,6 +96,7 @@ if [[ -f "$POLICY" ]]; then
   ok "parent model policy: ${PARENT_POLICY:-unknown} (floor: ${PARENT_MIN_MODEL:-unknown})"
   ok "worker model policy: ${WORKER_POLICY:-unknown} (requested: ${WORKER_REQUESTED:-unknown}, resolved: ${WORKER_MODEL:-unknown})"
 
+  section "Hooks & Telemetry"
   if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
     [[ -f "$STATE_DIR/telemetry.py" ]] && ok "FlowPilot telemetry collector installed" || fail "FlowPilot telemetry collector missing"
     [[ -f "$STATE_DIR/manage-hooks.py" ]] && ok "FlowPilot hook manager installed" || fail "FlowPilot hook manager missing"
@@ -91,16 +116,16 @@ if [[ -f "$CONFIG" && -n "${WORKER_MODEL:-}" ]]; then
   grep -Fq "default_subagent_reasoning_effort = \"${WORKER_MIN_EFFORT}\"" "$CONFIG" && ok "Codex worker baseline effort matches policy floor" || fail "Codex default_subagent_reasoning_effort does not match worker floor"
 fi
 
-printf '\n'
+printf '\n  %s─────────────────────────────────────────────────────────────────────%s\n' "$C_DIM" "$C_RESET"
 if [[ "$FAILED" -eq 0 ]]; then
   if [[ "$CODEX_CLI_AVAILABLE" -eq 1 ]]; then
-    printf 'Ready. FlowPilot routing and deterministic telemetry are installed.\n'
+    printf '  %s✨ Ready. FlowPilot routing and deterministic telemetry are installed.%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
   else
-    printf 'Ready. Core FlowPilot routing is installed and healthy; Codex CLI-dependent telemetry quota reads and benchmark execution are unavailable in this shell.\n'
+    printf '  %s✨ Ready. Core FlowPilot routing is installed and healthy; Codex CLI-dependent telemetry quota reads and benchmark execution are unavailable in this shell.%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
   fi
-  printf 'Note: per-spawn model/effort overrides depend on the active Codex build; the installed baseline remains valid when overrides are unavailable.\n'
+  printf '  %sNote: per-spawn model/effort overrides depend on the active Codex build; the installed baseline remains valid when overrides are unavailable.%s\n\n' "$C_DIM" "$C_RESET"
   exit 0
 fi
 
-printf 'One or more required core checks failed. Re-run the installer, then restart Codex.\n'
+printf '  %s✖ One or more required core checks failed. Re-run the installer, then restart Codex.%s\n\n' "$C_BOLD$C_RED" "$C_RESET"
 exit 1
