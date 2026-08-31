@@ -5,6 +5,7 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG="$CODEX_HOME/config.toml"
 POLICY="$CODEX_HOME/codex-flow.toml"
 FAILED=0
+CODEX_CLI_AVAILABLE=1
 
 ok() { printf '✓ %s\n' "$1"; }
 warn() { printf '! %s\n' "$1"; }
@@ -12,13 +13,26 @@ fail() { printf '✗ %s\n' "$1"; FAILED=1; }
 value() { local key="$1" section="$2"; awk -v sec="[$section]" -v key="$key" '
   $0==sec {insec=1; next} /^\[/ {insec=0} insec && $0 ~ "^" key "[[:space:]]*=" {sub(/^[^=]*=[[:space:]]*/, ""); gsub(/^\"|\"$/, ""); print; exit}
 ' "$POLICY"; }
+root_value() { local key="$1"; awk -v key="$key" '
+  /^[[:space:]]*\[/ {exit}
+  $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+    value=$0
+    sub(/^[^=]*=[[:space:]]*/, "", value)
+    sub(/[[:space:]]+#.*$/, "", value)
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+    gsub(/^\"|\"$/, "", value)
+    print value
+    exit
+  }
+' "$POLICY"; }
 
 printf 'codex-flow doctor\n\n'
 if command -v codex >/dev/null 2>&1; then
   VERSION="$(codex --version 2>/dev/null || true)"
   ok "Codex CLI found${VERSION:+: $VERSION}"
 else
-  fail "Codex CLI not found in PATH"
+  CODEX_CLI_AVAILABLE=0
+  warn "Codex CLI not found in PATH; core routing remains usable, real local benchmark execution is unavailable"
 fi
 
 [[ -f "$CONFIG" ]] && ok "config.toml found" || fail "missing $CONFIG"
@@ -28,7 +42,7 @@ fi
 [[ -f "$CODEX_HOME/skills/cost-aware-development/SKILL.md" ]] && ok "cost-aware-development skill installed" || fail "cost-aware-development skill missing"
 
 if [[ -f "$POLICY" ]]; then
-  SCHEMA="$(grep -E '^schema_version\s*=' "$POLICY" | head -1 | sed -E 's/.*=\s*//')"
+  SCHEMA="$(root_value schema_version)"
   PARENT_POLICY="$(value model_policy parent)"
   PARENT_MIN_MODEL="$(value min_model parent)"
   PARENT_MIN_EFFORT="$(value min_reasoning_effort parent)"
@@ -59,10 +73,15 @@ fi
 
 printf '\n'
 if [[ "$FAILED" -eq 0 ]]; then
-  printf 'Ready. Routing is capability-based with adaptive effort and a stable worker fallback.\n'
+  if [[ "$CODEX_CLI_AVAILABLE" -eq 1 ]]; then
+    printf 'Ready. Routing is capability-based with adaptive effort and a stable worker fallback.\n'
+  else
+    printf 'Ready. Core routing is installed and healthy; Codex CLI-dependent benchmark execution is unavailable in this shell.\n'
+    printf 'Note: install Codex CLI or add it to PATH before running benchmark-local or a real benchmark.\n'
+  fi
   printf 'Note: per-spawn model/effort overrides depend on the active Codex build; the installed baseline remains valid when overrides are unavailable.\n'
   exit 0
 fi
 
-printf 'One or more required checks failed. Re-run the installer, then restart Codex.\n'
+printf 'One or more required core checks failed. Re-run the installer, then restart Codex.\n'
 exit 1
