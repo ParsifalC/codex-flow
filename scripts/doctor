@@ -4,6 +4,8 @@ set -uo pipefail
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG="$CODEX_HOME/config.toml"
 POLICY="$CODEX_HOME/codex-flow.toml"
+HOOKS="$CODEX_HOME/hooks.json"
+STATE_DIR="$CODEX_HOME/codex-flow"
 FAILED=0
 CODEX_CLI_AVAILABLE=1
 
@@ -16,13 +18,8 @@ value() { local key="$1" section="$2"; awk -v sec="[$section]" -v key="$key" '
 root_value() { local key="$1"; awk -v key="$key" '
   /^[[:space:]]*\[/ {exit}
   $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-    value=$0
-    sub(/^[^=]*=[[:space:]]*/, "", value)
-    sub(/[[:space:]]+#.*$/, "", value)
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-    gsub(/^\"|\"$/, "", value)
-    print value
-    exit
+    value=$0; sub(/^[^=]*=[[:space:]]*/, "", value); sub(/[[:space:]]+#.*$/, "", value)
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); gsub(/^\"|\"$/, "", value); print value; exit
   }
 ' "$POLICY"; }
 
@@ -32,14 +29,15 @@ if command -v codex >/dev/null 2>&1; then
   ok "Codex CLI found${VERSION:+: $VERSION}"
 else
   CODEX_CLI_AVAILABLE=0
-  warn "Codex CLI not found in PATH; core routing remains usable, real local benchmark execution is unavailable"
+  warn "Codex CLI not found in PATH; core routing remains usable, telemetry quota reads and real local benchmark execution are unavailable"
 fi
 
 [[ -f "$CONFIG" ]] && ok "config.toml found" || fail "missing $CONFIG"
 [[ -f "$POLICY" ]] && ok "codex-flow policy found" || fail "missing $POLICY"
 [[ -f "$CODEX_HOME/agents/worker-explorer.toml" ]] && ok "worker-explorer installed" || fail "worker-explorer missing"
 [[ -f "$CODEX_HOME/agents/worker-implementer.toml" ]] && ok "worker-implementer installed" || fail "worker-implementer missing"
-[[ -f "$CODEX_HOME/skills/cost-aware-development/SKILL.md" ]] && ok "cost-aware-development skill installed" || fail "cost-aware-development skill missing"
+[[ -f "$CODEX_HOME/skills/flow-pilot/SKILL.md" ]] && ok "FlowPilot skill installed" || fail "FlowPilot skill missing"
+[[ ! -e "$CODEX_HOME/skills/cost-aware-development" ]] && ok "legacy cost-aware-development skill removed" || warn "legacy cost-aware-development skill still exists; reinstall recommended"
 
 if [[ -f "$POLICY" ]]; then
   SCHEMA="$(root_value schema_version)"
@@ -52,32 +50,41 @@ if [[ -f "$POLICY" ]]; then
   WORKER_MODEL="$(value resolved_model worker)"
   WORKER_MIN_EFFORT="$(value min_reasoning_effort worker)"
   WORKER_REASONING="$(value reasoning_policy worker)"
+  TELEMETRY_ENABLED="$(value enabled telemetry)"
 
-  [[ "$SCHEMA" == "2" ]] && ok "policy schema v2" || warn "policy schema is ${SCHEMA:-unknown}; reinstall recommended"
+  [[ "$SCHEMA" == "3" ]] && ok "policy schema v3" || warn "policy schema is ${SCHEMA:-unknown}; reinstall recommended"
   case "$PARENT_MIN_EFFORT" in high|xhigh|max) ok "parent minimum reasoning: $PARENT_MIN_EFFORT" ;; *) fail "parent minimum reasoning must be high or above" ;; esac
   case "$WORKER_MIN_EFFORT" in high|xhigh|max) ok "worker minimum reasoning: $WORKER_MIN_EFFORT" ;; *) fail "worker minimum reasoning must be high or above" ;; esac
   [[ "$PARENT_REASONING" == "adaptive" ]] && ok "parent reasoning policy: adaptive" || warn "parent reasoning policy: ${PARENT_REASONING:-unknown}"
   [[ "$WORKER_REASONING" == "adaptive" ]] && ok "worker reasoning policy: adaptive" || warn "worker reasoning policy: ${WORKER_REASONING:-unknown}"
   ok "parent model policy: ${PARENT_POLICY:-unknown} (floor: ${PARENT_MIN_MODEL:-unknown})"
   ok "worker model policy: ${WORKER_POLICY:-unknown} (requested: ${WORKER_REQUESTED:-unknown}, resolved: ${WORKER_MODEL:-unknown})"
+
+  if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+    [[ -f "$STATE_DIR/telemetry.py" ]] && ok "FlowPilot telemetry collector installed" || fail "FlowPilot telemetry collector missing"
+    [[ -f "$STATE_DIR/manage-hooks.py" ]] && ok "FlowPilot hook manager installed" || fail "FlowPilot hook manager missing"
+    if [[ -f "$STATE_DIR/manage-hooks.py" ]] && python3 "$STATE_DIR/manage-hooks.py" check --hooks "$HOOKS" >/dev/null 2>&1; then
+      ok "FlowPilot lifecycle hooks installed"
+      warn "command hooks may require one-time trust approval in Codex; use /hooks if Codex reports them pending"
+    else
+      fail "FlowPilot lifecycle hooks missing from $HOOKS"
+    fi
+  else
+    ok "FlowPilot telemetry disabled by policy"
+  fi
 fi
 
 if [[ -f "$CONFIG" && -n "${WORKER_MODEL:-}" ]]; then
-  grep -Fq "default_subagent_model = \"${WORKER_MODEL}\"" "$CONFIG" \
-    && ok "Codex worker baseline model matches resolved policy" \
-    || fail "Codex default_subagent_model does not match resolved policy"
-  grep -Fq "default_subagent_reasoning_effort = \"${WORKER_MIN_EFFORT}\"" "$CONFIG" \
-    && ok "Codex worker baseline effort matches policy floor" \
-    || fail "Codex default_subagent_reasoning_effort does not match worker floor"
+  grep -Fq "default_subagent_model = \"${WORKER_MODEL}\"" "$CONFIG" && ok "Codex worker baseline model matches resolved policy" || fail "Codex default_subagent_model does not match resolved policy"
+  grep -Fq "default_subagent_reasoning_effort = \"${WORKER_MIN_EFFORT}\"" "$CONFIG" && ok "Codex worker baseline effort matches policy floor" || fail "Codex default_subagent_reasoning_effort does not match worker floor"
 fi
 
 printf '\n'
 if [[ "$FAILED" -eq 0 ]]; then
   if [[ "$CODEX_CLI_AVAILABLE" -eq 1 ]]; then
-    printf 'Ready. Routing is capability-based with adaptive effort and a stable worker fallback.\n'
+    printf 'Ready. FlowPilot routing and deterministic telemetry are installed.\n'
   else
-    printf 'Ready. Core routing is installed and healthy; Codex CLI-dependent benchmark execution is unavailable in this shell.\n'
-    printf 'Note: install Codex CLI or add it to PATH before running benchmark-local or a real benchmark.\n'
+    printf 'Ready. Core FlowPilot routing is installed and healthy; Codex CLI-dependent telemetry quota reads and benchmark execution are unavailable in this shell.\n'
   fi
   printf 'Note: per-spawn model/effort overrides depend on the active Codex build; the installed baseline remains valid when overrides are unavailable.\n'
   exit 0
