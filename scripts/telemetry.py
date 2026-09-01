@@ -10,6 +10,7 @@ import json
 import os
 import queue
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,17 +24,19 @@ CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 STATE_ROOT = CODEX_HOME / "codex-flow" / "telemetry"
 RUNS_DIR = STATE_ROOT / "runs"
 LAST_FILE = STATE_ROOT / "last.json"
+WORKER_INDEX_FILE = STATE_ROOT / "worker-index.json"
 TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_TIMEOUT", "3.0"))
 LOCK_TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT", "2.0"))
+DEFAULT_RETENTION_DAYS = 30
 
 
-def policy_bool(section_name: str, key_name: str, default: bool) -> bool:
-    """Read a simple TOML boolean without adding a Python-version dependency."""
+def policy_value(section_name: str, key_name: str) -> str | None:
+    """Read one simple TOML scalar without adding a Python-version dependency."""
     path = CODEX_HOME / "codex-flow.toml"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
-        return default
+        return None
     section: str | None = None
     for raw in lines:
         line = raw.split("#", 1)[0].strip()
@@ -47,12 +50,52 @@ def policy_bool(section_name: str, key_name: str, default: bool) -> bool:
         key, value = (part.strip() for part in line.split("=", 1))
         if key != key_name:
             continue
-        normalized = value.lower()
-        if normalized == "true":
-            return True
-        if normalized == "false":
-            return False
+        return value.strip().strip('"')
+    return None
+
+
+def policy_bool(section_name: str, key_name: str, default: bool) -> bool:
+    value = policy_value(section_name, key_name)
+    if value is None:
+        return default
+    normalized = value.lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
     return default
+
+
+def policy_int(section_name: str, key_name: str, default: int) -> int:
+    value = policy_value(section_name, key_name)
+    try:
+        parsed = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def telemetry_notifications_enabled() -> bool:
+    value = os.environ.get("CODEX_FLOW_TELEMETRY_NOTIFICATIONS")
+    if value is not None:
+        normalized = value.strip().lower()
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+    return policy_bool("telemetry", "notifications", True)
+
+
+def telemetry_retention_days() -> int:
+    value = os.environ.get("CODEX_FLOW_TELEMETRY_RETENTION_DAYS")
+    if value is not None:
+        try:
+            parsed = int(value)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            pass
+    return policy_int("telemetry", "retention_days", DEFAULT_RETENTION_DAYS)
 
 
 def now_ms() -> int:
@@ -100,75 +143,531 @@ def state_lock(key: str):
                 pass
 
 
-def active_transcript_turn_id(path_value: Any) -> str | None:
-    """Return the currently active parent turn from a rollout transcript."""
-    if not isinstance(path_value, str) or not path_value:
-        return None
-    path = Path(path_value)
-    if not path.is_file():
-        return None
-    active: str | None = None
+def read_json_object(path: Path) -> dict[str, Any] | None:
     try:
-        with path.open("r", encoding="utf-8") as stream:
-            for line in stream:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(record, dict) or record.get("type") != "event_msg":
-                    continue
-                payload = record.get("payload")
-                if not isinstance(payload, dict):
-                    continue
-                kind = payload.get("type")
-                event_turn = payload.get("turn_id")
-                if kind == "task_started" and event_turn is not None:
-                    active = str(event_turn)
-                elif kind in {"task_complete", "turn_aborted"}:
-                    completed = str(event_turn) if event_turn is not None else active
-                    if completed == active:
-                        active = None
-    except (OSError, UnicodeError):
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    return active
+    return value if isinstance(value, dict) else None
 
 
-def correlated_turn_id(event: dict[str, Any]) -> Any:
-    # Subagent hooks carry the child turn id. Correlate them back to the
-    # active parent turn using the parent transcript supplied by Codex.
-    if event.get("hook_event_name") in {"SubagentStart", "SubagentStop"}:
-        parent_turn = active_transcript_turn_id(event.get("transcript_path"))
-        if parent_turn is not None:
-            return parent_turn
-    return event.get("turn_id")
+def numeric_ms(value: Any) -> int | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    return None
+
+
+def safe_key_part(value: Any) -> str:
+    return str(value).replace("/", "_").replace("\\", "_")
 
 
 def run_key(event: dict[str, Any]) -> str:
-    session = str(event.get("session_id") or "unknown")
-    turn = str(correlated_turn_id(event) or "unknown")
-    return f"{session}--{turn}".replace("/", "_")
+    """Return the event's native session/turn key.
+
+    A child turn is intentionally not rewritten from transcript contents here.
+    Codex documents transcript_path as a convenience field, and in practice a
+    Subagent hook can expose the child rollout path or a transcript whose
+    active parent turn has already changed. Worker correlation is handled by
+    the durable agent index and run-window matching below.
+    """
+    session = safe_key_part(event.get("session_id") or "unknown")
+    turn = safe_key_part(event.get("turn_id") or "unknown")
+    return f"{session}--{turn}"
+
+
+def run_path_for_key(key: str) -> Path:
+    return RUNS_DIR / f"{safe_key_part(key)}.json"
 
 
 def run_path(event: dict[str, Any]) -> Path:
-    return RUNS_DIR / f"{run_key(event)}.json"
+    return run_path_for_key(run_key(event))
 
 
-def load_run(event: dict[str, Any]) -> dict[str, Any]:
-    path = run_path(event)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
+def load_run(event: dict[str, Any], key: str | None = None) -> dict[str, Any]:
+    resolved_key = key or run_key(event)
+    path = run_path_for_key(resolved_key)
+    existing = read_json_object(path) if path.exists() else None
+    if existing is not None:
+        return existing
     return {
         "schema_version": 1,
         "session_id": event.get("session_id"),
-        "turn_id": correlated_turn_id(event),
+        "turn_id": event.get("turn_id"),
         "cwd": event.get("cwd"),
         "parent": {"model": event.get("model")},
         "workers": {},
         "started_at_ms": now_ms(),
     }
+
+
+def iter_run_files() -> list[Path]:
+    try:
+        return sorted(path for path in RUNS_DIR.glob("*.json") if path.is_file())
+    except OSError:
+        return []
+
+
+def load_worker_index() -> dict[str, Any]:
+    value = read_json_object(WORKER_INDEX_FILE)
+    if value is None:
+        return {"schema_version": 1, "workers": {}}
+    workers = value.get("workers")
+    if not isinstance(workers, dict):
+        value["workers"] = {}
+    return value
+
+
+def worker_index_entry(agent_id: str, session_id: Any) -> dict[str, Any] | None:
+    if not agent_id or agent_id == "unknown":
+        return None
+    index = load_worker_index()
+    workers = index.get("workers")
+    entry = workers.get(agent_id) if isinstance(workers, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    if str(entry.get("session_id") or "") != str(session_id or ""):
+        return None
+    key = entry.get("run_key")
+    if not isinstance(key, str) or not run_path_for_key(key).is_file():
+        return None
+    return entry
+
+
+def remember_worker_parent(
+    agent_id: str, session_id: Any, parent_key: str, parent_turn_id: Any, started_at_ms: Any
+) -> None:
+    if not agent_id or agent_id == "unknown":
+        return
+    with state_lock("worker-index") as acquired:
+        if not acquired:
+            return
+        index = load_worker_index()
+        workers = index.setdefault("workers", {})
+        if not isinstance(workers, dict):
+            workers = {}
+            index["workers"] = workers
+        existing = workers.get(agent_id)
+        old_started = (
+            numeric_ms(existing.get("started_at_ms"))
+            if isinstance(existing, dict)
+            else None
+        )
+        new_started = numeric_ms(started_at_ms)
+        if (
+            isinstance(existing, dict)
+            and str(existing.get("session_id") or "") == str(session_id or "")
+            and old_started is not None
+            and (new_started is None or old_started > new_started)
+        ):
+            return
+        workers[agent_id] = {
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "parent_key": parent_key,
+            "parent_turn_id": parent_turn_id,
+            "run_key": parent_key,
+            "started_at_ms": numeric_ms(started_at_ms),
+            "updated_at_ms": now_ms(),
+        }
+        atomic_json(WORKER_INDEX_FILE, index)
+
+
+def resolve_merged_run_key(key: str) -> str:
+    current = key
+    seen: set[str] = set()
+    for _ in range(8):
+        if current in seen:
+            break
+        seen.add(current)
+        run = read_json_object(run_path_for_key(current))
+        target = run.get("merged_into") if isinstance(run, dict) else None
+        if not isinstance(target, str) or not target or target == current:
+            break
+        if not run_path_for_key(target).is_file():
+            break
+        current = target
+    return current
+
+
+def find_worker_record(
+    session_id: Any, agent_id: str
+) -> tuple[str, Path, dict[str, Any], dict[str, Any]] | None:
+    """Find the best persisted record for an agent when its index is absent."""
+    candidates: list[
+        tuple[
+            tuple[int, int, int, int],
+            str,
+            Path,
+            dict[str, Any],
+            dict[str, Any],
+        ]
+    ] = []
+    for path in iter_run_files():
+        run = read_json_object(path)
+        if run is None or str(run.get("session_id") or "") != str(session_id or ""):
+            continue
+        workers = run.get("workers")
+        worker = workers.get(agent_id) if isinstance(workers, dict) else None
+        if not isinstance(worker, dict):
+            continue
+        merged_workers = run.get("merged_workers")
+        if isinstance(merged_workers, dict) and agent_id in merged_workers:
+            continue
+        key = path.stem
+        status = worker.get("status")
+        status_score = 2 if status == "completed" else 1 if status else 0
+        parent_score = 1 if run.get("prompt_seen") is True else 0
+        finished = numeric_ms(worker.get("finished_at_ms")) or 0
+        started = numeric_ms(worker.get("started_at_ms")) or numeric_ms(
+            run.get("started_at_ms")
+        ) or 0
+        candidates.append(
+            ((parent_score, status_score, finished, started), key, path, run, worker)
+        )
+    if not candidates:
+        return None
+    _, key, path, run, worker = max(candidates, key=lambda item: item[0])
+    return key, path, run, worker
+
+
+def parent_candidates(session_id: Any) -> list[tuple[str, Path, dict[str, Any]]]:
+    result: list[tuple[str, Path, dict[str, Any]]] = []
+    for path in iter_run_files():
+        run = read_json_object(path)
+        if run is None:
+            continue
+        if str(run.get("session_id") or "") != str(session_id or ""):
+            continue
+        if run.get("prompt_seen") is True:
+            result.append((path.stem, path, run))
+    return result
+
+
+def worker_interval(
+    source_run: dict[str, Any], worker: dict[str, Any], event_time_ms: int
+) -> tuple[int | None, int]:
+    started = numeric_ms(worker.get("started_at_ms"))
+    if started is None:
+        started = numeric_ms(source_run.get("started_at_ms"))
+    finished = numeric_ms(worker.get("finished_at_ms")) or event_time_ms
+    return started, finished
+
+
+def parent_match_score(
+    parent: dict[str, Any],
+    event_time_ms: int,
+    source_record: tuple[dict[str, Any], dict[str, Any]] | None = None,
+) -> tuple[int, int, int]:
+    parent_started = numeric_ms(parent.get("started_at_ms"))
+    parent_finished = numeric_ms(parent.get("finished_at_ms"))
+    active = (
+        (parent_started is None or parent_started <= event_time_ms)
+        and (parent_finished is None or event_time_ms <= parent_finished)
+    )
+    score = 0
+    overlap = 0
+    if active:
+        score += 20_000_000
+
+    if source_record is not None:
+        source_run, worker = source_record
+        worker_started, worker_finished = worker_interval(
+            source_run, worker, event_time_ms
+        )
+        if worker_started is not None:
+            start_inside = parent_started is None or (
+                parent_started <= worker_started
+                and (parent_finished is None or worker_started <= parent_finished)
+            )
+            if start_inside:
+                score += 1_000_000_000
+        if worker_finished is not None:
+            finish_inside = parent_started is None or (
+                parent_started <= worker_finished
+                and (parent_finished is None or worker_finished <= parent_finished)
+            )
+            if finish_inside:
+                score += 500_000_000
+        if parent_started is not None and worker_started is not None:
+            parent_end = parent_finished or max(event_time_ms, worker_finished)
+            overlap = max(
+                0,
+                min(parent_end, worker_finished)
+                - max(parent_started, worker_started),
+            )
+            if overlap:
+                score += 100_000_000 + min(overlap, 86_400_000)
+    elif active:
+        score += 1_000_000_000
+
+    return score, overlap, parent_started or 0
+
+
+def find_parent_run_key(
+    session_id: Any,
+    event_time_ms: int | None = None,
+    source_record: tuple[dict[str, Any], dict[str, Any]] | None = None,
+) -> str | None:
+    event_time_ms = event_time_ms or now_ms()
+    candidates = parent_candidates(session_id)
+    if not candidates:
+        return None
+    ranked = [
+        (parent_match_score(run, event_time_ms, source_record), key)
+        for key, _, run in candidates
+    ]
+    best = max(ranked, key=lambda item: (item[0], item[1]))
+    return best[1] if best[0][0] > 0 else None
+
+
+def worker_run_key(event: dict[str, Any]) -> str:
+    agent_id = str(event.get("agent_id") or "unknown")
+    session_id = event.get("session_id")
+    kind = event.get("hook_event_name")
+    event_time_ms = now_ms()
+
+    # A Start normally arrives while its parent is active. Prefer that window
+    # so a reused agent id cannot inherit a stale index entry.
+    if kind == "SubagentStart":
+        active_parent = find_parent_run_key(session_id, event_time_ms)
+        if active_parent is not None:
+            return active_parent
+
+    indexed = worker_index_entry(agent_id, session_id)
+    if indexed is not None:
+        return resolve_merged_run_key(str(indexed["run_key"]))
+
+    source = find_worker_record(session_id, agent_id)
+    if source is not None:
+        source_key, _, source_run, _ = source
+        merged = source_run.get("merged_into")
+        if isinstance(merged, str) and run_path_for_key(merged).is_file():
+            return resolve_merged_run_key(merged)
+        if source_run.get("prompt_seen") is True:
+            return source_key
+        source_parent = find_parent_run_key(
+            session_id,
+            event_time_ms,
+            (source_run, source[3]),
+        )
+        if source_parent is not None:
+            return source_parent
+        # There is no safe temporal match. Keep enriching the source record;
+        # the next parent Stop can retry reconciliation with more evidence.
+        return source_key
+
+    active_parent = find_parent_run_key(session_id, event_time_ms)
+    return active_parent or run_key(event)
+
+
+def merge_worker_values(
+    existing: dict[str, Any] | None, incoming: dict[str, Any]
+) -> dict[str, Any]:
+    previous = dict(existing) if isinstance(existing, dict) else {}
+    result = dict(previous)
+    for key, value in incoming.items():
+        if value is not None:
+            result[key] = value
+    started_values = [
+        numeric_ms(previous.get("started_at_ms")),
+        numeric_ms(incoming.get("started_at_ms")),
+    ]
+    started_values = [value for value in started_values if value is not None]
+    if started_values:
+        result["started_at_ms"] = min(started_values)
+    finished_values = [
+        numeric_ms(previous.get("finished_at_ms")),
+        numeric_ms(incoming.get("finished_at_ms")),
+    ]
+    finished_values = [value for value in finished_values if value is not None]
+    if finished_values:
+        result["finished_at_ms"] = max(finished_values)
+    statuses = [previous.get("status"), incoming.get("status")]
+    status_order = {"running": 1, "observed": 2, "completed": 3}
+    statuses = [status for status in statuses if status in status_order]
+    if statuses:
+        result["status"] = max(statuses, key=lambda status: status_order[status])
+    if result.get("usage") is None and incoming.get("usage") is not None:
+        result["usage"] = incoming["usage"]
+    return result
+
+
+def absorb_worker_source(
+    run: dict[str, Any], target_key: str, session_id: Any, agent_id: str
+) -> None:
+    source = find_worker_record(session_id, agent_id)
+    if source is None:
+        return
+    source_key, source_path, source_run, source_worker = source
+    if source_key == target_key or source_run.get("prompt_seen") is True:
+        return
+    workers = run.setdefault("workers", {})
+    workers[agent_id] = merge_worker_values(workers.get(agent_id), source_worker)
+    provenance = run.setdefault("worker_sources", {})
+    if not isinstance(provenance, dict):
+        provenance = {}
+        run["worker_sources"] = provenance
+    sources = provenance.setdefault(agent_id, [])
+    if not isinstance(sources, list):
+        sources = []
+        provenance[agent_id] = sources
+    if source_key not in sources:
+        sources.append(source_key)
+    merged_workers = source_run.setdefault("merged_workers", {})
+    if not isinstance(merged_workers, dict):
+        merged_workers = {}
+        source_run["merged_workers"] = merged_workers
+    merged_workers[agent_id] = target_key
+    source_worker_ids = set((source_run.get("workers") or {}).keys())
+    if source_worker_ids and source_worker_ids.issubset(merged_workers.keys()):
+        targets = set(str(value) for value in merged_workers.values())
+        if len(targets) == 1:
+            source_run["merged_into"] = target_key
+    source_run["merged_at_ms"] = now_ms()
+    source_run["merge_reason"] = "agent-index"
+    atomic_json(source_path, source_run)
+
+
+def reconcile_orphan_workers() -> set[str]:
+    """Repair orphan worker files using their persisted time windows.
+
+    The source file is retained and marked as merged so the 30-day retention
+    window still contains the original event record and merge provenance.
+    """
+    changed: set[str] = set()
+    with state_lock("telemetry-reconcile") as acquired:
+        if not acquired:
+            return changed
+        for source_path in iter_run_files():
+            source_run = read_json_object(source_path)
+            if source_run is None or source_run.get("prompt_seen") is True:
+                continue
+            if source_run.get("merged_into"):
+                continue
+            workers = source_run.get("workers")
+            if not isinstance(workers, dict):
+                continue
+            merged_workers = source_run.get("merged_workers")
+            if not isinstance(merged_workers, dict):
+                merged_workers = {}
+                source_run["merged_workers"] = merged_workers
+            source_key = source_path.stem
+            source_changed = False
+            for agent_id, source_worker in list(workers.items()):
+                if agent_id in merged_workers or not isinstance(source_worker, dict):
+                    continue
+                target_key = find_parent_run_key(
+                    source_run.get("session_id"),
+                    now_ms(),
+                    (source_run, source_worker),
+                )
+                if target_key is None or target_key == source_key:
+                    continue
+                target_path = run_path_for_key(target_key)
+                target_turn_id = None
+                with state_lock(target_key) as target_acquired:
+                    if not target_acquired:
+                        continue
+                    target_run = read_json_object(target_path)
+                    if target_run is None or target_run.get("prompt_seen") is not True:
+                        continue
+                    target_turn_id = target_run.get("turn_id")
+                    target_workers = target_run.setdefault("workers", {})
+                    target_workers[agent_id] = merge_worker_values(
+                        target_workers.get(agent_id), source_worker
+                    )
+                    if target_workers[agent_id].get("status") == "running":
+                        target_workers[agent_id]["status"] = "observed"
+                    provenance = target_run.setdefault("worker_sources", {})
+                    if not isinstance(provenance, dict):
+                        provenance = {}
+                        target_run["worker_sources"] = provenance
+                    sources = provenance.setdefault(agent_id, [])
+                    if not isinstance(sources, list):
+                        sources = []
+                        provenance[agent_id] = sources
+                    if source_key not in sources:
+                        sources.append(source_key)
+                    atomic_json(target_path, target_run)
+                merged_workers[agent_id] = target_key
+                source_changed = True
+                changed.add(target_key)
+                remember_worker_parent(
+                    agent_id,
+                    source_run.get("session_id"),
+                    target_key,
+                    target_turn_id,
+                    source_worker.get("started_at_ms") or source_run.get("started_at_ms"),
+                )
+            source_worker_ids = set(workers.keys())
+            if source_worker_ids and source_worker_ids.issubset(merged_workers.keys()):
+                targets = set(str(value) for value in merged_workers.values())
+                if len(targets) == 1:
+                    source_run["merged_into"] = next(iter(targets))
+                source_run["merged_at_ms"] = now_ms()
+                source_run["merge_reason"] = "parent-time-window"
+                source_changed = True
+            if source_changed:
+                atomic_json(source_path, source_run)
+    return changed
+
+
+def run_age_timestamp_ms(path: Path, run: dict[str, Any] | None) -> int | None:
+    if isinstance(run, dict):
+        for field in ("finished_at_ms", "started_at_ms", "merged_at_ms"):
+            value = numeric_ms(run.get(field))
+            if value is not None:
+                return value
+    try:
+        return int(path.stat().st_mtime * 1000)
+    except OSError:
+        return None
+
+
+def run_maintenance() -> None:
+    """Prune generated telemetry records and stale worker index entries."""
+    with state_lock("telemetry-maintenance") as acquired:
+        if not acquired:
+            return
+        cutoff = now_ms() - telemetry_retention_days() * 86_400_000
+        for path in iter_run_files():
+            run = read_json_object(path)
+            timestamp = run_age_timestamp_ms(path, run)
+            if timestamp is None or timestamp >= cutoff:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+        last = read_json_object(LAST_FILE)
+        last_timestamp = run_age_timestamp_ms(LAST_FILE, last)
+        if last_timestamp is not None and last_timestamp < cutoff:
+            try:
+                LAST_FILE.unlink()
+            except OSError:
+                pass
+
+        if not WORKER_INDEX_FILE.exists():
+            return
+        with state_lock("worker-index") as index_acquired:
+            if not index_acquired:
+                return
+            index = load_worker_index()
+            workers = index.get("workers")
+            if not isinstance(workers, dict):
+                return
+            stale = [
+                agent_id
+                for agent_id, entry in workers.items()
+                if isinstance(entry, dict)
+                and numeric_ms(entry.get("updated_at_ms")) is not None
+                and numeric_ms(entry.get("updated_at_ms")) < cutoff
+            ]
+            if stale:
+                for agent_id in stale:
+                    workers.pop(agent_id, None)
+                atomic_json(WORKER_INDEX_FILE, index)
 
 
 def app_server_command() -> list[str]:
@@ -820,6 +1319,67 @@ def render_summary(run: dict[str, Any]) -> str:
     lines.append("  💡 Tip: Run `codex-flow usage last` to review or `codex-flow doctor` to verify hooks.\n")
     return "\n".join(lines)
 
+
+def notification_body(run: dict[str, Any]) -> str:
+    session, project, branch = run_context(run)
+    label = project or session or "Codex task"
+    if branch and project:
+        label = f"{label} · {branch}"
+    workers = list((run.get("workers") or {}).values())
+    parent = run.get("parent") or {}
+    usages = [parent.get("usage_delta") if isinstance(parent, dict) else None]
+    usages.extend(
+        worker.get("usage") if isinstance(worker, dict) else None for worker in workers
+    )
+    total_tokens = aggregate_usage_value(usages, "total_tokens")
+    worker_count = f"{len(workers)} worker{'s' if len(workers) != 1 else ''}"
+    parts = [label, worker_count, f"{fmt_tokens(total_tokens)} tokens"]
+    started = numeric_ms(run.get("started_at_ms"))
+    finished = numeric_ms(run.get("finished_at_ms"))
+    if started is not None and finished is not None:
+        duration = fmt_duration_ms(finished - started)
+        if duration:
+            parts.append(duration)
+    return " · ".join(parts)
+
+
+def applescript_literal(value: Any) -> str:
+    text = " ".join(str(value).split())
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def send_system_notification(run: dict[str, Any]) -> None:
+    """Send a short macOS Notification Center message, fail-open."""
+    if not telemetry_notifications_enabled() or sys.platform != "darwin":
+        return
+    executable = shutil.which("osascript")
+    if not executable:
+        return
+    script = (
+        f"display notification {applescript_literal(notification_body(run))} "
+        f"with title {applescript_literal('FlowPilot task finished')}"
+    )
+    try:
+        subprocess.run(
+            [executable, "-e", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+
+
+def is_same_run(left: dict[str, Any] | None, right: dict[str, Any]) -> bool:
+    if not isinstance(left, dict):
+        return False
+    return (
+        str(left.get("session_id") or "") == str(right.get("session_id") or "")
+        and str(left.get("turn_id") or "") == str(right.get("turn_id") or "")
+    )
+
+
 def write_stop_output(text: str) -> None:
     # Codex command hooks consume JSON on stdout.  Keep a deliberately named
     # plain-text escape hatch for shell tests; production hooks always use the
@@ -837,14 +1397,15 @@ def collect_hook(event: dict[str, Any]) -> None:
     kind = event.get("hook_event_name")
     if kind not in {"UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"}:
         return
-    key = run_key(event)
-    with state_lock(key) as acquired:
-        if not acquired:
-            return
-        run = load_run(event)
-        path = run_path(event)
 
-        if kind == "UserPromptSubmit":
+    key = worker_run_key(event) if kind in {"SubagentStart", "SubagentStop"} else run_key(event)
+
+    if kind == "UserPromptSubmit":
+        with state_lock(key) as acquired:
+            if not acquired:
+                return
+            run = load_run(event, key)
+            path = run_path_for_key(key)
             run.update(
                 {
                     "started_at_ms": now_ms(),
@@ -853,12 +1414,13 @@ def collect_hook(event: dict[str, Any]) -> None:
                     "transcript_path": event.get("transcript_path"),
                 }
             )
-            run.setdefault("parent", {})["model"] = event.get("model")
+            if event.get("model") is not None:
+                run.setdefault("parent", {})["model"] = event.get("model")
             with AppServer() as server:
                 run["quota_before"] = (
                     quota_windows(server.rate_limits()) if server.available else []
                 )
-                run["parent"]["usage_before"] = (
+                run.setdefault("parent", {})["usage_before"] = (
                     usage_summary(server.thread_usage(event.get("session_id")))
                     if server.available
                     else None
@@ -869,30 +1431,41 @@ def collect_hook(event: dict[str, Any]) -> None:
                     else None
                 )
             atomic_json(path, run)
-            return
+        return
 
-        if kind in {"SubagentStart", "SubagentStop"}:
-            agent_id = str(event.get("agent_id") or "unknown")
-            worker = run.setdefault("workers", {}).setdefault(
-                agent_id, {"agent_id": agent_id}
-            )
-            worker.update(
-                {
-                    "agent_type": event.get("agent_type"),
-                    "model": event.get("model"),
-                }
-            )
+    if kind in {"SubagentStart", "SubagentStop"}:
+        agent_id = str(event.get("agent_id") or "unknown")
+        with state_lock(key) as acquired:
+            if not acquired:
+                return
+            run = load_run(event, key)
+            path = run_path_for_key(key)
+            if kind == "SubagentStop":
+                absorb_worker_source(run, key, event.get("session_id"), agent_id)
+            workers = run.setdefault("workers", {})
+            worker = workers.setdefault(agent_id, {"agent_id": agent_id})
+            worker["agent_id"] = agent_id
+            if event.get("agent_type") is not None:
+                worker["agent_type"] = event.get("agent_type")
+            if event.get("model") is not None:
+                worker["model"] = event.get("model")
+            if event.get("turn_id") is not None:
+                worker["turn_id"] = event.get("turn_id")
             if kind == "SubagentStart":
-                worker.update({"started_at_ms": now_ms(), "status": "running"})
+                worker.setdefault("started_at_ms", now_ms())
+                worker["status"] = "running"
+                if event.get("agent_transcript_path") is not None:
+                    worker["transcript_path"] = event.get("agent_transcript_path")
             else:
                 agent_transcript_path = event.get("agent_transcript_path")
                 worker.update(
                     {
                         "finished_at_ms": now_ms(),
                         "status": "completed",
-                        "transcript_path": agent_transcript_path,
                     }
                 )
+                if agent_transcript_path is not None:
+                    worker["transcript_path"] = agent_transcript_path
                 transcript_usage = transcript_turn_usage(
                     agent_transcript_path, event.get("turn_id")
                 )
@@ -902,12 +1475,33 @@ def collect_hook(event: dict[str, Any]) -> None:
                         if server.available
                         else None
                     )
-                worker["usage"] = merge_usage(transcript_usage, service_usage)
+                merged_usage = merge_usage(transcript_usage, service_usage)
+                if merged_usage is not None or worker.get("usage") is None:
+                    worker["usage"] = merged_usage
             atomic_json(path, run)
-            return
 
+            # A late SubagentStop must still enrich `usage last` when the
+            # parent Stop already wrote the latest completed run.
+            last = read_json_object(LAST_FILE)
+            if kind == "SubagentStop" and is_same_run(last, run):
+                atomic_json(LAST_FILE, run)
+        remember_worker_parent(
+            agent_id,
+            event.get("session_id"),
+            key,
+            run.get("turn_id"),
+            worker.get("started_at_ms"),
+        )
+        return
+
+    with state_lock(key) as acquired:
+        if not acquired:
+            return
+        run = load_run(event, key)
+        path = run_path_for_key(key)
         run["finished_at_ms"] = now_ms()
-        run.setdefault("parent", {})["model"] = event.get("model")
+        if event.get("model") is not None:
+            run.setdefault("parent", {})["model"] = event.get("model")
         with AppServer() as server:
             if not isinstance(run.get("thread"), dict):
                 run["thread"] = (
@@ -939,7 +1533,8 @@ def collect_hook(event: dict[str, Any]) -> None:
             for agent_id, worker in run.get("workers", {}).items():
                 if worker.get("usage") is None:
                     transcript_usage = transcript_turn_usage(
-                        worker.get("transcript_path"), event.get("turn_id")
+                        worker.get("transcript_path"),
+                        worker.get("turn_id") or event.get("turn_id"),
                     )
                     service_usage = (
                         usage_summary(server.thread_usage(agent_id))
@@ -955,8 +1550,20 @@ def collect_hook(event: dict[str, Any]) -> None:
                     worker["status"] = "observed"
         atomic_json(path, run)
         atomic_json(LAST_FILE, run)
-        if policy_bool("telemetry", "summary", True):
-            write_stop_output(render_summary(run))
+
+    # Reconciliation runs after the parent file is durable, so old orphan
+    # records and late child paths can be repaired without holding the parent
+    # lock. Refresh the summary if this parent absorbed any workers.
+    reconciled = reconcile_orphan_workers()
+    if key in reconciled:
+        refreshed = read_json_object(run_path_for_key(key))
+        if refreshed is not None:
+            run = refreshed
+            atomic_json(LAST_FILE, run)
+    run_maintenance()
+    if policy_bool("telemetry", "summary", True):
+        write_stop_output(render_summary(run))
+    send_system_notification(run)
 
 
 def show_last(as_json: bool = False) -> int:

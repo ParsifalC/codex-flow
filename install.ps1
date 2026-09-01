@@ -64,10 +64,14 @@ $WorkerMinEffort = if ($env:CODEX_FLOW_WORKER_MIN_EFFORT) { $env:CODEX_FLOW_WORK
 $MaxThreads = if ($env:CODEX_FLOW_MAX_THREADS) { $env:CODEX_FLOW_MAX_THREADS } else { $DefaultMaxThreads }
 $MaxRepairs = if ($env:CODEX_FLOW_MAX_REPAIR_CYCLES) { $env:CODEX_FLOW_MAX_REPAIR_CYCLES } else { $DefaultMaxRepairs }
 $TelemetryEnabled = if ($env:CODEX_FLOW_TELEMETRY_ENABLED) { $env:CODEX_FLOW_TELEMETRY_ENABLED } else { 'true' }
+$TelemetryNotifications = if ($env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS) { $env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS } else { 'true' }
+$TelemetryRetentionDays = if ($env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS) { $env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS } else { '30' }
 
 if ($ParentMinEffort -notin @('high','xhigh','max')) { throw 'parent minimum effort must be high, xhigh, or max' }
 if ($WorkerMinEffort -notin @('high','xhigh','max')) { throw 'worker minimum effort must be high, xhigh, or max' }
 if ($TelemetryEnabled -notin @('true','false')) { throw 'CODEX_FLOW_TELEMETRY_ENABLED must be true or false' }
+if ($TelemetryNotifications -notin @('true','false')) { throw 'CODEX_FLOW_TELEMETRY_NOTIFICATIONS must be true or false' }
+if ($TelemetryRetentionDays -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_TELEMETRY_RETENTION_DAYS must be a positive integer' }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $CodexHome 'agents') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $CodexHome 'skills/flow-pilot') | Out-Null
@@ -130,6 +134,8 @@ max_repair_cycles = $MaxRepairs
 [telemetry]
 enabled = $TelemetryEnabled
 summary = true
+notifications = $TelemetryNotifications
+retention_days = $TelemetryRetentionDays
 source = "hooks+app-server"
 "@ | ForEach-Object { Write-Utf8NoBom $Policy $_ }
 
@@ -186,7 +192,8 @@ Write-BoxLine "* Skill:      FlowPilot (flow-pilot)"
 Write-BoxLine "* Routing:    parent ($ParentModelPolicy) -> worker ($WorkerModel)"
 Write-BoxLine "* Reasoning:  adaptive (high -> xhigh -> max)"
 if ($TelemetryEnabled -eq 'true') {
-    Write-BoxLine "* Telemetry:  [+] enabled (deterministic hooks + app-server)"
+    Write-BoxLine "* Telemetry:  [+] enabled (hooks + app-server; ${TelemetryRetentionDays}d retention)"
+    if ($TelemetryNotifications -eq 'true') { Write-BoxLine '* Notify:     [+] system notification policy enabled' } else { Write-BoxLine '* Notify:     [-] disabled' }
 } else {
     Write-BoxLine "* Telemetry:  [-] disabled"
 }

@@ -88,6 +88,8 @@ if [[ -f "$POLICY" ]]; then
   WORKER_MIN_EFFORT="$(value min_reasoning_effort worker)"
   WORKER_REASONING="$(value reasoning_policy worker)"
   TELEMETRY_ENABLED="$(value enabled telemetry)"
+  TELEMETRY_NOTIFICATIONS="$(value notifications telemetry)"
+  TELEMETRY_RETENTION_DAYS="$(value retention_days telemetry)"
 
   [[ "$SCHEMA" == "3" ]] && ok "policy schema v3" || warn "policy schema is ${SCHEMA:-unknown}; reinstall recommended"
   case "$PARENT_MIN_EFFORT" in high|xhigh|max) ok "parent minimum reasoning: $PARENT_MIN_EFFORT" ;; *) fail "parent minimum reasoning must be high or above" ;; esac
@@ -96,6 +98,12 @@ if [[ -f "$POLICY" ]]; then
   [[ "$WORKER_REASONING" == "adaptive" ]] && ok "worker reasoning policy: adaptive" || warn "worker reasoning policy: ${WORKER_REASONING:-unknown}"
   ok "parent model policy: ${PARENT_POLICY:-unknown} (floor: ${PARENT_MIN_MODEL:-unknown})"
   ok "worker model policy: ${WORKER_POLICY:-unknown} (requested: ${WORKER_REQUESTED:-unknown}, resolved: ${WORKER_MODEL:-unknown})"
+  case "$TELEMETRY_NOTIFICATIONS" in
+    true) ok "system notifications: enabled (macOS)" ;;
+    false) ok "system notifications: disabled by policy" ;;
+    *) warn "system notifications policy is ${TELEMETRY_NOTIFICATIONS:-missing}; reinstall recommended" ;;
+  esac
+  [[ "$TELEMETRY_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] && ok "per-run telemetry retention: ${TELEMETRY_RETENTION_DAYS} days" || warn "per-run telemetry retention is ${TELEMETRY_RETENTION_DAYS:-missing}; reinstall recommended"
 
   section "Hooks & Telemetry"
   if [[ "$TELEMETRY_ENABLED" == "true" ]]; then

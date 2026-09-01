@@ -58,6 +58,10 @@ switch ($cmd) {
             $wModel = Get-PolicyValue worker resolved_model
             $wEffort = Get-PolicyValue worker min_reasoning_effort
             $tEnabled = Get-PolicyValue telemetry enabled
+            $tNotifications = Get-PolicyValue telemetry notifications
+            $tRetention = Get-PolicyValue telemetry retention_days
+            if (-not $tNotifications) { $tNotifications = 'true' }
+            if (-not $tRetention) { $tRetention = '30' }
 
             Write-Host '  +-- Model Routing --------------------------------------------------+' -ForegroundColor DarkGray
             Write-StatusLine "* Parent:      $pPolicy (min effort: $pEffort)"
@@ -67,6 +71,8 @@ switch ($cmd) {
             } else {
                 Write-StatusLine "* Telemetry:   [-] disabled"
             }
+            if ($tNotifications -eq 'true') { Write-StatusLine "* Notify:      [+] system notification (macOS)" } else { Write-StatusLine "* Notify:      [-] disabled" }
+            Write-StatusLine "* Retention:   $tRetention days per-run data"
         }
         Write-Host '  +-------------------------------------------------------------------+' -ForegroundColor DarkGray
         Write-Host ""
@@ -116,6 +122,10 @@ switch ($cmd) {
         $env:CODEX_FLOW_MAX_REPAIR_CYCLES = Get-PolicyValue runtime max_repair_cycles
         $telemetryEnabled = Get-PolicyValue telemetry enabled
         $env:CODEX_FLOW_TELEMETRY_ENABLED = if ($telemetryEnabled) { $telemetryEnabled } else { 'true' }
+        $telemetryNotifications = Get-PolicyValue telemetry notifications
+        $env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS = if ($telemetryNotifications) { $telemetryNotifications } else { 'true' }
+        $telemetryRetentionDays = Get-PolicyValue telemetry retention_days
+        $env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS = if ($telemetryRetentionDays) { $telemetryRetentionDays } else { '30' }
 
         $before = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         git -C $src pull --ff-only

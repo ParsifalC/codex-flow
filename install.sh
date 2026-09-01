@@ -65,10 +65,14 @@ WORKER_MIN_EFFORT="${CODEX_FLOW_WORKER_MIN_EFFORT:-high}"
 MAX_THREADS="${CODEX_FLOW_MAX_THREADS:-$DEFAULT_MAX_THREADS}"
 MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$DEFAULT_MAX_REPAIRS}"
 TELEMETRY_ENABLED="${CODEX_FLOW_TELEMETRY_ENABLED:-true}"
+TELEMETRY_NOTIFICATIONS="${CODEX_FLOW_TELEMETRY_NOTIFICATIONS:-true}"
+TELEMETRY_RETENTION_DAYS="${CODEX_FLOW_TELEMETRY_RETENTION_DAYS:-30}"
 
 case "$PARENT_MIN_EFFORT" in high|xhigh|max) ;; *) echo "parent minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
 case "$WORKER_MIN_EFFORT" in high|xhigh|max) ;; *) echo "worker minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
 case "$TELEMETRY_ENABLED" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_ENABLED must be true or false" >&2; exit 2 ;; esac
+case "$TELEMETRY_NOTIFICATIONS" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_NOTIFICATIONS must be true or false" >&2; exit 2 ;; esac
+[[ "$TELEMETRY_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_TELEMETRY_RETENTION_DAYS must be a positive integer" >&2; exit 2; }
 
 mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$BIN_DIR"
 
@@ -138,6 +142,8 @@ max_repair_cycles = $MAX_REPAIRS
 [telemetry]
 enabled = $TELEMETRY_ENABLED
 summary = true
+notifications = $TELEMETRY_NOTIFICATIONS
+retention_days = $TELEMETRY_RETENTION_DAYS
 source = "hooks+app-server"
 EOF
 
@@ -227,7 +233,12 @@ box_line "${C_BOLD}• Skill:${C_RESET}      FlowPilot ${C_DIM}(flow-pilot)${C_R
 box_line "${C_BOLD}• Routing:${C_RESET}    parent (${PARENT_MODEL_POLICY}) ➔ worker (${WORKER_MODEL})"
 box_line "${C_BOLD}• Reasoning:${C_RESET}  adaptive ${C_DIM}(high ➔ xhigh ➔ max)${C_RESET}"
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
-  box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_GREEN}● enabled${C_RESET} ${C_DIM}(deterministic hooks + app-server)${C_RESET}"
+  box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_GREEN}● enabled${C_RESET} ${C_DIM}(hooks + app-server; ${TELEMETRY_RETENTION_DAYS}d retention)${C_RESET}"
+  if [[ "$TELEMETRY_NOTIFICATIONS" == "true" ]]; then
+    box_line "${C_BOLD}• Notify:${C_RESET}     ${C_GREEN}● macOS system notification${C_RESET}"
+  else
+    box_line "${C_BOLD}• Notify:${C_RESET}     ${C_DIM}○ disabled${C_RESET}"
+  fi
 else
   box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_DIM}○ disabled${C_RESET}"
 fi

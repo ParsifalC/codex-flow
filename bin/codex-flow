@@ -82,6 +82,10 @@ case "$cmd" in
       w_model="$(read_policy_value worker resolved_model "$POLICY")"
       w_effort="$(read_policy_value worker min_reasoning_effort "$POLICY")"
       t_enabled="$(read_policy_value telemetry enabled "$POLICY")"
+      t_notifications="$(read_policy_value telemetry notifications "$POLICY")"
+      t_retention="$(read_policy_value telemetry retention_days "$POLICY")"
+      [[ -n "$t_notifications" ]] || t_notifications=true
+      [[ -n "$t_retention" ]] || t_retention=30
 
       printf '  %s├─ Model Routing ───────────────────────────────────────────────────┤%s\n' "$C_DIM" "$C_RESET"
       box_line "${C_BOLD}• Parent:${C_RESET}      ${p_policy} ${C_DIM}(min effort: ${p_effort})${C_RESET}"
@@ -91,6 +95,12 @@ case "$cmd" in
       else
         box_line "${C_BOLD}• Telemetry:${C_RESET}   ${C_DIM}○ disabled${C_RESET}"
       fi
+      if [[ "$t_notifications" == "true" ]]; then
+        box_line "${C_BOLD}• Notify:${C_RESET}      ${C_GREEN}● system notification${C_RESET} ${C_DIM}(macOS)${C_RESET}"
+      else
+        box_line "${C_BOLD}• Notify:${C_RESET}      ${C_DIM}○ disabled${C_RESET}"
+      fi
+      box_line "${C_BOLD}• Retention:${C_RESET}   ${t_retention} days per-run data"
     fi
     printf '  %s╰───────────────────────────────────────────────────────────────────╯%s\n\n' "$C_DIM" "$C_RESET"
     ;;
@@ -136,6 +146,10 @@ case "$cmd" in
     repair_cycles="$(read_policy_value runtime max_repair_cycles "$POLICY")"
     telemetry_enabled="$(read_policy_value telemetry enabled "$POLICY")"
     [[ -n "$telemetry_enabled" ]] || telemetry_enabled=true
+    telemetry_notifications="$(read_policy_value telemetry notifications "$POLICY")"
+    [[ -n "$telemetry_notifications" ]] || telemetry_notifications=true
+    telemetry_retention_days="$(read_policy_value telemetry retention_days "$POLICY")"
+    [[ -n "$telemetry_retention_days" ]] || telemetry_retention_days=30
 
     before="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
     git -C "$src" pull --ff-only
@@ -143,7 +157,7 @@ case "$cmd" in
 
     CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \
     CODEX_FLOW_WORKER_MODEL_POLICY="$worker_policy" CODEX_FLOW_WORKER_MODEL="$worker_model" CODEX_FLOW_WORKER_MIN_EFFORT="$worker_effort" \
-    CODEX_FLOW_MAX_THREADS="$max_threads" CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" CODEX_FLOW_TELEMETRY_ENABLED="$telemetry_enabled" \
+    CODEX_FLOW_MAX_THREADS="$max_threads" CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" CODEX_FLOW_TELEMETRY_ENABLED="$telemetry_enabled" CODEX_FLOW_TELEMETRY_NOTIFICATIONS="$telemetry_notifications" CODEX_FLOW_TELEMETRY_RETENTION_DAYS="$telemetry_retention_days" \
       bash "$src/install.sh"
 
     printf '\n✨ Updated codex-flow %s -> %s\n' "$before" "$after"

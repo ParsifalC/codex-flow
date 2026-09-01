@@ -128,6 +128,10 @@ FlowPilot summary
 
 `summary = true` 控制 Stop hook 是否通过 Codex 支持的 `systemMessage` 输出独立统计提示；它不会改写模型已经生成的最终正文。若当前 UI 未展示该系统提示，可用下面的 `usage last` 重看。`summary = false` 只关闭提示，不停止采集。
 
+默认还会在 macOS Notification Center 发送一条短通知，包含项目、worker 数量、总 token 和耗时；它不包含完整 prompt 或 summary 正文。通过 `notifications = false` 或 `CODEX_FLOW_TELEMETRY_NOTIFICATIONS=false` 关闭。每条 run 都会独立写入 `~/.codex/codex-flow/telemetry/runs/*.json`，默认保留 30 天；`retention_days` 或 `CODEX_FLOW_TELEMETRY_RETENTION_DAYS` 可调整保留天数。`last.json` 仍是最近一次完成 run 的快捷指针。
+
+Worker 关联以 `agent_id` 持久索引为主，并用 parent/worker 生命周期窗口兜底；旧版本留下的孤立 worker 会在下一次 parent Stop 时自动归并。原始孤立 run 不会立即删除，而会记录 `merged_into` / `worker_sources`，直到保留期到期。
+
 如果 app-server、transcript token 事件、某个 usage 字段或 billing route 在当前 Codex 版本/账户上不可用，telemetry 会 fail-open：任务本身继续正常执行，只让对应统计缺失，不伪造数据。
 
 最近一次完整结果可以重新查看或机器读取：
@@ -192,6 +196,8 @@ max_repair_cycles = 2
 [telemetry]
 enabled = true
 summary = true
+notifications = true
+retention_days = 30
 source = "hooks+app-server"
 ```
 
@@ -383,6 +389,8 @@ CODEX_FLOW_WORKER_MIN_EFFORT      默认: high
 CODEX_FLOW_MAX_THREADS            默认: 4
 CODEX_FLOW_MAX_REPAIR_CYCLES      默认: 2
 CODEX_FLOW_TELEMETRY_ENABLED      默认: true
+CODEX_FLOW_TELEMETRY_NOTIFICATIONS 默认: true（macOS Notification Center）
+CODEX_FLOW_TELEMETRY_RETENTION_DAYS 默认: 30
 CODEX_FLOW_BIN_DIR                默认: ~/.local/bin
 CODEX_FLOW_SHELL                  默认: SHELL 的 basename（自动配置 Bash/zsh）
 CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME

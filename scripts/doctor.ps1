@@ -60,6 +60,13 @@ if (Test-Path $Policy) {
     if ($workerEffort -in @('high','xhigh','max')) { Ok "worker minimum reasoning: $workerEffort" } else { Fail "invalid worker effort: $workerEffort" }
     $worker = Get-PolicyValue worker resolved_model
     if ($worker) { Ok "resolved worker: $worker" } else { Fail 'resolved worker is empty' }
+    $telemetryNotifications = Get-PolicyValue telemetry notifications
+    $telemetryRetentionDays = Get-PolicyValue telemetry retention_days
+    if ($telemetryNotifications -eq 'true') { Ok 'system notifications: enabled (macOS)' }
+    elseif ($telemetryNotifications -eq 'false') { Ok 'system notifications: disabled by policy' }
+    else { Warn "system notifications policy is $telemetryNotifications; reinstall recommended" }
+    if ($telemetryRetentionDays -match '^[1-9][0-9]*$') { Ok "per-run telemetry retention: $telemetryRetentionDays days" }
+    else { Warn "per-run telemetry retention is $telemetryRetentionDays; reinstall recommended" }
     
     Section "Hooks & Telemetry"
     $telemetryEnabled = Get-PolicyValue telemetry enabled

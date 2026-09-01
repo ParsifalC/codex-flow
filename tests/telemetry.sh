@@ -5,6 +5,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export CODEX_HOME="$TMP/.codex"
 export FAKE_COUNTER="$TMP/counter"
+export CODEX_FLOW_TELEMETRY_NOTIFICATIONS=false
 
 cat > "$TMP/fake-app-server.py" <<'PY'
 #!/usr/bin/env python3
@@ -135,6 +136,60 @@ PY
 unset FAKE_THREAD_USAGE
 printf 'telemetry transcript fallback/correlation test passed\n'
 
+# The agent index must survive a parent Stop and route a late SubagentStop to
+# the completed parent instead of creating a child-only run.
+hook '{"hook_event_name":"UserPromptSubmit","session_id":"late-parent","turn_id":"parent-turn","cwd":"/tmp/work","model":"gpt-parent"}'
+hook '{"hook_event_name":"SubagentStart","session_id":"late-parent","turn_id":"child-turn","cwd":"/tmp/work","model":"gpt-worker","agent_id":"late-worker","agent_type":"worker-implementer"}'
+hook '{"hook_event_name":"Stop","session_id":"late-parent","turn_id":"parent-turn","cwd":"/tmp/work","model":"gpt-parent"}'
+hook '{"hook_event_name":"SubagentStop","session_id":"late-parent","turn_id":"child-turn","cwd":"/tmp/work","model":"gpt-worker","agent_id":"late-worker","agent_type":"worker-implementer"}'
+python3 - "$CODEX_HOME/codex-flow/telemetry/runs/late-parent--parent-turn.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["workers"]["late-worker"]["status"] == "completed", d
+PY
+[[ ! -f "$CODEX_HOME/codex-flow/telemetry/runs/late-parent--child-turn.json" ]]
+printf 'telemetry late-worker correlation test passed\n'
+
+# A source record written by an older collector is retained but marked merged
+# when the next parent Stop has enough lifecycle timing to identify its parent.
+hook '{"hook_event_name":"UserPromptSubmit","session_id":"repair-session","turn_id":"parent-turn","cwd":"/tmp/work","model":"gpt-parent"}'
+python3 - "$CODEX_HOME/codex-flow/telemetry/runs/repair-session--parent-turn.json" "$CODEX_HOME/codex-flow/telemetry/runs/repair-session--orphan-turn.json" <<'PY'
+import json, sys
+from pathlib import Path
+parent_path, orphan_path = map(Path, sys.argv[1:])
+parent = json.loads(parent_path.read_text())
+start = parent["started_at_ms"] + 10
+orphan = {
+    "schema_version": 1,
+    "session_id": "repair-session",
+    "turn_id": "orphan-turn",
+    "started_at_ms": start,
+    "workers": {
+        "repair-worker": {
+            "agent_id": "repair-worker",
+            "agent_type": "worker-implementer",
+            "model": "gpt-worker",
+            "started_at_ms": start,
+            "finished_at_ms": start + 20,
+            "status": "completed",
+            "usage": {"total_tokens": 7, "estimated_credits_micros": 0},
+        }
+    },
+}
+orphan_path.write_text(json.dumps(orphan) + "\n")
+PY
+repair_summary_json="$(hook '{"hook_event_name":"Stop","session_id":"repair-session","turn_id":"parent-turn","cwd":"/tmp/work","model":"gpt-parent"}')"
+repair_summary="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["systemMessage"], end="")' <<<"$repair_summary_json")"
+[[ "$repair_summary" == *"1 parent + 1 worker"* ]]
+python3 - "$CODEX_HOME/codex-flow/telemetry/runs/repair-session--parent-turn.json" "$CODEX_HOME/codex-flow/telemetry/runs/repair-session--orphan-turn.json" <<'PY'
+import json, sys
+parent = json.load(open(sys.argv[1]))
+orphan = json.load(open(sys.argv[2]))
+assert parent["workers"]["repair-worker"]["status"] == "completed", parent
+assert orphan["merged_into"] == "repair-session--parent-turn", orphan
+PY
+printf 'telemetry orphan-worker repair test passed\n'
+
 # The policy summary switch controls UI emission without disabling collection.
 printf '[telemetry]\nsummary = false\n' > "$CODEX_HOME/codex-flow.toml"
 hook '{"hook_event_name":"UserPromptSubmit","session_id":"summary-off","turn_id":"turn","cwd":"/tmp/work","model":"gpt-parent"}'
@@ -211,6 +266,30 @@ assert "gpt-parent" in summary and "0 tokens" in summary, summary
 assert "worker-implementer" in summary and "gpt-worker" in summary, summary
 assert "• Attributed:     0 tokens" in summary, summary
 assert "0.000 credits" in summary, summary
+merged = telemetry.merge_worker_values(
+    {"started_at_ms": 10, "finished_at_ms": 30, "status": "completed"},
+    {"started_at_ms": 20, "finished_at_ms": 25, "status": "running"},
+)
+assert merged["started_at_ms"] == 10 and merged["finished_at_ms"] == 30, merged
+assert merged["status"] == "completed", merged
+
+run = {
+    "session_id": "session",
+    "started_at_ms": 1_000,
+    "finished_at_ms": 3_000,
+    "thread": {"name": "Task", "cwd": "/tmp/work", "gitInfo": {"branch": "main"}},
+    "parent": {"usage_delta": {"total_tokens": 1}},
+    "workers": {"worker": {"usage": {"total_tokens": 2}}},
+}
+calls = []
+telemetry.os.environ["CODEX_FLOW_TELEMETRY_NOTIFICATIONS"] = "true"
+telemetry.sys.platform = "darwin"
+telemetry.shutil.which = lambda name: "/usr/bin/osascript"
+telemetry.subprocess.run = lambda *args, **kwargs: calls.append((args, kwargs))
+telemetry.send_system_notification(run)
+assert len(calls) == 1, calls
+assert "work · main · 1 worker · 3 tokens · 2s" in calls[0][0][0][2], calls
+assert "FlowPilot task finished" in calls[0][0][0][2], calls
 PY
 
 printf 'telemetry unavailable/zero regression test passed\n'
@@ -300,3 +379,19 @@ assert telemetry.usage_delta({"groups": before["groups"]}, partial_after)["group
 PY
 
 printf 'telemetry usage-delta regression test passed\n'
+
+# Per-run files are retained for 30 days and older generated records are
+# pruned during the next completed parent run.
+python3 - "$CODEX_HOME/codex-flow/telemetry/runs/old.json" "$CODEX_HOME/codex-flow/telemetry/runs/recent.json" <<'PY'
+import json, sys, time
+old_path, recent_path = sys.argv[1:]
+old = int(time.time() * 1000) - 31 * 86_400_000
+for path, timestamp in ((old_path, old), (recent_path, int(time.time() * 1000))):
+    with open(path, "w") as stream:
+        json.dump({"schema_version": 1, "started_at_ms": timestamp}, stream)
+PY
+hook '{"hook_event_name":"UserPromptSubmit","session_id":"retention","turn_id":"turn","cwd":"/tmp/work","model":"gpt-parent"}'
+hook '{"hook_event_name":"Stop","session_id":"retention","turn_id":"turn","cwd":"/tmp/work","model":"gpt-parent"}' >/dev/null
+[[ ! -e "$CODEX_HOME/codex-flow/telemetry/runs/old.json" ]]
+[[ -e "$CODEX_HOME/codex-flow/telemetry/runs/recent.json" ]]
+printf 'telemetry 30-day retention test passed\n'

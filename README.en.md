@@ -118,6 +118,10 @@ Two measurements are deliberately kept separate:
 
 `summary = true` controls whether the Stop hook emits a separate summary through Codex's supported `systemMessage` channel; it does not rewrite the assistant's already-generated final prose. If the active UI does not surface that system message, use `usage last` below. `summary = false` suppresses the message without disabling collection.
 
+By default, macOS Notification Center also receives a short notification after each completed parent run with the project, worker count, total tokens, and duration. It does not include the full prompt or summary body. Disable it with `notifications = false` or `CODEX_FLOW_TELEMETRY_NOTIFICATIONS=false`. Every run is stored as its own JSON file under `~/.codex/codex-flow/telemetry/runs/` and retained for 30 days by default; use `retention_days` or `CODEX_FLOW_TELEMETRY_RETENTION_DAYS` to change the period. `last.json` remains a pointer to the most recently completed run.
+
+Worker correlation uses a durable `agent_id` index first, then parent/worker lifecycle windows as a fallback. Orphans written by older collectors are merged on the next parent Stop; their source files remain with `merged_into` / `worker_sources` provenance until retention expires.
+
 Telemetry is fail-open. Missing app-server capabilities, transcript token events, or usage fields never fail the task; only those statistics become unavailable.
 
 Re-open the last result or consume its raw JSON with:
@@ -182,6 +186,8 @@ max_repair_cycles = 2
 [telemetry]
 enabled = true
 summary = true
+notifications = true
+retention_days = 30
 source = "hooks+app-server"
 ```
 
@@ -284,6 +290,8 @@ CODEX_FLOW_WORKER_MIN_EFFORT      default: high
 CODEX_FLOW_MAX_THREADS            default: 4
 CODEX_FLOW_MAX_REPAIR_CYCLES      default: 2
 CODEX_FLOW_TELEMETRY_ENABLED      default: true
+CODEX_FLOW_TELEMETRY_NOTIFICATIONS default: true (macOS Notification Center)
+CODEX_FLOW_TELEMETRY_RETENTION_DAYS default: 30
 CODEX_FLOW_BIN_DIR                default: ~/.local/bin
 CODEX_FLOW_SHELL                  default: basename of SHELL (Bash/zsh auto-configured)
 CODEX_FLOW_SHELL_CONFIG_DIR       default: HOME
