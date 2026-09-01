@@ -318,4 +318,4 @@ Normal CI never invokes a paid model. It validates shell/Python/PowerShell synta
 
 ## Status
 
-Private preview, version `1.0.0`. FlowPilot is the default orchestration skill. Per-task `direct`, `delegate`, and `adaptive` overrides remain explicit and non-persistent. Normal-task telemetry is enabled by default and adds no model inference. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution remains explicit; explicit user pins remain authoritative.
+Private preview, version `1.1.0`. FlowPilot is the default orchestration skill. Per-task `direct`, `delegate`, and `adaptive` overrides remain explicit and non-persistent. Normal-task telemetry is enabled by default and adds no model inference. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution remains explicit; explicit user pins remain authoritative.

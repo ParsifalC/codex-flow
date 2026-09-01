@@ -1,6 +1,7 @@
 .codex-flow-benchmark/
 benchmark/results/*.jsonl
 benchmark/results/*.json
+benchmark/results/*.report.md
 !benchmark/results/.gitkeep
 __pycache__/
 *.pyc

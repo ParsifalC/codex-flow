@@ -427,6 +427,6 @@ CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME
 
 ## 当前状态
 
-Private preview，版本 `1.0.0`。
+Private preview，版本 `1.1.0`。
 
 FlowPilot 是默认编排 Skill；本地认证 Benchmark 是默认真实数据采集路径；`direct`、`delegate`、`adaptive` 是显式且非持久的当前任务覆盖；正常任务 telemetry 默认开启且不额外调用模型；模型推荐变更需要 review；Benchmark routing 保持 advisory；真实 Benchmark 必须由用户明确触发；用户明确 pin 的配置始终拥有最高持久配置优先级。
