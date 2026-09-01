@@ -102,28 +102,30 @@ Telemetry 默认开启，以**一个用户 turn 作为一次 flow run**。Codex 
 
 默认采集：
 
-- Parent 和参与过的 Worker 数量、类型、模型和状态
+- Parent 和参与过的 Worker 数量、类型、模型、实际 reasoning effort 和状态
 - Parent / Worker transcript 可获得的 turn-level input、cached input、output、reasoning output、total tokens
 - 服务端可提供时的 estimated credits / optional cost
-- 任务开始与结束时账户 rate-limit window 的 `usedPercent`，以及前后百分点变化
+- 任务开始与结束时账户 rate-limit window 的 `usedPercent`（已使用比例）、剩余比例，以及前后百分点变化
+- Desktop session 名称；新线程尚未被 app-server materialize 时从本地 session index 回退读取
 
 任务结束时会尽量直接在终端显示，例如：
 
 ```text
 FlowPilot summary
   participants  1 parent + 3 workers
-  parent        gpt-5.6-sol   82.4k tokens
-  worker        worker-explorer     gpt-5.6-luna  116.8k tokens  completed
-  worker        worker-implementer  gpt-5.6-luna  401.2k tokens  completed
-  worker        worker-implementer  gpt-5.6-luna   68.4k tokens  completed
+  parent        gpt-5.6-sol (high)   82.4k tokens
+  worker        worker-explorer     gpt-5.6-luna (high)  116.8k tokens  completed
+  worker        worker-implementer  gpt-5.6-luna (xhigh) 401.2k tokens  completed
+  worker        worker-implementer  gpt-5.6-luna (high)   68.4k tokens  completed
   attributed    668.8k tokens  1.840 credits
-  account quota 5h 31%→34% (+3 pp); 7d 18%→19% (+1 pp)
+  account quota (used) 5h 31%→34% (+3 pp; 66% remaining); 7d 18%→19% (+1 pp; 81% remaining)
 ```
 
 这里有两个刻意区分的语义：
 
 - **attributed tokens** 来自 hooks 指向的 Parent / Worker transcript，并按当前 turn 的累计计数差值归因；若当前 Codex rollout 格式无法识别才显示 unavailable。
 - **estimated credits / cost** 只在 app-server 暴露 thread billing route 时附加；不会从 token 数或账户余额反推。
+- **account quota** 的 `usedPercent` 是已消耗比例，不是剩余比例；`remaining` 是由该官方比例计算出的剩余比例。这个接口按整数百分比提供快照，短任务可能出现 `70% → 70% (no change)`，这表示两次采样没有跨过一个百分点，不是固定写死。
 - **account quota change during run** 是整个账户在这段时间里的变化。如果同时有别的 Codex session 在运行，不能把全部百分点变化都声称成本次 flow 独占消耗。
 
 `summary = true` 控制 Stop hook 是否通过 Codex 支持的 `systemMessage` 输出独立统计提示；它不会改写模型已经生成的最终正文。若当前 UI 未展示该系统提示，可用下面的 `usage last` 重看。`summary = false` 只关闭提示，不停止采集。

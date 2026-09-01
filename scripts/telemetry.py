@@ -25,6 +25,7 @@ STATE_ROOT = CODEX_HOME / "codex-flow" / "telemetry"
 RUNS_DIR = STATE_ROOT / "runs"
 LAST_FILE = STATE_ROOT / "last.json"
 WORKER_INDEX_FILE = STATE_ROOT / "worker-index.json"
+SESSION_INDEX_FILE = CODEX_HOME / "session_index.jsonl"
 TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_TIMEOUT", "3.0"))
 LOCK_TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT", "2.0"))
 DEFAULT_RETENTION_DAYS = 30
@@ -149,6 +150,53 @@ def read_json_object(path: Path) -> dict[str, Any] | None:
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def session_index_metadata(session_id: Any) -> dict[str, Any] | None:
+    """Read the local title index when app-server cannot materialize a thread.
+
+    A UserPromptSubmit hook can run before ``thread/read`` is available for a
+    newly-created Desktop thread.  The local session index is maintained by
+    Codex itself and contains the same user-facing title without requiring a
+    model or a best-effort title guess from the prompt.
+    """
+    if not session_id or not SESSION_INDEX_FILE.is_file():
+        return None
+    target = str(session_id)
+    try:
+        lines = SESSION_INDEX_FILE.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    for raw in reversed(lines):
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        entry_id = entry.get("id") or entry.get("session_id")
+        if str(entry_id or "") != target:
+            continue
+        metadata: dict[str, Any] = {"id": entry_id}
+        name = entry.get("thread_name") or entry.get("name")
+        if name is not None:
+            metadata["name"] = name
+        preview = entry.get("preview")
+        if preview is not None:
+            metadata["preview"] = preview
+        return metadata
+    return None
+
+
+def merge_thread_metadata(*values: Any) -> dict[str, Any] | None:
+    result: dict[str, Any] = {}
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        for key, item in value.items():
+            if item is not None and item != "":
+                result[key] = item
+    return result or None
 
 
 def numeric_ms(value: Any) -> int | None:
@@ -1026,6 +1074,96 @@ def normalize_transcript_usage(value: Any) -> dict[str, Any] | None:
     return result
 
 
+def text_value(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def event_reasoning_effort(event: dict[str, Any] | None) -> str | None:
+    """Read an effort value when a hook payload exposes one."""
+    if not isinstance(event, dict):
+        return None
+    for key in (
+        "reasoning_effort",
+        "reasoningEffort",
+        "effort",
+        "model_reasoning_effort",
+    ):
+        value = text_value(event.get(key))
+        if value:
+            return value
+    for key in ("thread_settings", "threadSettings", "settings"):
+        settings = event.get(key)
+        if not isinstance(settings, dict):
+            continue
+        for setting_key in (
+            "reasoning_effort",
+            "reasoningEffort",
+            "effort",
+            "model_reasoning_effort",
+        ):
+            value = text_value(settings.get(setting_key))
+            if value:
+                return value
+    return None
+
+
+def transcript_turn_metadata(path_value: Any, turn_id: Any) -> dict[str, Any] | None:
+    """Read model and reasoning effort for one turn from a rollout transcript."""
+    if not isinstance(path_value, str) or not path_value or not turn_id:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+
+    target_turn = str(turn_id)
+    result: dict[str, Any] = {}
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+
+                record_type = record.get("type")
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+
+                candidate: dict[str, Any] | None = None
+                candidate_turn: Any = None
+                if record_type == "turn_context":
+                    candidate = payload
+                    candidate_turn = payload.get("turn_id")
+                elif record_type == "event_msg":
+                    event_type = payload.get("type")
+                    if event_type == "task_started":
+                        candidate = payload
+                        candidate_turn = payload.get("turn_id")
+                    elif event_type == "thread_settings_applied":
+                        candidate = payload.get("thread_settings")
+                        candidate_turn = payload.get("turn_id")
+
+                if candidate_turn is None or str(candidate_turn) != target_turn:
+                    continue
+                if not isinstance(candidate, dict):
+                    continue
+                model = text_value(candidate.get("model"))
+                if model:
+                    result["model"] = model
+                effort = event_reasoning_effort(candidate)
+                if effort:
+                    result["reasoning_effort"] = effort
+    except (OSError, UnicodeError):
+        return None
+    return result or None
+
+
 def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | None:
     """Read exact per-turn token usage from the hook-provided rollout path.
 
@@ -1120,6 +1258,91 @@ def merge_usage(
     return result
 
 
+def usage_group_identities(usage: dict[str, Any] | None) -> list[tuple[str | None, str | None]]:
+    if not isinstance(usage, dict):
+        return []
+    groups = usage.get("groups")
+    if not isinstance(groups, list):
+        return []
+    identities: list[tuple[str | None, str | None]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        model = text_value(group.get("model"))
+        effort = text_value(group.get("reasoning_effort"))
+        identity = (model, effort)
+        if identity != (None, None) and identity not in identities:
+            identities.append(identity)
+    return identities
+
+
+def apply_participant_metadata(
+    participant: dict[str, Any],
+    *,
+    event: dict[str, Any] | None = None,
+    transcript_path: Any = None,
+    turn_id: Any = None,
+    usage: dict[str, Any] | None = None,
+) -> None:
+    """Attach observed model/effort without inferring values from token counts."""
+    if event is not None:
+        model = text_value(event.get("model"))
+        if model and not text_value(participant.get("model")):
+            participant["model"] = model
+        effort = event_reasoning_effort(event)
+        if effort and not text_value(participant.get("reasoning_effort")):
+            participant["reasoning_effort"] = effort
+
+    metadata = transcript_turn_metadata(transcript_path, turn_id)
+    if metadata is not None:
+        model = text_value(metadata.get("model"))
+        if model and not text_value(participant.get("model")):
+            participant["model"] = model
+        effort = text_value(metadata.get("reasoning_effort"))
+        if effort and not text_value(participant.get("reasoning_effort")):
+            participant["reasoning_effort"] = effort
+
+    identities = usage_group_identities(usage)
+    if not text_value(participant.get("model")):
+        models = {model for model, _ in identities if model}
+        if len(models) == 1:
+            participant["model"] = next(iter(models))
+    if not text_value(participant.get("reasoning_effort")):
+        efforts = {effort for _, effort in identities if effort}
+        if len(efforts) == 1:
+            participant["reasoning_effort"] = next(iter(efforts))
+
+
+def enrich_run_metadata(run: dict[str, Any]) -> None:
+    """Backfill display metadata for records created by older collectors."""
+    thread = merge_thread_metadata(
+        session_index_metadata(run.get("session_id")), run.get("thread")
+    )
+    if thread is not None:
+        run["thread"] = thread
+
+    parent = run.get("parent")
+    if isinstance(parent, dict):
+        apply_participant_metadata(
+            parent,
+            transcript_path=run.get("transcript_path"),
+            turn_id=run.get("turn_id"),
+            usage=parent.get("usage_delta"),
+        )
+    workers = run.get("workers")
+    if not isinstance(workers, dict):
+        return
+    for worker in workers.values():
+        if not isinstance(worker, dict):
+            continue
+        apply_participant_metadata(
+            worker,
+            transcript_path=worker.get("transcript_path"),
+            turn_id=worker.get("turn_id") or run.get("turn_id"),
+            usage=worker.get("usage"),
+        )
+
+
 def quota_delta(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_duration = {
         item.get("window_duration_mins"): item
@@ -1163,6 +1386,14 @@ def window_label(minutes: Any) -> str:
     return "quota"
 
 
+def fmt_percent(value: Any) -> str | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:g}"
+    if value is None:
+        return None
+    return str(value)
+
+
 def aggregate_usage_value(
     usages: list[dict[str, Any] | None], key: str
 ) -> int | None:
@@ -1187,6 +1418,27 @@ def compact_text(value: Any, limit: int = 52) -> str | None:
     if len(text) <= limit:
         return text
     return text[: max(1, limit - 1)] + "…"
+
+
+def participant_runtime_label(
+    participant: dict[str, Any], usage: dict[str, Any] | None
+) -> str:
+    """Format the observed model and reasoning effort for a participant."""
+    model = text_value(participant.get("model"))
+    effort = text_value(participant.get("reasoning_effort"))
+    identities = usage_group_identities(usage)
+    if not model:
+        models = {item_model for item_model, _ in identities if item_model}
+        if len(models) == 1:
+            model = next(iter(models))
+    if not effort:
+        efforts = {item_effort for _, item_effort in identities if item_effort}
+        if len(efforts) == 1:
+            effort = next(iter(efforts))
+
+    model = compact_text(model, 32) or "unknown"
+    effort = compact_text(effort, 16) or "effort n/a"
+    return f"{model} ({effort})"
 
 
 def fmt_local_timestamp(value: Any, *, milliseconds: bool = False) -> str | None:
@@ -1230,6 +1482,7 @@ def run_context(run: dict[str, Any]) -> tuple[str | None, str | None, str | None
 
 
 def render_summary(run: dict[str, Any]) -> str:
+    enrich_run_metadata(run)
     workers = list((run.get("workers") or {}).values())
     parent = run.get("parent") or {}
     parent_usage = parent.get("usage_delta") if isinstance(parent, dict) else None
@@ -1239,7 +1492,7 @@ def render_summary(run: dict[str, Any]) -> str:
     )
 
     p_count = f"1 parent + {len(workers)} worker{'s' if len(workers) != 1 else ''}"
-    p_model = parent.get("model") or "unknown"
+    p_runtime = participant_runtime_label(parent, parent_usage)
     p_tokens = f"{fmt_tokens(parent_usage.get('total_tokens') if isinstance(parent_usage, dict) else None)} tokens"
 
     total_tokens = aggregate_usage_value(participant_usages, "total_tokens")
@@ -1250,6 +1503,22 @@ def render_summary(run: dict[str, Any]) -> str:
     def pad_line(content: str, width: int = 68) -> str:
         pad = max(0, width - len(content))
         return f"  │  {content}{' ' * pad} │"
+
+    def append_wrapped_line(content: str, continuation: str = "                 ") -> None:
+        remaining = content
+        first = True
+        while remaining:
+            prefix = "" if first else continuation
+            available = max(1, 68 - len(prefix))
+            if len(remaining) <= available:
+                lines.append(pad_line(prefix + remaining))
+                return
+            split_at = remaining.rfind(" ", 0, available + 1)
+            if split_at <= 0:
+                split_at = available
+            lines.append(pad_line(prefix + remaining[:split_at].rstrip()))
+            remaining = remaining[split_at:].lstrip()
+            first = False
 
     lines = ["", "📊 FlowPilot Telemetry Summary", ""]
     lines.append("  ╭─ Run Overview ────────────────────────────────────────────────────╮")
@@ -1275,15 +1544,20 @@ def render_summary(run: dict[str, Any]) -> str:
             lines.append(pad_line(f"• Duration:       {duration}"))
 
     lines.append(pad_line(f"• Participants:   {p_count}"))
-    lines.append(pad_line(f"• Parent:         {p_model:<20} {p_tokens}"))
+    lines.append(pad_line(f"• Parent:         {p_runtime} · {p_tokens}"))
     for worker in workers:
         usage = worker.get("usage") or {}
         state = worker.get("status") or "observed"
         w_type = worker.get("agent_type") or "worker"
-        w_model = worker.get("model") or "unknown"
+        w_runtime = participant_runtime_label(worker, usage)
         w_tokens = f"{fmt_tokens(usage.get('total_tokens'))} tokens ({state})"
         label = f"• Worker [{w_type}]:"
-        lines.append(pad_line(f"{label:<18} {w_model:<20} {w_tokens}"))
+        worker_line = f"{label} {w_runtime} · {w_tokens}"
+        if len(worker_line) <= 68:
+            lines.append(pad_line(worker_line))
+        else:
+            lines.append(pad_line(f"{label} {w_runtime}"))
+            lines.append(pad_line(f"                 ↳ {w_tokens}"))
     lines.append(pad_line(f"• Attributed:     {attr_tokens}{attr_credits}"))
 
     windows = run.get("quota_change_during_run") or []
@@ -1304,16 +1578,39 @@ def render_summary(run: dict[str, Any]) -> str:
             delta = window.get("delta_percentage_points")
             label = window_label(window.get("window_duration_mins"))
             if old is not None and new is not None:
-                delta_text = "n/a" if delta is None else f"{delta:+g} pp"
-                pieces.append(f"{label} {old}% → {new}% ({delta_text})")
+                old_text = fmt_percent(old) or "n/a"
+                new_text = fmt_percent(new) or "n/a"
+                if delta is None:
+                    delta_text = "n/a"
+                elif delta == 0:
+                    delta_text = "no change"
+                else:
+                    delta_text = f"{delta:+g} pp"
+                remaining = (
+                    f"; {fmt_percent(max(0, 100 - new))}% remaining"
+                    if isinstance(new, (int, float)) and not isinstance(new, bool)
+                    else ""
+                )
+                pieces.append(
+                    f"{label} used {old_text}% → {new_text}% ({delta_text}{remaining})"
+                )
+            elif new is not None:
+                new_text = fmt_percent(new) or "n/a"
+                remaining = (
+                    f"; {fmt_percent(max(0, 100 - new))}% remaining"
+                    if isinstance(new, (int, float)) and not isinstance(new, bool)
+                    else ""
+                )
+                suffix = f" ({remaining.lstrip('; ')})" if remaining else ""
+                pieces.append(f"{label} used {new_text}%{suffix}")
             reset = fmt_local_timestamp(window.get("resets_at"))
             if reset:
                 reset_pieces.append(f"{label} {reset}")
         if pieces:
             lines.append("  ├─ Quota & Windows ─────────────────────────────────────────────────┤")
-            lines.append(pad_line(f"• Account Quota:  {' | '.join(pieces)}"))
+            append_wrapped_line(f"• Account Quota:  {' | '.join(pieces)}")
             if reset_pieces:
-                lines.append(pad_line(f"• Resets:         {' | '.join(reset_pieces)}"))
+                append_wrapped_line(f"• Resets:         {' | '.join(reset_pieces)}")
     lines.append("  ╰───────────────────────────────────────────────────────────────────╯")
     lines.append("  ℹ  Note: Times use the local timezone; quota delta is account-wide; attributed usage is thread-based.")
     lines.append("  💡 Tip: Run `codex-flow usage last` to review or `codex-flow doctor` to verify hooks.\n")
@@ -1425,11 +1722,19 @@ def collect_hook(event: dict[str, Any]) -> None:
                     if server.available
                     else None
                 )
-                run["thread"] = (
+                run["thread"] = merge_thread_metadata(
+                    session_index_metadata(event.get("session_id")),
                     server.thread_metadata(event.get("session_id"))
                     if server.available
-                    else None
+                    else None,
                 )
+            apply_participant_metadata(
+                run.setdefault("parent", {}),
+                event=event,
+                transcript_path=run.get("transcript_path"),
+                turn_id=run.get("turn_id"),
+                usage=run["parent"].get("usage_before"),
+            )
             atomic_json(path, run)
         return
 
@@ -1478,6 +1783,13 @@ def collect_hook(event: dict[str, Any]) -> None:
                 merged_usage = merge_usage(transcript_usage, service_usage)
                 if merged_usage is not None or worker.get("usage") is None:
                     worker["usage"] = merged_usage
+            apply_participant_metadata(
+                worker,
+                event=event,
+                transcript_path=worker.get("transcript_path"),
+                turn_id=worker.get("turn_id"),
+                usage=worker.get("usage"),
+            )
             atomic_json(path, run)
 
             # A late SubagentStop must still enrich `usage last` when the
@@ -1503,12 +1815,13 @@ def collect_hook(event: dict[str, Any]) -> None:
         if event.get("model") is not None:
             run.setdefault("parent", {})["model"] = event.get("model")
         with AppServer() as server:
-            if not isinstance(run.get("thread"), dict):
-                run["thread"] = (
-                    server.thread_metadata(event.get("session_id"))
-                    if server.available
-                    else None
-                )
+            run["thread"] = merge_thread_metadata(
+                session_index_metadata(event.get("session_id")),
+                run.get("thread"),
+                server.thread_metadata(event.get("session_id"))
+                if server.available
+                else None,
+            )
             quota_after = quota_windows(server.rate_limits()) if server.available else []
             parent_after = (
                 usage_summary(server.thread_usage(event.get("session_id")))
@@ -1530,6 +1843,13 @@ def collect_hook(event: dict[str, Any]) -> None:
             run["parent"]["usage_delta"] = merge_usage(
                 transcript_usage, service_delta
             )
+            apply_participant_metadata(
+                run["parent"],
+                event=event,
+                transcript_path=run.get("transcript_path") or event.get("transcript_path"),
+                turn_id=event.get("turn_id"),
+                usage=run["parent"].get("usage_delta"),
+            )
             for agent_id, worker in run.get("workers", {}).items():
                 if worker.get("usage") is None:
                     transcript_usage = transcript_turn_usage(
@@ -1544,6 +1864,12 @@ def collect_hook(event: dict[str, Any]) -> None:
                     worker["usage"] = merge_usage(
                         transcript_usage, service_usage
                     )
+                apply_participant_metadata(
+                    worker,
+                    transcript_path=worker.get("transcript_path"),
+                    turn_id=worker.get("turn_id") or event.get("turn_id"),
+                    usage=worker.get("usage"),
+                )
                 if worker.get("status") == "running":
                     # Some interrupted subagent paths can miss SubagentStop. Do
                     # not claim completion; retain that it participated.
@@ -1579,6 +1905,7 @@ def show_last(as_json: bool = False) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Unable to read telemetry: {exc}", file=sys.stderr)
         return 1
+    enrich_run_metadata(run)
     if as_json:
         print(json.dumps(run, ensure_ascii=False, indent=2, sort_keys=True))
     else:

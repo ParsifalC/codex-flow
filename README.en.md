@@ -92,28 +92,30 @@ Telemetry is enabled by default and treats **one user turn as one flow run**. Co
 
 It records, when available:
 
-- Parent and participating Worker count, type, model, and observed status
+- Parent and participating Worker count, type, model, observed reasoning effort, and status
 - turn-level input, cached input, output, reasoning output, and total tokens from Parent/Worker transcripts
 - estimated credits and optional cost when the server billing route exposes them
-- account rate-limit `usedPercent` before and after the run, reported as percentage-point movement
+- account rate-limit `usedPercent` (consumed percentage) before and after the run, including remaining percentage and movement
+- Desktop session name, with a local session-index fallback when a new thread is not materialized by app-server yet
 
 Example:
 
 ```text
 FlowPilot summary
   participants  1 parent + 3 workers
-  parent        gpt-5.6-sol   82.4k tokens
-  worker        worker-explorer     gpt-5.6-luna  116.8k tokens  completed
-  worker        worker-implementer  gpt-5.6-luna  401.2k tokens  completed
-  worker        worker-implementer  gpt-5.6-luna   68.4k tokens  completed
+  parent        gpt-5.6-sol (high)   82.4k tokens
+  worker        worker-explorer     gpt-5.6-luna (high)  116.8k tokens  completed
+  worker        worker-implementer  gpt-5.6-luna (xhigh) 401.2k tokens  completed
+  worker        worker-implementer  gpt-5.6-luna (high)   68.4k tokens  completed
   attributed    668.8k tokens  1.840 credits
-  account quota 5h 31%→34% (+3 pp); 7d 18%→19% (+1 pp)
+  account quota (used) 5h 31%→34% (+3 pp; 66% remaining); 7d 18%→19% (+1 pp; 81% remaining)
 ```
 
 Two measurements are deliberately kept separate:
 
 - **Attributed tokens** come from the hook-provided Parent/Worker transcripts and are calculated from cumulative counters for the current turn. They remain unavailable only when the current rollout token shape cannot be recognized.
 - **Estimated credits/cost** are added only when app-server exposes a thread billing route. They are never inferred from token counts or account balance.
+- **Account quota** `usedPercent` is the consumed percentage, not the remaining percentage; `remaining` is calculated from that official value. The API exposes an integer percentage snapshot, so a short run can show `70% → 70% (no change)` when it does not cross a whole percentage point; this is not a hard-coded value.
 - **Account quota change during run** is account-wide. Concurrent Codex sessions can also move the same quota window, so that delta is never presented as exclusive consumption by this flow.
 
 `summary = true` controls whether the Stop hook emits a separate summary through Codex's supported `systemMessage` channel; it does not rewrite the assistant's already-generated final prose. If the active UI does not surface that system message, use `usage last` below. `summary = false` suppresses the message without disabling collection.

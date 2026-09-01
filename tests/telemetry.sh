@@ -25,7 +25,7 @@ for line in sys.stdin:
         result={"rateLimits":{"primary":{"usedPercent":used,"windowDurationMins":300,"resetsAt":1},"secondary":{"usedPercent":18 if n==1 else 19,"windowDurationMins":10080,"resetsAt":2}}}
     elif method=="thread/read":
         tid=(msg.get("params") or {}).get("threadId")
-        result={"thread":{"id":tid,"name":"Telemetry demo","preview":"do work","cwd":"/tmp/work","gitInfo":{"branch":"main"}}}
+        result={} if tid=="metadata-session" else {"thread":{"id":tid,"name":"Telemetry demo","preview":"do work","cwd":"/tmp/work","gitInfo":{"branch":"main"}}}
     elif method=="account/usage/read":
         tid=(msg.get("params") or {}).get("threadId")
         if tid=="parent-1":
@@ -61,8 +61,8 @@ printf '%s\n' "$summary"
 [[ "$summary" == *"worker-implementer"* ]]
 [[ "$summary" == *"2.3k tokens"* ]]
 [[ "$summary" == *"3.000 credits"* ]]
-[[ "$summary" == *"5h 31% → 34% (+3 pp)"* ]]
-[[ "$summary" == *"7d 18% → 19% (+1 pp)"* ]]
+[[ "$summary" == *"5h used 31% → 34% (+3 pp; 66% remaining)"* ]]
+[[ "$summary" == *"7d used 18% → 19% (+1 pp; 81% remaining)"* ]]
 
 last="$(python3 "$ROOT_DIR/scripts/telemetry.py" last)"
 [[ "$last" == *"2.3k tokens"* ]]
@@ -70,6 +70,24 @@ json_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" last --json)"
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["workers"]["worker-1"]["status"] == "completed"; assert d["parent"]["usage_delta"]["total_tokens"] == 1500; assert d["thread"]["name"] == "Telemetry demo"; assert d["thread"]["gitInfo"]["branch"] == "main"' <<<"$json_out"
 
 printf 'telemetry test passed\n'
+
+# A newly-created Desktop thread may not be materialized for thread/read yet.
+# The local session index supplies its title, while turn_context supplies the
+# actual model and reasoning effort for the current turn.
+cat > "$CODEX_HOME/session_index.jsonl" <<'EOF'
+{"id":"metadata-session","thread_name":"Indexed task title"}
+EOF
+cat > "$TMP/effort.jsonl" <<'EOF'
+{"type":"turn_context","payload":{"turn_id":"metadata-turn","model":"gpt-5.6-luna","effort":"max"}}
+EOF
+metadata_json="$(hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"metadata-session\",\"turn_id\":\"metadata-turn\",\"transcript_path\":\"$TMP/effort.jsonl\",\"cwd\":\"/tmp/work\"}")"
+metadata_json="$(hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"metadata-session\",\"turn_id\":\"metadata-turn\",\"transcript_path\":\"$TMP/effort.jsonl\",\"cwd\":\"/tmp/work\"}")"
+metadata_summary="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["systemMessage"], end="")' <<<"$metadata_json")"
+[[ "$metadata_summary" == *"Session:        Indexed task title"* ]]
+[[ "$metadata_summary" == *"gpt-5.6-luna (max)"* ]]
+metadata_last="$(python3 "$ROOT_DIR/scripts/telemetry.py" last --json)"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["thread"]["name"] == "Indexed task title"; assert d["parent"]["model"] == "gpt-5.6-luna"; assert d["parent"]["reasoning_effort"] == "max"' <<<"$metadata_last"
+printf 'telemetry title/effort fallback test passed\n'
 
 # Subagent hooks carry the child turn id, while the final Stop hook carries the
 # parent turn id. Correlate through the parent transcript and fall back to the
