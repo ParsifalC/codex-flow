@@ -28,6 +28,17 @@ read_policy_value() {
   ' "$file"
 }
 
+if [[ $# -eq 0 ]]; then
+  if [[ -t 0 && -t 1 && "${TERM:-}" != "dumb" ]]; then
+    menu_script="$STATE_DIR/menu.py"
+    [[ -f "$menu_script" ]] || menu_script="$(source_dir 2>/dev/null || true)/scripts/menu.py"
+    if [[ -f "$menu_script" ]]; then
+      exec python3 "$menu_script"
+    fi
+  fi
+  set -- help
+fi
+
 cmd="${1:-help}"
 case "$cmd" in
   status)
@@ -106,11 +117,10 @@ case "$cmd" in
     ;;
   usage)
     shift
-    [[ -f "$STATE_DIR/telemetry.py" ]] || fail "telemetry collector not installed; reinstall codex-flow"
-    case "${1:-last}" in
-      last) shift || true; exec python3 "$STATE_DIR/telemetry.py" last "$@" ;;
-      *) fail "usage supports: last [--json]" ;;
-    esac
+    telemetry_script="$STATE_DIR/telemetry.py"
+    [[ -f "$telemetry_script" ]] || telemetry_script="$(source_dir 2>/dev/null || true)/scripts/telemetry.py"
+    [[ -f "$telemetry_script" ]] || fail "telemetry collector not installed; reinstall codex-flow"
+    exec python3 "$telemetry_script" "$@"
     ;;
   benchmark-local)
     shift; exec python3 "$(source_dir)/scripts/benchmark-local.py" "$@" ;;
@@ -173,25 +183,32 @@ case "$cmd" in
 
 ${C_BOLD}Usage:${C_RESET} codex-flow <command> [options]
 
+  ${C_BOLD}Interactive Console${C_RESET}
+    ${C_CYAN}codex-flow${C_RESET}              Launch the interactive management console (no args in TTY)
+
   ${C_BOLD}Core Commands${C_RESET}
-    ${C_CYAN}status${C_RESET}              Show installed version and effective FlowPilot policy
-    ${C_CYAN}update${C_RESET}              Pull checkout, preserve policy, refresh recommendations
-    ${C_CYAN}doctor${C_RESET}              Verify installation, routing, and telemetry wiring
-    ${C_CYAN}usage last${C_RESET}          Show the last task telemetry summary (--json for raw)
+    ${C_CYAN}status${C_RESET}                  Show installed version and effective FlowPilot policy
+    ${C_CYAN}update${C_RESET}                  Pull checkout, preserve policy, refresh recommendations
+    ${C_CYAN}doctor${C_RESET}                  Verify installation, routing, and telemetry wiring
+    ${C_CYAN}usage last [--json]${C_RESET}     Show the last task telemetry summary
+    ${C_CYAN}usage list [options]${C_RESET}    List task history (-n N, --project P, --today, --json)
+    ${C_CYAN}usage show <#|id> [opt]${C_RESET} Show specific task telemetry summary
+    ${C_CYAN}usage stats [options]${C_RESET}   Show aggregated telemetry stats (--project P, --days N)
 
   ${C_BOLD}Benchmark Commands${C_RESET}
-    ${C_CYAN}benchmark-local${C_RESET}     Run built-in benchmark via local Codex session
-    ${C_CYAN}benchmark-corpus${C_RESET}    Materialize corpus without calling any model
-    ${C_CYAN}benchmark${C_RESET}           Run a reproducible Codex benchmark manifest
-    ${C_CYAN}benchmark-analyze${C_RESET}   Analyze benchmark JSONL with quality-first routing
+    ${C_CYAN}benchmark-local${C_RESET}         Run built-in benchmark via local Codex session
+    ${C_CYAN}benchmark-corpus${C_RESET}        Materialize corpus without calling any model
+    ${C_CYAN}benchmark${C_RESET}               Run a reproducible Codex benchmark manifest
+    ${C_CYAN}benchmark-analyze${C_RESET}       Analyze benchmark JSONL with quality-first routing
 
   ${C_BOLD}Maintenance${C_RESET}
-    ${C_CYAN}uninstall${C_RESET}           Remove codex-flow-managed files and hooks
+    ${C_CYAN}uninstall${C_RESET}               Remove codex-flow-managed files and hooks
 
   ${C_DIM}💡 Quick Start:${C_RESET}
-    Run ${C_CYAN}codex-flow benchmark-local quick${C_RESET} for your first validation run.
+    Run ${C_CYAN}codex-flow${C_RESET} to enter the interactive console, or ${C_CYAN}codex-flow benchmark-local quick${C_RESET} for validation.
 
 EOF
     ;;
   *) fail "unknown command: $cmd" ;;
 esac
+

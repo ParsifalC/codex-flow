@@ -27,6 +27,20 @@ function Get-PolicyValue([string]$Section, [string]$Key) {
     return ''
 }
 
+if ($args.Count -eq 0 -and [System.Environment]::UserInteractive) {
+    $menuScript = Join-Path $StateDir 'menu.py'
+    if (-not (Test-Path $menuScript)) {
+        if (Test-Path $SourceFile) {
+            $srcDir = (Read-Utf8NoBom $SourceFile).Trim()
+            $menuScript = Join-Path $srcDir 'scripts/menu.py'
+        }
+    }
+    if (Test-Path $menuScript) {
+        & python3 $menuScript
+        exit $LASTEXITCODE
+    }
+}
+
 $cmd = if ($args.Count -gt 0) { $args[0] } else { 'help' }
 $rest = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
 switch ($cmd) {
@@ -79,11 +93,12 @@ switch ($cmd) {
     }
     'usage' {
         $telemetry = Join-Path $StateDir 'telemetry.py'
+        if (-not (Test-Path $telemetry)) {
+            $src = Get-SourceDir
+            $telemetry = Join-Path $src 'scripts/telemetry.py'
+        }
         if (-not (Test-Path $telemetry)) { throw 'telemetry collector not installed; reinstall codex-flow' }
-        $usageMode = if ($rest.Count -gt 0) { $rest[0] } else { 'last' }
-        if ($usageMode -ne 'last') { throw 'usage supports: last [--json]' }
-        $usageRest = if ($rest.Count -gt 1) { @($rest[1..($rest.Count - 1)]) } else { @() }
-        & python3 $telemetry last @usageRest
+        & python3 $telemetry @rest
         exit $LASTEXITCODE
     }
     'benchmark-local' { & python3 (Join-Path (Get-SourceDir) 'scripts/benchmark-local.py') @rest; exit $LASTEXITCODE }
@@ -141,24 +156,31 @@ switch ($cmd) {
 
 Usage: codex-flow <command> [options]
 
+  Interactive Console
+    codex-flow                  Launch interactive management console (no args)
+
   Core Commands
-    status              Show installed version and effective FlowPilot policy
-    update              Pull checkout, preserve policy, refresh recommendations
-    doctor              Verify installation, routing, and telemetry wiring
-    usage last          Show the last task telemetry summary (--json for raw)
+    status                      Show installed version and effective FlowPilot policy
+    update                      Pull checkout, preserve policy, refresh recommendations
+    doctor                      Verify installation, routing, and telemetry wiring
+    usage last [--json]         Show last task telemetry summary
+    usage list [options]        List task history (-n N, --project P, --today, --json)
+    usage show <#|id> [opt]     Show specific task telemetry summary
+    usage stats [options]       Show aggregated telemetry stats (--project P, --days N)
 
   Benchmark Commands
-    benchmark-local     Run built-in benchmark via local Codex session
-    benchmark-corpus    Materialize corpus without calling any model
-    benchmark           Run a reproducible Codex benchmark manifest
-    benchmark-analyze   Analyze benchmark JSONL with quality-first routing
+    benchmark-local             Run built-in benchmark via local Codex session
+    benchmark-corpus            Materialize corpus without calling any model
+    benchmark                   Run a reproducible Codex benchmark manifest
+    benchmark-analyze           Analyze benchmark JSONL with quality-first routing
 
   Maintenance
-    uninstall           Remove codex-flow-managed files and hooks
+    uninstall                   Remove codex-flow-managed files and hooks
 
   Tip:
-    Run `codex-flow benchmark-local quick` for your first validation run.
+    Run `codex-flow` to enter interactive console, or `codex-flow benchmark-local quick` for validation.
 
 '@
     }
 }
+

@@ -141,16 +141,29 @@ CODEX_FLOW_TELEMETRY_ENABLED=false bash install.sh
 
 On Windows, set the same environment variable before running `install.ps1`.
 
-## Daily management
+## Daily Management & Interactive Console
+
+Run `codex-flow` without arguments in any interactive terminal to open the Moyu-style management console, allowing you to browse recent runs, list task history, view project aggregations, run diagnostics, and trigger benchmarks.
 
 ```bash
+# Interactive Management Console
+codex-flow
+
+# Core Status & Diagnostics
 codex-flow status
 codex-flow doctor
-codex-flow usage last
-codex-flow usage last --json
 codex-flow update
-codex-flow benchmark-local quick
 codex-flow uninstall
+
+# Telemetry & Usage Analytics
+codex-flow usage last                      # Last task summary
+codex-flow usage list                      # Task history table (-n 10, -p <project>, --today)
+codex-flow usage show 1                    # Inspect #1 task details card (or by run ID)
+codex-flow usage stats                     # 30-day project aggregation & worker offload ratio
+codex-flow usage stats --json              # Structured JSON for external analysis
+
+# Benchmark
+codex-flow benchmark-local quick
 ```
 
 `update` fast-forwards the original checkout, preserves explicit model/reasoning pins and the telemetry switch, reruns installation, and resolves only `auto` values against new release recommendations.

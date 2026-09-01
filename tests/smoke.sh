@@ -58,6 +58,8 @@ printf '%s\n' "$disabled_output"
 [[ -f "$CODEX_HOME/codex-flow/source" ]]
 [[ -f "$CODEX_HOME/codex-flow/version" ]]
 [[ -f "$CODEX_HOME/codex-flow/telemetry.py" ]]
+[[ -d "$CODEX_HOME/codex-flow/telemetry_core" ]]
+[[ -f "$CODEX_HOME/codex-flow/menu.py" ]]
 [[ -f "$CODEX_HOME/codex-flow/manage-hooks.py" ]]
 [[ -f "$CODEX_HOME/hooks.json" ]]
 [[ -x "$CODEX_FLOW_BIN_DIR/codex-flow" ]]
@@ -97,6 +99,8 @@ grep -Fxq "$ROOT_DIR" "$CODEX_HOME/codex-flow/source"
 grep -Fxq "$(cat "$ROOT_DIR/VERSION")" "$CODEX_HOME/codex-flow/version"
 
 codex-flow status
+codex-flow usage list >/dev/null || true
+codex-flow usage stats >/dev/null || true
 doctor_output="$(codex-flow doctor 2>&1)"
 printf '%s\n' "$doctor_output"
 [[ "$doctor_output" == *"policy schema v3"* ]]

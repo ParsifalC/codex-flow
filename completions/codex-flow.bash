@@ -7,9 +7,20 @@ _codex_flow_completion() {
     elif [[ "${COMP_CWORD}" -eq 2 && ( "${COMP_WORDS[1]}" == "benchmark-local" || "${COMP_WORDS[1]}" == "benchmark-corpus" ) ]]; then
         COMPREPLY=( $(compgen -W "quick full" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 2 && "${COMP_WORDS[1]}" == "usage" ]]; then
-        COMPREPLY=( $(compgen -W "last" -- "$cur") )
-    elif [[ "${COMP_CWORD}" -eq 3 && "${COMP_WORDS[1]}" == "usage" && "${COMP_WORDS[2]}" == "last" ]]; then
-        COMPREPLY=( $(compgen -W "--json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "last list show stats summary" -- "$cur") )
+    elif [[ "${COMP_WORDS[1]}" == "usage" ]]; then
+        case "${COMP_WORDS[2]}" in
+            last)
+                COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;
+            list)
+                COMPREPLY=( $(compgen -W "--json --today -n --limit -p --project" -- "$cur") ) ;;
+            show)
+                COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;
+            stats|summary)
+                COMPREPLY=( $(compgen -W "--json -d --days -p --project" -- "$cur") ) ;;
+            *)
+                COMPREPLY=() ;;
+        esac
     else
         COMPREPLY=()
     fi

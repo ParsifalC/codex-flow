@@ -413,3 +413,26 @@ hook '{"hook_event_name":"Stop","session_id":"retention","turn_id":"turn","cwd":
 [[ ! -e "$CODEX_HOME/codex-flow/telemetry/runs/old.json" ]]
 [[ -e "$CODEX_HOME/codex-flow/telemetry/runs/recent.json" ]]
 printf 'telemetry 30-day retention test passed\n'
+
+# CLI list, show, and stats verification
+list_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" list)"
+[[ "$list_out" == *"FlowPilot Task Telemetry History"* ]]
+[[ "$list_out" == *"work"* ]]
+
+list_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" list --json)"
+python3 -c 'import json,sys; runs=json.load(sys.stdin); assert len(runs) >= 1, len(runs)' <<<"$list_json"
+
+show_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" show 1)"
+[[ "$show_out" == *"FlowPilot Telemetry Summary"* ]]
+
+show_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" show 1 --json)"
+python3 -c 'import json,sys; r=json.load(sys.stdin); assert "parent" in r' <<<"$show_json"
+
+stats_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats)"
+[[ "$stats_out" == *"FlowPilot Telemetry Aggregation"* ]]
+[[ "$stats_out" == *"Total Tasks:"* ]]
+
+stats_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats --project work --json)"
+python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["project_filter"] == "work" and s["total_runs"] >= 1' <<<"$stats_json"
+printf 'telemetry CLI query and project stats tests passed\n'
+

@@ -158,8 +158,10 @@ printf '%s\n' "$VERSION" > "$STATE_DIR/version"
 cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"
 chmod +x "$BIN_DIR/codex-flow"
 cp "$ROOT_DIR/scripts/telemetry.py" "$STATE_DIR/telemetry.py"
+cp -r "$ROOT_DIR/scripts/telemetry_core" "$STATE_DIR/telemetry_core"
 cp "$ROOT_DIR/scripts/manage-hooks.py" "$STATE_DIR/manage-hooks.py"
-chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py"
+cp "$ROOT_DIR/scripts/menu.py" "$STATE_DIR/menu.py"
+chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py"
 
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
   python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"

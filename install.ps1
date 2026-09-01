@@ -150,7 +150,9 @@ Write-Utf8NoBom (Join-Path $StateDir 'source') $RootDir
 Write-Utf8NoBom (Join-Path $StateDir 'version') $Version
 Write-Utf8NoBom $BinDirState $BinDir
 Copy-Item (Join-Path $RootDir 'scripts/telemetry.py') (Join-Path $StateDir 'telemetry.py') -Force
+Copy-Item (Join-Path $RootDir 'scripts/telemetry_core') (Join-Path $StateDir 'telemetry_core') -Recurse -Force
 Copy-Item (Join-Path $RootDir 'scripts/manage-hooks.py') (Join-Path $StateDir 'manage-hooks.py') -Force
+Copy-Item (Join-Path $RootDir 'scripts/menu.py') (Join-Path $StateDir 'menu.py') -Force
 if ($TelemetryEnabled -eq 'true') {
     & python3 (Join-Path $StateDir 'manage-hooks.py') install --hooks $Hooks --script (Join-Path $StateDir 'telemetry.py')
 } else {

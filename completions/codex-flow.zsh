@@ -6,7 +6,7 @@ _codex_flow() {
         'status:Show installed version and effective FlowPilot policy'
         'update:Pull the checkout and refresh recommendations'
         'doctor:Verify installation, routing, and telemetry'
-        'usage:Show deterministic FlowPilot usage summaries'
+        'usage:Show deterministic FlowPilot usage summaries and history'
         'benchmark-local:Run the built-in benchmark through the local Codex login'
         'benchmark-corpus:Materialize the built-in corpus'
         'benchmark:Run a reproducible benchmark manifest'
@@ -19,9 +19,16 @@ _codex_flow() {
     elif (( CURRENT == 3 )) && [[ "${words[2]}" == benchmark-local || "${words[2]}" == benchmark-corpus ]]; then
         _describe 'profile' '(quick full)'
     elif (( CURRENT == 3 )) && [[ "${words[2]}" == usage ]]; then
-        _describe 'usage command' '(last)'
-    elif (( CURRENT == 4 )) && [[ "${words[2]}" == usage && "${words[3]}" == last ]]; then
-        _describe 'usage option' '(--json)'
+        _describe 'usage command' '(last list show stats summary)'
+    elif (( CURRENT >= 4 )) && [[ "${words[2]}" == usage ]]; then
+        case "${words[3]}" in
+            last|show)
+                _describe 'usage option' '(--json)' ;;
+            list)
+                _describe 'list option' '(--json --today -n --limit -p --project)' ;;
+            stats|summary)
+                _describe 'stats option' '(--json -d --days -p --project)' ;;
+        esac
     fi
 }
 

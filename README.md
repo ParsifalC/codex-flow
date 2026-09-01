@@ -151,16 +151,29 @@ CODEX_FLOW_TELEMETRY_ENABLED=false bash install.sh
 
 Windows PowerShell 可先设置同名环境变量再运行 `install.ps1`。
 
-## 常用管理命令
+## 常用管理命令与交互式终端
+
+终端直接输入 `codex-flow`（TTY 无参数时）即可进入 Moyu 风格的交互式控制台，支持快捷查看最近任务、历史任务列表、项目聚合分析、健康检查及快速基准测试。
 
 ```bash
+# 交互式管理控制台
+codex-flow
+
+# 基础状态与诊断
 codex-flow status
 codex-flow doctor
-codex-flow usage last
-codex-flow usage last --json
 codex-flow update
-codex-flow benchmark-local quick
 codex-flow uninstall
+
+# 任务遥测与历史分析
+codex-flow usage last                      # 最近一次任务统计
+codex-flow usage list                      # 任务历史列表 (-n 10, -p <project>, --today)
+codex-flow usage show 1                    # 查看第 1 条历史任务详情卡片 (或指定任务 ID)
+codex-flow usage stats                     # 过去 30 天项目维度汇总与算力卸载分析 (-p <project>, -d <days>)
+codex-flow usage stats --json              # 结构化输出供二次分析
+
+# 基准测试
+codex-flow benchmark-local quick
 ```
 
 `update` 会 fast-forward 原始 checkout，保留用户明确指定的模型/推理配置以及 telemetry 开关，重新执行安装，并且只对 `auto` 配置重新解析当前版本推荐值。
