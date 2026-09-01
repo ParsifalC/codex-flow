@@ -729,7 +729,8 @@ def render_summary(run: dict[str, Any]) -> str:
             lines.append("  ├─ Quota & Windows ─────────────────────────────────────────────────┤")
             lines.append(pad_line(f"• Account Quota:  {' | '.join(pieces)}"))
     lines.append("  ╰───────────────────────────────────────────────────────────────────╯")
-    lines.append("  ℹ  Note: Quota delta is account-wide; attributed usage is thread-based.\n")
+    lines.append("  ℹ  Note: Quota delta is account-wide; attributed usage is thread-based.")
+    lines.append("  💡 Tip: Run `codex-flow usage last` to review or `codex-flow doctor` to verify hooks.\n")
     return "\n".join(lines)
 
 
@@ -863,7 +864,11 @@ def collect_hook(event: dict[str, Any]) -> None:
 
 def show_last(as_json: bool = False) -> int:
     if not LAST_FILE.exists():
-        print("No FlowPilot telemetry run has completed yet.", file=sys.stderr)
+        print(
+            "No FlowPilot telemetry run has completed yet.\n"
+            "💡 Tip: Run `codex-flow doctor` to verify hooks, or approve pending hooks with `/hooks` in Codex.",
+            file=sys.stderr,
+        )
         return 1
     try:
         run = json.loads(LAST_FILE.read_text(encoding="utf-8"))
