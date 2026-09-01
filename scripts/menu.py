@@ -132,6 +132,92 @@ def handle_show_last() -> None:
         pause_prompt()
 
 
+def select_project_interactive(
+    title: str = "请选择要统计的项目",
+    allow_all: bool = True,
+    all_label: str = "全部项目 (全量统计)",
+    limit: int = 10,
+) -> str | None | False:
+    """Interactively select a project from recent telemetry data, or enter manually.
+
+    Returns:
+        str: Selected project name.
+        None: All projects (全量/清除过滤).
+        False: User cancelled / returned to previous menu.
+    """
+    try:
+        all_stats = telemetry.aggregate_project_stats(days=30)
+    except Exception:
+        all_stats = {}
+
+    projects = all_stats.get("projects") or {}
+    total_count = len(projects)
+    sorted_projs = sorted(
+        projects.items(),
+        key=lambda item: (item[1].get("tokens", 0), item[1].get("runs", 0)),
+        reverse=True,
+    )
+    if limit and len(sorted_projs) > limit:
+        sorted_projs = sorted_projs[:limit]
+
+    if not sorted_projs:
+        print(f"\n{style.DIM}📁 暂无历史项目记录{style.RESET}")
+        try:
+            p_in = input(f"{style.CYAN}请输入项目名称 (直接回车统计全量): {style.RESET}").strip()
+            return p_in if p_in else None
+        except (KeyboardInterrupt, EOFError):
+            return False
+
+    title_suffix = f" (前 {len(sorted_projs)} 个)" if total_count > len(sorted_projs) else ""
+    print(f"\n{style.BOLD}📁 {title}{title_suffix}:{style.RESET}")
+    if allow_all:
+        print(f"  [{style.CYAN}0{style.RESET}] 🌐 {all_label} {style.DIM}(直接回车默认){style.RESET}")
+    for idx, (p_name, p_info) in enumerate(sorted_projs, 1):
+        runs_cnt = p_info.get("runs", 0)
+        tok_cnt = telemetry.fmt_tokens(p_info.get("tokens", 0)) or "0"
+        print(
+            f"  [{style.CYAN}{idx}{style.RESET}] {p_name} "
+            f"{style.DIM}({runs_cnt} 个任务 · {tok_cnt} tokens){style.RESET}"
+        )
+    if total_count > len(sorted_projs):
+        print(f"  [{style.CYAN}m{style.RESET}] ✍️  手动输入其他项目名称 {style.DIM}(共 {total_count} 个项目){style.RESET}")
+    else:
+        print(f"  [{style.CYAN}m{style.RESET}] ✍️  手动输入项目名称")
+    print(f"  [{style.CYAN}q{style.RESET}] 🔙 返回")
+
+    try:
+        prompt_hint = f"0-{len(sorted_projs)}/m/q" if allow_all else f"1-{len(sorted_projs)}/m/q"
+        choice = input(f"\n{style.CYAN}请选择 [{prompt_hint}]: {style.RESET}").strip()
+    except (KeyboardInterrupt, EOFError):
+        return False
+
+    if choice == "":
+        return None if allow_all else False
+    if choice.lower() in ("0", "all") and allow_all:
+        return None
+    if choice.lower() in ("q", "back", "exit"):
+        return False
+    if choice.lower() in ("m", "manual"):
+        try:
+            p_in = input(f"{style.CYAN}请输入项目名称 (直接回车为全量): {style.RESET}").strip()
+            return p_in if p_in else None
+        except (KeyboardInterrupt, EOFError):
+            return False
+    if choice.isdigit():
+        idx = int(choice)
+        if idx == 0 and allow_all:
+            return None
+        if 1 <= idx <= len(sorted_projs):
+            return sorted_projs[idx - 1][0]
+        else:
+            print(f"{style.RED}❌ 序号超出范围 [1-{len(sorted_projs)}]{style.RESET}")
+            pause_prompt()
+            return False
+
+    # If user typed a project name directly at the prompt
+    return choice
+
+
 def handle_show_history() -> None:
     limit = 10
     project: str | None = None
@@ -164,11 +250,13 @@ def handle_show_history() -> None:
             today = not today
             continue
         elif choice == "p":
-            try:
-                p_in = input(f"{style.CYAN}请输入项目名称 (留空清除过滤): {style.RESET}").strip()
-                project = p_in if p_in else None
-            except (KeyboardInterrupt, EOFError):
-                pass
+            selected = select_project_interactive(
+                title="请选择要过滤的项目",
+                allow_all=True,
+                all_label="全部项目 (清除过滤)",
+            )
+            if selected is not False:
+                project = selected
             continue
         elif choice == "s":
             handle_show_stats(project)
@@ -190,11 +278,14 @@ def handle_show_history() -> None:
 def handle_show_stats(default_project: str | None = None) -> None:
     target_project = default_project
     if target_project is None:
-        try:
-            p_in = input(f"{style.CYAN}请输入要统计的项目名称 (直接回车统计全量): {style.RESET}").strip()
-            target_project = p_in if p_in else None
-        except (KeyboardInterrupt, EOFError):
+        selected = select_project_interactive(
+            title="请选择要统计的项目",
+            allow_all=True,
+            all_label="全部项目 (全量统计)",
+        )
+        if selected is False:
             return
+        target_project = selected
 
     stats = telemetry.aggregate_project_stats(project=target_project, days=30)
     print(telemetry.render_project_stats(stats))
