@@ -22,6 +22,9 @@ for line in sys.stdin:
     elif method=="account/rateLimits/read":
         used=31 if n==1 else 34
         result={"rateLimits":{"primary":{"usedPercent":used,"windowDurationMins":300,"resetsAt":1},"secondary":{"usedPercent":18 if n==1 else 19,"windowDurationMins":10080,"resetsAt":2}}}
+    elif method=="thread/read":
+        tid=(msg.get("params") or {}).get("threadId")
+        result={"thread":{"id":tid,"name":"Telemetry demo","preview":"do work","cwd":"/tmp/work","gitInfo":{"branch":"main"}}}
     elif method=="account/usage/read":
         tid=(msg.get("params") or {}).get("threadId")
         if tid=="parent-1":
@@ -47,6 +50,12 @@ summary="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["systemMessag
 python3 -c 'import json,sys; assert isinstance(json.load(sys.stdin)["systemMessage"], str)' <<<"$summary_json"
 printf '%s\n' "$summary"
 [[ "$summary" == *"FlowPilot Telemetry Summary"* ]]
+[[ "$summary" == *"Session:        Telemetry demo"* ]]
+[[ "$summary" == *"Project:        work · main"* ]]
+[[ "$summary" == *"Started:"* ]]
+[[ "$summary" == *"Finished:"* ]]
+[[ "$summary" == *"Duration:"* ]]
+[[ "$summary" == *"Resets:"* ]]
 [[ "$summary" == *"1 parent + 1 worker"* ]]
 [[ "$summary" == *"worker-implementer"* ]]
 [[ "$summary" == *"2.3k tokens"* ]]
@@ -57,7 +66,7 @@ printf '%s\n' "$summary"
 last="$(python3 "$ROOT_DIR/scripts/telemetry.py" last)"
 [[ "$last" == *"2.3k tokens"* ]]
 json_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" last --json)"
-python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["workers"]["worker-1"]["status"] == "completed"; assert d["parent"]["usage_delta"]["total_tokens"] == 1500' <<<"$json_out"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["workers"]["worker-1"]["status"] == "completed"; assert d["parent"]["usage_delta"]["total_tokens"] == 1500; assert d["thread"]["name"] == "Telemetry demo"; assert d["thread"]["gitInfo"]["branch"] == "main"' <<<"$json_out"
 
 printf 'telemetry test passed\n'
 

@@ -328,6 +328,18 @@ class AppServer:
         usage = response.get("threadUsage")
         return usage if isinstance(usage, dict) else None
 
+    def thread_metadata(self, thread_id: str | None) -> dict[str, Any] | None:
+        """Read deterministic user-facing thread metadata without loading turns."""
+        if not thread_id:
+            return None
+        response = self.request(
+            "thread/read", {"threadId": thread_id, "includeTurns": False}
+        )
+        if not response:
+            return None
+        thread = response.get("thread")
+        return thread if isinstance(thread, dict) else None
+
 
 def quota_windows(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not snapshot:
@@ -667,6 +679,57 @@ def aggregate_usage_value(
     return sum(values) if values else None
 
 
+def compact_text(value: Any, limit: int = 52) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)] + "…"
+
+
+def fmt_local_timestamp(value: Any, *, milliseconds: bool = False) -> str | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    timestamp = float(value) / 1000 if milliseconds else float(value)
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def fmt_duration_ms(value: Any) -> str | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    total_seconds = max(0, int(round(float(value) / 1000)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def run_context(run: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    thread = run.get("thread") if isinstance(run.get("thread"), dict) else {}
+    session = compact_text(
+        thread.get("name") or thread.get("preview") or run.get("session_id")
+    )
+    cwd = thread.get("cwd") or run.get("cwd")
+    project = None
+    if cwd:
+        try:
+            project = Path(str(cwd)).name or str(cwd)
+        except (OSError, ValueError):
+            project = str(cwd)
+    git_info = thread.get("gitInfo")
+    branch = git_info.get("branch") if isinstance(git_info, dict) else None
+    return session, compact_text(project), compact_text(branch)
+
+
 def render_summary(run: dict[str, Any]) -> str:
     workers = list((run.get("workers") or {}).values())
     parent = run.get("parent") or {}
@@ -691,6 +754,27 @@ def render_summary(run: dict[str, Any]) -> str:
 
     lines = ["", "📊 FlowPilot Telemetry Summary", ""]
     lines.append("  ╭─ Run Overview ────────────────────────────────────────────────────╮")
+
+    session, project, branch = run_context(run)
+    if session:
+        lines.append(pad_line(f"• Session:        {session}"))
+    if project:
+        project_text = f"{project} · {branch}" if branch else project
+        lines.append(pad_line(f"• Project:        {project_text}"))
+
+    started = fmt_local_timestamp(run.get("started_at_ms"), milliseconds=True)
+    finished = fmt_local_timestamp(run.get("finished_at_ms"), milliseconds=True)
+    if started:
+        lines.append(pad_line(f"• Started:        {started}"))
+    if finished:
+        lines.append(pad_line(f"• Finished:       {finished}"))
+    started_ms = run.get("started_at_ms")
+    finished_ms = run.get("finished_at_ms")
+    if isinstance(started_ms, (int, float)) and isinstance(finished_ms, (int, float)):
+        duration = fmt_duration_ms(finished_ms - started_ms)
+        if duration:
+            lines.append(pad_line(f"• Duration:       {duration}"))
+
     lines.append(pad_line(f"• Participants:   {p_count}"))
     lines.append(pad_line(f"• Parent:         {p_model:<20} {p_tokens}"))
     for worker in workers:
@@ -706,6 +790,7 @@ def render_summary(run: dict[str, Any]) -> str:
     windows = run.get("quota_change_during_run") or []
     if windows:
         pieces = []
+        reset_pieces = []
         for window in windows:
             before_match = next(
                 (
@@ -718,21 +803,22 @@ def render_summary(run: dict[str, Any]) -> str:
             old = before_match.get("used_percent") if before_match else None
             new = window.get("used_percent")
             delta = window.get("delta_percentage_points")
-            if old is None or new is None:
-                continue
-            delta_text = "n/a" if delta is None else f"{delta:+g} pp"
-            pieces.append(
-                f"{window_label(window.get('window_duration_mins'))} "
-                f"{old}% → {new}% ({delta_text})"
-            )
+            label = window_label(window.get("window_duration_mins"))
+            if old is not None and new is not None:
+                delta_text = "n/a" if delta is None else f"{delta:+g} pp"
+                pieces.append(f"{label} {old}% → {new}% ({delta_text})")
+            reset = fmt_local_timestamp(window.get("resets_at"))
+            if reset:
+                reset_pieces.append(f"{label} {reset}")
         if pieces:
             lines.append("  ├─ Quota & Windows ─────────────────────────────────────────────────┤")
             lines.append(pad_line(f"• Account Quota:  {' | '.join(pieces)}"))
+            if reset_pieces:
+                lines.append(pad_line(f"• Resets:         {' | '.join(reset_pieces)}"))
     lines.append("  ╰───────────────────────────────────────────────────────────────────╯")
-    lines.append("  ℹ  Note: Quota delta is account-wide; attributed usage is thread-based.")
+    lines.append("  ℹ  Note: Times use the local timezone; quota delta is account-wide; attributed usage is thread-based.")
     lines.append("  💡 Tip: Run `codex-flow usage last` to review or `codex-flow doctor` to verify hooks.\n")
     return "\n".join(lines)
-
 
 def write_stop_output(text: str) -> None:
     # Codex command hooks consume JSON on stdout.  Keep a deliberately named
@@ -777,6 +863,11 @@ def collect_hook(event: dict[str, Any]) -> None:
                     if server.available
                     else None
                 )
+                run["thread"] = (
+                    server.thread_metadata(event.get("session_id"))
+                    if server.available
+                    else None
+                )
             atomic_json(path, run)
             return
 
@@ -818,6 +909,12 @@ def collect_hook(event: dict[str, Any]) -> None:
         run["finished_at_ms"] = now_ms()
         run.setdefault("parent", {})["model"] = event.get("model")
         with AppServer() as server:
+            if not isinstance(run.get("thread"), dict):
+                run["thread"] = (
+                    server.thread_metadata(event.get("session_id"))
+                    if server.available
+                    else None
+                )
             quota_after = quota_windows(server.rate_limits()) if server.available else []
             parent_after = (
                 usage_summary(server.thread_usage(event.get("session_id")))
