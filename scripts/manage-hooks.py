@@ -88,7 +88,7 @@ def install(path: Path, script: Path) -> None:
                     {
                         "type": "command",
                         "command": command,
-                        "timeout": 8,
+                        "timeout": 15,
                         "statusMessage": "FlowPilot telemetry",
                     }
                 ]

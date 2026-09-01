@@ -88,12 +88,12 @@ Shell selection follows `CODEX_FLOW_SHELL` when set, otherwise the basename of `
 
 ## Deterministic task summary
 
-Telemetry is enabled by default and treats **one user turn as one flow run**. Codex lifecycle hooks record participation; the locally authenticated `codex app-server` supplies thread usage and rate-limit snapshots; formatting is pure Python and does not trigger another LLM inference.
+Telemetry is enabled by default and treats **one user turn as one flow run**. Codex lifecycle hooks record participation and provide Parent/Worker transcripts; the collector computes each turn from native `token_count` events. The locally authenticated `codex app-server` supplies rate-limit snapshots plus estimated credits/cost when a thread billing route is available. Formatting is pure Python and does not trigger another LLM inference.
 
 It records, when available:
 
 - Parent and participating Worker count, type, model, and observed status
-- thread-level input, cached input, output, and total tokens
+- turn-level input, cached input, output, reasoning output, and total tokens from Parent/Worker transcripts
 - estimated credits and optional cost when the server billing route exposes them
 - account rate-limit `usedPercent` before and after the run, reported as percentage-point movement
 
@@ -112,10 +112,13 @@ FlowPilot summary
 
 Two measurements are deliberately kept separate:
 
-- **Attributed usage** comes from the Parent/Worker threads. If the server cannot expose thread billing for a thread, the field remains unavailable rather than being estimated.
+- **Attributed tokens** come from the hook-provided Parent/Worker transcripts and are calculated from cumulative counters for the current turn. They remain unavailable only when the current rollout token shape cannot be recognized.
+- **Estimated credits/cost** are added only when app-server exposes a thread billing route. They are never inferred from token counts or account balance.
 - **Account quota change during run** is account-wide. Concurrent Codex sessions can also move the same quota window, so that delta is never presented as exclusive consumption by this flow.
 
-Telemetry is fail-open. Missing app-server capabilities or usage fields never fail the task; only those statistics become unavailable.
+`summary = true` controls whether the Stop hook emits a separate summary through Codex's supported `systemMessage` channel; it does not rewrite the assistant's already-generated final prose. If the active UI does not surface that system message, use `usage last` below. `summary = false` suppresses the message without disabling collection.
+
+Telemetry is fail-open. Missing app-server capabilities, transcript token events, or usage fields never fail the task; only those statistics become unavailable.
 
 Re-open the last result or consume its raw JSON with:
 
@@ -264,7 +267,7 @@ The analyzer reports same-effort Sol capability evidence, fixed-flow value versu
 
 ## Measurement boundaries
 
-Benchmarking and normal FlowPilot telemetry use separate measurement paths. Benchmarks keep their reproducible JSONL experiment contract. Interactive telemetry prefers app-server thread usage and rate-limit snapshots. Fields the server does not expose remain unavailable; subscription quota is never inferred from token counts.
+Benchmarking and normal FlowPilot telemetry use separate measurement paths. Benchmarks keep their reproducible JSONL experiment contract. Interactive token attribution reads hook-provided transcripts, while billing and quota data come from app-server. Billing fields the server does not expose remain unavailable; subscription quota is never inferred from token counts.
 
 Full methodology: `docs/benchmark.md`.
 Optional Actions setup: `docs/benchmark-actions.md`.

@@ -27,6 +27,34 @@ TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_TIMEOUT", "3.0"))
 LOCK_TIMEOUT = float(os.environ.get("CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT", "2.0"))
 
 
+def policy_bool(section_name: str, key_name: str, default: bool) -> bool:
+    """Read a simple TOML boolean without adding a Python-version dependency."""
+    path = CODEX_HOME / "codex-flow.toml"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return default
+    section: str | None = None
+    for raw in lines:
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != section_name or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if key != key_name:
+            continue
+        normalized = value.lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return default
+
+
 def now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -72,9 +100,52 @@ def state_lock(key: str):
                 pass
 
 
+def active_transcript_turn_id(path_value: Any) -> str | None:
+    """Return the currently active parent turn from a rollout transcript."""
+    if not isinstance(path_value, str) or not path_value:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+    active: str | None = None
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "event_msg":
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                kind = payload.get("type")
+                event_turn = payload.get("turn_id")
+                if kind == "task_started" and event_turn is not None:
+                    active = str(event_turn)
+                elif kind in {"task_complete", "turn_aborted"}:
+                    completed = str(event_turn) if event_turn is not None else active
+                    if completed == active:
+                        active = None
+    except (OSError, UnicodeError):
+        return None
+    return active
+
+
+def correlated_turn_id(event: dict[str, Any]) -> Any:
+    # Subagent hooks carry the child turn id. Correlate them back to the
+    # active parent turn using the parent transcript supplied by Codex.
+    if event.get("hook_event_name") in {"SubagentStart", "SubagentStop"}:
+        parent_turn = active_transcript_turn_id(event.get("transcript_path"))
+        if parent_turn is not None:
+            return parent_turn
+    return event.get("turn_id")
+
+
 def run_key(event: dict[str, Any]) -> str:
     session = str(event.get("session_id") or "unknown")
-    turn = str(event.get("turn_id") or "unknown")
+    turn = str(correlated_turn_id(event) or "unknown")
     return f"{session}--{turn}".replace("/", "_")
 
 
@@ -92,7 +163,7 @@ def load_run(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "session_id": event.get("session_id"),
-        "turn_id": event.get("turn_id"),
+        "turn_id": correlated_turn_id(event),
         "cwd": event.get("cwd"),
         "parent": {"model": event.get("model")},
         "workers": {},
@@ -337,6 +408,8 @@ def usage_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) -> 
         "cached_input_tokens",
         "net_new_input_tokens",
         "output_tokens",
+        "reasoning_output_tokens",
+        "cache_write_input_tokens",
         "total_tokens",
         "estimated_credits_micros",
     ]
@@ -410,6 +483,129 @@ def usage_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) -> 
         if comparable:
             delta_groups.append(delta_group)
     result["groups"] = delta_groups
+    return result
+
+
+def normalize_transcript_usage(value: Any) -> dict[str, Any] | None:
+    """Normalize a Codex rollout token_count total_token_usage payload."""
+    if not isinstance(value, dict):
+        return None
+    fields = (
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    )
+    result: dict[str, Any] = {}
+    for field in fields:
+        raw = value.get(field)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            result[field] = int(raw)
+    if not result:
+        return None
+    input_tokens = result.get("input_tokens")
+    cached_tokens = result.get("cached_input_tokens")
+    cache_write_tokens = result.get("cache_write_input_tokens", 0)
+    if isinstance(input_tokens, int) and isinstance(cached_tokens, int):
+        result["net_new_input_tokens"] = max(
+            0, input_tokens - cached_tokens - cache_write_tokens
+        )
+    return result
+
+
+def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | None:
+    """Read exact per-turn token usage from the hook-provided rollout path.
+
+    Rollout JSONL is explicitly a convenience rather than a stable hook API,
+    so this parser only recognizes the narrow token_count/task lifecycle shape
+    and fails open for every other shape.
+    """
+    if not isinstance(path_value, str) or not path_value or not turn_id:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+
+    target_turn = str(turn_id)
+    current_turn: str | None = None
+    latest_total: dict[str, Any] | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    target_seen = False
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "event_msg":
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                kind = payload.get("type")
+                event_turn = payload.get("turn_id")
+                if kind == "task_started":
+                    current_turn = str(event_turn) if event_turn is not None else None
+                    if current_turn == target_turn:
+                        target_seen = True
+                        before = dict(latest_total) if latest_total is not None else None
+                    continue
+                if kind == "token_count":
+                    info = payload.get("info")
+                    usage = normalize_transcript_usage(
+                        info.get("total_token_usage") if isinstance(info, dict) else None
+                    )
+                    if usage is not None:
+                        latest_total = usage
+                        if current_turn == target_turn:
+                            after = usage
+                    continue
+                if kind in {"task_complete", "turn_aborted"}:
+                    completed_turn = (
+                        str(event_turn) if event_turn is not None else current_turn
+                    )
+                    if completed_turn == current_turn:
+                        current_turn = None
+    except (OSError, UnicodeError):
+        return None
+
+    if not target_seen or after is None:
+        return None
+    if before is None:
+        result = dict(after)
+        result["groups"] = []
+    else:
+        result = usage_delta(before, after)
+        if result is None:
+            return None
+    result["source"] = "transcript"
+    return result
+
+
+def merge_usage(
+    transcript_usage: dict[str, Any] | None,
+    service_usage: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Prefer exact rollout tokens and add service-only billing fields."""
+    if transcript_usage is None:
+        if service_usage is not None:
+            service_usage = dict(service_usage)
+            service_usage["source"] = "app-server"
+        return service_usage
+    result = dict(transcript_usage)
+    if service_usage is not None:
+        for key in ("estimated_credits_micros", "estimated_usd_micros"):
+            value = service_usage.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                result[key] = int(value)
+        groups = service_usage.get("groups")
+        if isinstance(groups, list):
+            result["groups"] = groups
+        result["source"] = "transcript+app-server"
     return result
 
 
@@ -567,6 +763,7 @@ def collect_hook(event: dict[str, Any]) -> None:
                     "started_at_ms": now_ms(),
                     "cwd": event.get("cwd"),
                     "prompt_seen": True,
+                    "transcript_path": event.get("transcript_path"),
                 }
             )
             run.setdefault("parent", {})["model"] = event.get("model")
@@ -596,7 +793,24 @@ def collect_hook(event: dict[str, Any]) -> None:
             if kind == "SubagentStart":
                 worker.update({"started_at_ms": now_ms(), "status": "running"})
             else:
-                worker.update({"finished_at_ms": now_ms(), "status": "completed"})
+                agent_transcript_path = event.get("agent_transcript_path")
+                worker.update(
+                    {
+                        "finished_at_ms": now_ms(),
+                        "status": "completed",
+                        "transcript_path": agent_transcript_path,
+                    }
+                )
+                transcript_usage = transcript_turn_usage(
+                    agent_transcript_path, event.get("turn_id")
+                )
+                with AppServer() as server:
+                    service_usage = (
+                        usage_summary(server.thread_usage(agent_id))
+                        if server.available
+                        else None
+                    )
+                worker["usage"] = merge_usage(transcript_usage, service_usage)
             atomic_json(path, run)
             return
 
@@ -614,22 +828,37 @@ def collect_hook(event: dict[str, Any]) -> None:
                 run.get("quota_before", []), quota_after
             )
             run["parent"]["usage_after"] = parent_after
-            run["parent"]["usage_delta"] = usage_delta(
+            service_delta = usage_delta(
                 run["parent"].get("usage_before"), parent_after
             )
+            transcript_usage = transcript_turn_usage(
+                run.get("transcript_path") or event.get("transcript_path"),
+                event.get("turn_id"),
+            )
+            run["parent"]["usage_delta"] = merge_usage(
+                transcript_usage, service_delta
+            )
             for agent_id, worker in run.get("workers", {}).items():
-                worker["usage"] = (
-                    usage_summary(server.thread_usage(agent_id))
-                    if server.available
-                    else None
-                )
+                if worker.get("usage") is None:
+                    transcript_usage = transcript_turn_usage(
+                        worker.get("transcript_path"), event.get("turn_id")
+                    )
+                    service_usage = (
+                        usage_summary(server.thread_usage(agent_id))
+                        if server.available
+                        else None
+                    )
+                    worker["usage"] = merge_usage(
+                        transcript_usage, service_usage
+                    )
                 if worker.get("status") == "running":
                     # Some interrupted subagent paths can miss SubagentStop. Do
                     # not claim completion; retain that it participated.
                     worker["status"] = "observed"
         atomic_json(path, run)
         atomic_json(LAST_FILE, run)
-        write_stop_output(render_summary(run))
+        if policy_bool("telemetry", "summary", True):
+            write_stop_output(render_summary(run))
 
 
 def show_last(as_json: bool = False) -> int:

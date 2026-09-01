@@ -29,7 +29,9 @@ for line in sys.stdin:
             credits=1_000_000 if n==1 else 3_000_000
         else:
             tokens=800; credits=1_000_000
-        result={"summary":{},"dailyUsageBuckets":None,"threadUsage":{"threadId":tid,"estimatedUsageCreditsMicros":credits,"estimatedUsageUsdMicros":None,"groups":[{"model":"gpt-test","reasoningEffort":"high","speed":"standard","estimatedUsageCreditsMicros":credits,"netNewInputTokens":tokens//2,"cachedInputTokens":tokens//4,"inputTokens":tokens*3//4,"outputTokens":tokens//4,"totalTokens":tokens}]}}
+        thread_usage={"threadId":tid,"estimatedUsageCreditsMicros":credits,"estimatedUsageUsdMicros":None,"groups":[{"model":"gpt-test","reasoningEffort":"high","speed":"standard","estimatedUsageCreditsMicros":credits,"netNewInputTokens":tokens//2,"cachedInputTokens":tokens//4,"inputTokens":tokens*3//4,"outputTokens":tokens//4,"totalTokens":tokens}]}
+        if os.environ.get("FAKE_THREAD_USAGE") == "none": thread_usage=None
+        result={"summary":{},"dailyUsageBuckets":None,"threadUsage":thread_usage}
     else: result={}
     print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":result}), flush=True)
 PY
@@ -58,6 +60,80 @@ json_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" last --json)"
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["workers"]["worker-1"]["status"] == "completed"; assert d["parent"]["usage_delta"]["total_tokens"] == 1500' <<<"$json_out"
 
 printf 'telemetry test passed\n'
+
+# Subagent hooks carry the child turn id, while the final Stop hook carries the
+# parent turn id. Correlate through the parent transcript and fall back to the
+# exact rollout token_count events when app-server threadUsage is unavailable.
+python3 - "$TMP/parent.jsonl" "$TMP/worker.jsonl" <<'PY'
+import json
+import sys
+
+def event(kind, **payload):
+    return {"type": "event_msg", "payload": {"type": kind, **payload}}
+
+def usage(total, input_tokens, cached, output, reasoning=0):
+    return event(
+        "token_count",
+        info={
+            "total_token_usage": {
+                "input_tokens": input_tokens,
+                "cached_input_tokens": cached,
+                "cache_write_input_tokens": 0,
+                "output_tokens": output,
+                "reasoning_output_tokens": reasoning,
+                "total_tokens": total,
+            }
+        },
+    )
+
+parent = [
+    event("task_started", turn_id="old-turn"),
+    usage(100, 80, 40, 20, 5),
+    event("task_complete", turn_id="old-turn"),
+    event("task_started", turn_id="parent-2"),
+    usage(175, 140, 90, 35, 10),
+]
+worker = [
+    event("task_started", turn_id="child-2"),
+    usage(200, 160, 100, 40, 12),
+    event("task_complete", turn_id="child-2"),
+]
+for path, records in ((sys.argv[1], parent), (sys.argv[2], worker)):
+    with open(path, "w", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(json.dumps(record) + "\n")
+PY
+export FAKE_THREAD_USAGE=none
+hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"parent-2\",\"turn_id\":\"parent-2\",\"transcript_path\":\"$TMP/parent.jsonl\",\"cwd\":\"/tmp/work\",\"model\":\"gpt-parent\"}"
+hook "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"parent-2\",\"turn_id\":\"child-2\",\"transcript_path\":\"$TMP/parent.jsonl\",\"cwd\":\"/tmp/work\",\"model\":\"gpt-worker\",\"agent_id\":\"worker-2\",\"agent_type\":\"worker-implementer\"}"
+hook "{\"hook_event_name\":\"SubagentStop\",\"session_id\":\"parent-2\",\"turn_id\":\"child-2\",\"transcript_path\":\"$TMP/parent.jsonl\",\"agent_transcript_path\":\"$TMP/worker.jsonl\",\"cwd\":\"/tmp/work\",\"model\":\"gpt-worker\",\"agent_id\":\"worker-2\",\"agent_type\":\"worker-implementer\"}"
+fallback_json="$(hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"parent-2\",\"turn_id\":\"parent-2\",\"transcript_path\":\"$TMP/parent.jsonl\",\"cwd\":\"/tmp/work\",\"model\":\"gpt-parent\"}")"
+fallback_summary="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["systemMessage"], end="")' <<<"$fallback_json")"
+[[ "$fallback_summary" == *"1 parent + 1 worker"* ]]
+[[ "$fallback_summary" == *"275 tokens"* ]]
+[[ "$fallback_summary" != *"credits"* ]]
+[[ -f "$CODEX_HOME/codex-flow/telemetry/runs/parent-2--parent-2.json" ]]
+[[ ! -f "$CODEX_HOME/codex-flow/telemetry/runs/parent-2--child-2.json" ]]
+python3 - "$CODEX_HOME/codex-flow/telemetry/runs/parent-2--parent-2.json" <<'PY'
+import json
+import sys
+d=json.load(open(sys.argv[1]))
+assert d["parent"]["usage_delta"]["total_tokens"] == 75, d
+assert d["parent"]["usage_delta"]["reasoning_output_tokens"] == 5, d
+assert d["workers"]["worker-2"]["usage"]["total_tokens"] == 200, d
+assert d["workers"]["worker-2"]["usage"]["source"] == "transcript", d
+PY
+unset FAKE_THREAD_USAGE
+printf 'telemetry transcript fallback/correlation test passed\n'
+
+# The policy summary switch controls UI emission without disabling collection.
+printf '[telemetry]\nsummary = false\n' > "$CODEX_HOME/codex-flow.toml"
+hook '{"hook_event_name":"UserPromptSubmit","session_id":"summary-off","turn_id":"turn","cwd":"/tmp/work","model":"gpt-parent"}'
+summary_off="$(hook '{"hook_event_name":"Stop","session_id":"summary-off","turn_id":"turn","cwd":"/tmp/work","model":"gpt-parent"}')"
+[[ -z "$summary_off" ]]
+[[ -f "$CODEX_HOME/codex-flow/telemetry/runs/summary-off--turn.json" ]]
+rm "$CODEX_HOME/codex-flow.toml"
+printf 'telemetry summary policy test passed\n'
 
 # Missing thread usage must remain unavailable in both participant rows and
 # the aggregate; an explicitly reported zero is still a real zero.

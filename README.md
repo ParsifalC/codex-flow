@@ -98,12 +98,12 @@ Shell 选择优先读取 `CODEX_FLOW_SHELL`，否则使用 `SHELL` 的 basename�
 
 ## 任务完成后的确定性统计
 
-Telemetry 默认开启，以**一个用户 turn 作为一次 flow run**。生命周期由 Codex hooks 记录，usage / quota 由本机已登录的 `codex app-server` 读取；formatter 是纯 Python，因此不会为了生成总结再触发一次 LLM inference。
+Telemetry 默认开启，以**一个用户 turn 作为一次 flow run**。Codex hooks 记录生命周期并提供 Parent / Worker transcript；collector 从其中的原生 `token_count` 事件按 turn 做差。本机已登录的 `codex app-server` 提供 rate-limit snapshot，以及 billing route 可用时的 estimated credits / optional cost。formatter 是纯 Python，因此不会为了生成总结再触发一次 LLM inference。
 
 默认采集：
 
 - Parent 和参与过的 Worker 数量、类型、模型和状态
-- Parent / Worker 可获得的 thread-level input、cached input、output、total tokens
+- Parent / Worker transcript 可获得的 turn-level input、cached input、output、reasoning output、total tokens
 - 服务端可提供时的 estimated credits / optional cost
 - 任务开始与结束时账户 rate-limit window 的 `usedPercent`，以及前后百分点变化
 
@@ -122,10 +122,13 @@ FlowPilot summary
 
 这里有两个刻意区分的语义：
 
-- **attributed usage** 来自 Parent / Worker thread，可归因到本次 flow；服务端不支持 thread billing route 时显示 unavailable，而不是估算。
+- **attributed tokens** 来自 hooks 指向的 Parent / Worker transcript，并按当前 turn 的累计计数差值归因；若当前 Codex rollout 格式无法识别才显示 unavailable。
+- **estimated credits / cost** 只在 app-server 暴露 thread billing route 时附加；不会从 token 数或账户余额反推。
 - **account quota change during run** 是整个账户在这段时间里的变化。如果同时有别的 Codex session 在运行，不能把全部百分点变化都声称成本次 flow 独占消耗。
 
-如果 app-server、某个 usage 字段或 billing route 在当前 Codex 版本/账户上不可用，telemetry 会 fail-open：任务本身继续正常执行，只让对应统计缺失，不伪造数据。
+`summary = true` 控制 Stop hook 是否通过 Codex 支持的 `systemMessage` 输出独立统计提示；它不会改写模型已经生成的最终正文。若当前 UI 未展示该系统提示，可用下面的 `usage last` 重看。`summary = false` 只关闭提示，不停止采集。
+
+如果 app-server、transcript token 事件、某个 usage 字段或 billing route 在当前 Codex 版本/账户上不可用，telemetry 会 fail-open：任务本身继续正常执行，只让对应统计缺失，不伪造数据。
 
 最近一次完整结果可以重新查看或机器读取：
 
@@ -363,7 +366,7 @@ Analyzer 会分别输出 Sol 同强度能力证据、固定 Flow 相对 Sol/Luna
 
 ## 测量边界
 
-Benchmark 和 FlowPilot telemetry 使用不同的数据路径：Benchmark 保持可重复的 JSONL 实验口径；正常交互任务的 telemetry 优先使用 app-server 的 thread usage 和 rate-limit snapshot。任何服务端未暴露的字段都保持 unavailable，不通过 token 数反推套餐 quota。
+Benchmark 和 FlowPilot telemetry 使用不同的数据路径：Benchmark 保持可重复的 JSONL 实验口径；正常交互任务的 token 归因读取 hook-provided transcript，billing / quota 读取 app-server。任何未暴露的 billing 字段都保持 unavailable，不通过 token 数反推套餐 quota。
 
 完整方法说明见 `docs/benchmark.md`。
 GitHub Actions 可选路径说明见 `docs/benchmark-actions.md`。
