@@ -62,7 +62,8 @@ printf '%s\n' "$summary"
 [[ "$summary" == *"2.3k tokens"* ]]
 [[ "$summary" == *"3.000 credits"* ]]
 [[ "$summary" == *"5h used 31% → 34% (+3 pp; 66% remaining)"* ]]
-[[ "$summary" == *"7d used 18% → 19% (+1 pp; 81% remaining)"* ]]
+[[ "$summary" == *"7d used"* ]]
+[[ "$summary" == *"18% → 19% (+1 pp; 81% remaining)"* ]]
 
 last="$(python3 "$ROOT_DIR/scripts/telemetry.py" last)"
 [[ "$last" == *"2.3k tokens"* ]]

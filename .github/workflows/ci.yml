@@ -13,11 +13,13 @@ jobs:
         run: |
           bash -n install.sh
           bash -n bin/codex-flow
+          bash -n bin/codex-flow-mcp
           bash -n completions/codex-flow.bash
           bash -n scripts/doctor
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
           bash -n tests/telemetry.sh
+          bash -n tests/chatgpt-mcp.sh
           bash -n tests/benchmark.sh
           bash -n tests/runner.sh
           bash -n tests/corpus.sh
@@ -29,6 +31,16 @@ jobs:
           python3 -m py_compile scripts/manage-shell.py
           python3 -m py_compile scripts/manage-hooks.py
           python3 -m py_compile scripts/telemetry.py
+          python3 -m py_compile scripts/menu.py
+          python3 -m py_compile scripts/telemetry_core/__init__.py
+          python3 -m py_compile scripts/telemetry_core/app_server.py
+          python3 -m py_compile scripts/telemetry_core/collector.py
+          python3 -m py_compile scripts/telemetry_core/common.py
+          python3 -m py_compile scripts/telemetry_core/query.py
+          python3 -m py_compile scripts/telemetry_core/render.py
+          python3 -m py_compile apps/chatgpt-mcp/__init__.py
+          python3 -m py_compile apps/chatgpt-mcp/adapter.py
+          python3 -m py_compile apps/chatgpt-mcp/server.py
           python3 -m py_compile scripts/render-benchmark-report.py
           python3 -m py_compile scripts/benchmark-local.py
           ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].each { |f| YAML.parse_file(f) }'
@@ -52,6 +64,8 @@ jobs:
         run: bash tests/report.sh
       - name: FlowPilot telemetry test
         run: bash tests/telemetry.sh
+      - name: ChatGPT MCP test
+        run: bash tests/chatgpt-mcp.sh
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
 
