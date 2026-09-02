@@ -69,14 +69,8 @@ public class TelemetryWatcher {
                     queue: DispatchQueue.global(qos: .utility)
                 )
                 
-                source.setEventHandler { [weak self, weak source] in
-                    guard let self = self else { return }
-                    let flags = source?.data ?? []
-                    if flags.contains(.rename) || flags.contains(.delete) {
-                        self.fileSource?.cancel()
-                        self.fileSource = nil
-                    }
-                    self.handleFileOrDirChanged()
+                source.setEventHandler { [weak self] in
+                    self?.handleFileOrDirChanged()
                 }
                 
                 source.setCancelHandler {
