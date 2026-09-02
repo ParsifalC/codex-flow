@@ -45,6 +45,7 @@ public final class FlowPilotUpdateService: ObservableObject {
     @Published public private(set) var snapshot: FlowPilotUpdateSnapshot = .empty
     @Published public private(set) var isChecking = false
     @Published public private(set) var isInstalling = false
+    @Published public private(set) var isAcknowledgingRestart = false
     @Published public private(set) var actionError: String?
     @Published public private(set) var actionMessage: String?
 
@@ -131,10 +132,22 @@ public final class FlowPilotUpdateService: ObservableObject {
         runUpdater(arguments: ["update"], mode: .install)
     }
 
+    // There is no reliable cross-platform way for this helper process to prove
+    // that the Codex desktop/CLI host itself has restarted. Keep the reminder
+    // explicit and let the user clear it after performing the required restart.
+    public func acknowledgeRestart() {
+        guard !isAcknowledgingRestart else { return }
+        actionError = nil
+        actionMessage = nil
+        isAcknowledgingRestart = true
+        runUpdater(arguments: ["update", "--ack-restart", "--quiet"], mode: .acknowledgeRestart)
+    }
+
     private enum RunMode: Sendable {
         case backgroundCheck
         case foregroundCheck
         case install
+        case acknowledgeRestart
     }
 
     private struct ProcessResult: Sendable {
@@ -148,6 +161,7 @@ public final class FlowPilotUpdateService: ObservableObject {
                 actionError = L("codex-flow CLI was not found in the installed bin directory.", "未在安装目录中找到 codex-flow CLI。")
                 isChecking = false
                 isInstalling = false
+                isAcknowledgingRestart = false
             }
             return
         }
@@ -196,6 +210,13 @@ public final class FlowPilotUpdateService: ObservableObject {
                 actionError = result.output.isEmpty ? L("Update failed.", "更新失败。") : result.output
             } else {
                 actionMessage = result.output.isEmpty ? L("Update completed.", "更新完成。") : result.output
+            }
+        case .acknowledgeRestart:
+            isAcknowledgingRestart = false
+            if result.exitCode != 0 {
+                actionError = result.output.isEmpty ? L("Could not clear the restart reminder.", "无法清除重启提醒。") : result.output
+            } else {
+                actionMessage = L("Restart reminder cleared.", "已清除重启提醒。")
             }
         }
     }
