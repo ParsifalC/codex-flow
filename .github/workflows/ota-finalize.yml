@@ -1,0 +1,32 @@
+name: ota-finalize
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths: ['.github/workflows/ota-finalize.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ota-update-system
+          fetch-depth: 0
+      - name: Apply final OTA safety patch
+        run: python3 .github/ota-finalize.py
+      - name: Run focused updater suite
+        run: |
+          python3 -m py_compile scripts/updater.py tests/test_updater.py
+          python3 tests/test_updater.py
+      - name: Commit final implementation
+        run: |
+          rm -f .github/ota-finalize.py .github/workflows/ota-finalize.yml
+          git config user.name 'codex-flow automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(update): restrict fallback and verify failed transactions'
+          git push origin HEAD:feat/ota-update-system
