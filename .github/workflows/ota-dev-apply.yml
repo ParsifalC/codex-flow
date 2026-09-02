@@ -5,6 +5,7 @@ on:
     branches: [feat/ota-update-system]
     paths:
       - '.github/ota-dev/apply.py'
+      - 'apps/macos-overlay/Sources/Services/UpdateService.swift'
 
 permissions:
   contents: write
