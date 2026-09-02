@@ -103,6 +103,8 @@ grep -Fq 'worker_budget' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'reviewer_workers' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'explorer_capability_policy' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'implementer_capability_policy' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
+grep -Fq 'A `wait()` timeout is never a Worker timeout.' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
+grep -Fq 'cancel_if_superseded' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'UserPromptSubmit' "$CODEX_HOME/hooks.json"
 grep -Fq 'SubagentStart' "$CODEX_HOME/hooks.json"
 grep -Fq 'SubagentStop' "$CODEX_HOME/hooks.json"
@@ -119,7 +121,7 @@ codex-flow strategy plan --complexity complex --uncertainty high > "$TMP/install
 python3 - "$TMP/installed-plan.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['schema_version']==7, p
+assert p['schema_version']==8, p
 assert p['quality_intent']=='normal', p
 assert p['strategy']=='efficient' and p['routing']=='delegate', p
 assert p['parent_reasoning']=='high', p
@@ -127,6 +129,9 @@ assert p['explorer_reasoning']=='xhigh' and p['implementer_reasoning']=='xhigh',
 assert p['explorer_capability_policy']=='latest-efficient' and p['implementer_capability_policy']=='latest-efficient', p
 assert p['exploration_workers']==2 and p['implementation_workers']==1, p
 assert p['planned_worker_count']==3, p
+assert p['exploration_stage']['join_policy']=='quorum', p
+assert p['implementation_stage']['join_policy']=='required', p
+assert p['review_stage'] is None, p
 PY
 codex-flow usage list >/dev/null || true
 codex-flow usage stats >/dev/null || true

@@ -41,16 +41,19 @@ max_concurrent_threads = 4
 max_repair_cycles = 2
 EOF
 
+plan() {
+  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown "$@"
+}
+
 python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" show --json > "$TMP/show.json"
 python3 - "$TMP/show.json" <<'PY'
 import json, sys
 obj=json.load(open(sys.argv[1]))
 assert obj == {"strategy":"efficient","routing":"adaptive","valid":True}, obj
 PY
-
 [[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY")" == "strategy=efficient routing=adaptive" ]]
 
-# Built-in strategies are registered modules with explicit WorkerBudget/resource hooks.
+# Registry owns topology/resource/lifecycle preferences. Generic Runtime only normalizes them.
 python3 - "$ROOT" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1] + '/scripts')
@@ -64,38 +67,40 @@ task=type('T', (), {
 })()
 for name in names():
     spec=get(name)
-    assert spec.name == name
-    budget=spec.worker_budget(task)
-    budget.validate()
+    budget=spec.worker_budget(task); budget.validate()
     for role in ('explorer','implementer','reviewer'):
         assert spec.capability(task, role) in {'worker','parent'}, (name, role)
+    for stage in ('exploration','implementation','review'):
+        lifecycle=spec.lifecycle(task, stage)
+        lifecycle.validate()
     assert spec.exploration_bonus(task) >= 0, name
     assert spec.reviewer_bonus(task) >= 0, name
     assert isinstance(spec.notes(task), tuple), name
 PY
-# Guard must match real source text: built-in strategy decisions may not leak back into Runtime.
+
+# Guard against built-in strategy decisions leaking back into generic Runtime.
 ! grep -Eq 'strategy[[:space:]]*(==|!=)[[:space:]]*"(efficient|balanced|quality|speed)"' "$ROOT/scripts/strategy_runtime.py"
 
-# Small low-risk work remains direct but still exposes the selected budget envelope.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --complexity small --risk low > "$TMP/small.json"
+# Direct work has no delegated resources or lifecycle stages.
+plan --complexity small --risk low > "$TMP/small.json"
 python3 - "$TMP/small.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['schema_version']==7, p
-assert p['quality_intent']=='normal', p
+assert p['schema_version']==8, p
 assert p['strategy']=='efficient' and p['routing']=='direct', p
+assert p['quality_intent']=='normal', p
 for prefix in ('explorer','implementer','reviewer'):
     assert p[f'{prefix}_capability_policy'] is None, p
     assert p[f'{prefix}_model'] is None, p
     assert p[f'{prefix}_reasoning'] is None, p
+for stage in ('exploration_stage','implementation_stage','review_stage'):
+    assert p[stage] is None, (stage,p)
 assert p['implementation_workers']==0 and p['reviewer_workers']==0 and p['planned_worker_count']==0, p
-assert p['worker_budget']['max_total_workers']>=1, p
 assert p['max_concurrent_threads']==1, p
 PY
 
-# Complex efficient work offloads exploration and gives cheap worker roles deeper reasoning.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown \
-  --complexity complex --uncertainty high --exploration-need high > "$TMP/efficient.json"
+# Efficient complex work gets quorum exploration + required implementation.
+plan --complexity complex --uncertainty high --exploration-need high > "$TMP/efficient.json"
 python3 - "$TMP/efficient.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
@@ -103,13 +108,17 @@ assert p['routing']=='delegate', p
 assert p['parent_reasoning']=='high', p
 assert p['explorer_reasoning']=='xhigh' and p['implementer_reasoning']=='xhigh', p
 assert p['explorer_capability_policy']=='latest-efficient' and p['implementer_capability_policy']=='latest-efficient', p
-assert p['explorer_model']=='gpt-test-efficient' and p['implementer_model']=='gpt-test-efficient', p
-assert p['exploration_workers']==2 and p['implementation_workers']==1, p
-assert p['reviewer_workers']==0 and p['planned_worker_count']==3, p
-assert p['max_concurrent_threads']==2, p
+assert p['exploration_workers']==2 and p['implementation_workers']==1 and p['reviewer_workers']==0, p
+exp=p['exploration_stage']; imp=p['implementation_stage']
+assert exp['join_policy']=='quorum' and exp['min_successful_workers']==1, exp
+assert exp['cancel_if_superseded'] is True and exp['cancel_stragglers_after_quorum'] is True, exp
+assert exp['idle_timeout_seconds']==120 and exp['hard_timeout_seconds']==900, exp
+assert imp['join_policy']=='required' and imp['min_successful_workers']==1, imp
+assert imp['cancel_if_superseded'] is False and imp['fallback_policy']=='replan', imp
+assert p['review_stage'] is None, p
 PY
 
-# Runtime invariant: every delegated worker role is at least one effort tier above Parent when possible.
+# Delegated Worker reasoning remains at least one tier above Parent when possible.
 cp "$POLICY" "$TMP/floor.toml"
 python3 - "$TMP/floor.toml" <<'PY'
 from pathlib import Path
@@ -123,13 +132,12 @@ python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/floor.toml" plan --re
 python3 - "$TMP/floor.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['parent_reasoning']=='xhigh', p
-assert p['implementer_reasoning']=='max', p
+assert p['parent_reasoning']=='xhigh' and p['implementer_reasoning']=='max', p
 if p['exploration_workers']:
     assert p['explorer_reasoning']=='max', p
 PY
 
-# Parent=max is the only non-strict case because max is the top effort tier.
+# Parent=max is the only non-strict effort case because max is the top tier.
 cp "$POLICY" "$TMP/max-parent.toml"
 python3 - "$TMP/max-parent.toml" <<'PY'
 from pathlib import Path
@@ -147,67 +155,44 @@ assert p['parent_reasoning']=='max' and p['implementer_reasoning']=='max', p
 assert any('cannot exceed max' in n for n in p['notes']), p
 PY
 
-# Release defaults are consumed by the planner, not duplicated in Python constants.
-mkdir -p "$TMP/runtime"
-cp "$ROOT/scripts/strategy_runtime.py" "$TMP/runtime/strategy_runtime.py"
-cp -R "$ROOT/scripts/strategies" "$TMP/runtime/strategies"
-cp "$ROOT/policy/defaults.toml" "$TMP/runtime/defaults.toml"
-python3 - "$TMP/runtime/defaults.toml" <<'PY'
-from pathlib import Path
-import sys
-p=Path(sys.argv[1]); s=p.read_text()
-s=s.replace('[reasoning.parent]\nminimum = "high"\nroutine = "high"', '[reasoning.parent]\nminimum = "high"\nroutine = "xhigh"')
-p.write_text(s)
-PY
-cat > "$TMP/release-only.toml" <<'EOF'
-schema_version = 3
-EOF
-python3 "$TMP/runtime/strategy_runtime.py" --policy "$TMP/release-only.toml" plan --repo-policy none --quota-pressure unknown --routing delegate --complexity routine --risk low > "$TMP/release-default.json"
-python3 - "$TMP/release-default.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-assert p['parent_reasoning']=='xhigh' and p['implementer_reasoning']=='max', p
-PY
-
-# Normal quality remains efficient-worker-first across roles while using deeper reasoning and wider review.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile quality \
-  --complexity complex --uncertainty high --risk high --parallelism high --scope repo-wide --exploration-need high > "$TMP/quality.json"
+# Normal quality keeps efficient capability while adding deeper verification/lifecycle.
+plan --profile quality --complexity complex --uncertainty high --risk high --parallelism high \
+  --scope repo-wide --exploration-need high > "$TMP/quality.json"
 python3 - "$TMP/quality.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
 assert p['strategy']=='quality' and p['quality_intent']=='normal' and p['routing']=='delegate', p
 assert p['parent_reasoning']=='xhigh', p
-assert p['explorer_reasoning']=='max' and p['implementer_reasoning']=='max', p
 assert p['explorer_capability_policy']=='latest-efficient' and p['implementer_capability_policy']=='latest-efficient', p
-assert p['explorer_model']=='gpt-test-efficient' and p['implementer_model']=='gpt-test-efficient', p
-assert p['exploration_workers']==4, p
-assert p['review_mode']=='independent+parent' and p['reviewer_workers']==1, p
-assert p['reviewer_capability_policy']=='latest-efficient', p
-assert p['reviewer_model']=='gpt-test-efficient' and p['reviewer_reasoning']=='max', p
-assert p['planned_worker_count']==6 and p['max_concurrent_threads']==4, p
+assert p['exploration_workers']==4 and p['reviewer_workers']==1, p
+assert p['review_mode']=='independent+parent', p
+assert p['exploration_stage']['join_policy']=='quorum', p
+assert p['exploration_stage']['min_successful_workers']==2, p
+assert p['review_stage']['join_policy']=='required', p
+# Strategy asks for 2 reviewers, Runtime normalizes to the one reviewer actually planned.
+assert p['review_stage']['min_successful_workers']==1, p
+assert p['review_stage']['cancel_if_superseded'] is False, p
+assert p['review_stage']['fallback_policy']=='replan', p
 PY
 
-# Strong quality upgrades high-value implementation/review, not read-only exploration.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile quality \
-  --quality-intent strong --complexity routine --risk medium --parallelism limited > "$TMP/quality-strong.json"
+# Strong quality upgrades implementer/reviewer capability, not ordinary exploration.
+plan --profile quality --quality-intent strong --complexity routine --risk medium --parallelism limited > "$TMP/quality-strong.json"
 python3 - "$TMP/quality-strong.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
 assert p['quality_intent']=='strong' and p['routing']=='delegate', p
 assert p['parent_reasoning']=='xhigh', p
-assert p['explorer_reasoning']=='max' and p['implementer_reasoning']=='max', p
-assert p['explorer_capability_policy']=='latest-efficient' and p['explorer_model']=='gpt-test-efficient', p
-assert p['implementer_capability_policy']=='latest-capable' and p['implementer_model'] is None, p
-assert p['review_mode']=='independent+parent' and p['reviewer_workers']==1, p
-assert p['reviewer_capability_policy']=='latest-capable' and p['reviewer_model'] is None, p
+assert p['explorer_capability_policy']=='latest-efficient', p
+assert p['implementer_capability_policy']=='latest-capable', p
+assert p['reviewer_capability_policy']=='latest-capable', p
 assert p['exploration_workers']>=2, p
+assert p['exploration_stage']['min_successful_workers']==2, p
+assert p['review_stage']['join_policy']=='required' and p['review_stage']['min_successful_workers']==1, p
+assert p['review_stage']['cancel_if_superseded'] is False, p
 assert any('strong quality intent' in n for n in p['notes']), p
-assert any('implementer role requests parent-class capability' in n for n in p['notes']), p
-assert not any('explorer role requests parent-class capability' in n for n in p['notes']), p
 PY
 
-# Absolute quality maximizes high-value capability/reasoning/verification without premium exploration by default.
-# It still obeys writable isolation, total worker budgets, and the runtime concurrency ceiling.
+# Absolute quality retains two useful explorer results and two independent reviewers.
 python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure critical --profile quality \
   --quality-intent absolute --complexity routine --risk medium --parallelism high --write-conflict low --writable-workstreams 4 > "$TMP/quality-absolute.json"
 python3 - "$TMP/quality-absolute.json" <<'PY'
@@ -215,116 +200,157 @@ import json, sys
 p=json.load(open(sys.argv[1]))
 assert p['quality_intent']=='absolute' and p['routing']=='delegate', p
 assert p['parent_reasoning']=='max', p
-assert p['explorer_reasoning']=='max' and p['implementer_reasoning']=='max' and p['reviewer_reasoning']=='max', p
 assert p['explorer_capability_policy']=='latest-efficient', p
 assert p['implementer_capability_policy']=='latest-capable' and p['reviewer_capability_policy']=='latest-capable', p
 assert p['implementation_workers']==4 and p['reviewer_workers']==2, p
-assert p['planned_worker_count']==8 and p['worker_budget']['max_total_workers']==8, p
-assert p['max_concurrent_threads']==4 and p['max_repair_cycles']==2, p
-assert p['quota_pressure']=='critical', p
-assert any('absolute quality intent' in n for n in p['notes']), p
-assert any('4 proven isolated workstreams' in n for n in p['notes']), p
+assert p['planned_worker_count']==8, p
+exp=p['exploration_stage']; rev=p['review_stage']; imp=p['implementation_stage']
+assert exp['join_policy']=='quorum' and exp['min_successful_workers']==2, exp
+assert exp['cancel_stragglers_after_quorum'] is False, exp
+assert rev['join_policy']=='required' and rev['min_successful_workers']==2, rev
+assert rev['cancel_if_superseded'] is False and rev['fallback_policy']=='replan', rev
+assert imp['join_policy']=='required' and imp['hard_timeout_seconds']==3600, imp
+for stage in (exp, imp, rev):
+    assert stage['idle_timeout_seconds'] <= 600, stage
+    assert stage['hard_timeout_seconds'] <= 3600, stage
 PY
 
-# Critical normal quality may upgrade all roles because exploration itself carries critical decision risk.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile quality \
-  --complexity critical --risk critical --verification-cost high --parallelism high > "$TMP/quality-critical.json"
+# Critical normal quality may upgrade all role capabilities.
+plan --profile quality --complexity critical --risk critical --verification-cost high --parallelism high > "$TMP/quality-critical.json"
 python3 - "$TMP/quality-critical.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
 assert p['quality_intent']=='normal', p
 assert p['explorer_capability_policy']=='latest-capable', p
 assert p['implementer_capability_policy']=='latest-capable', p
-assert p['explorer_reasoning']=='max' and p['implementer_reasoning']=='max', p
-assert p['reviewer_workers']==2 and p['reviewer_reasoning']=='max', p
 assert p['reviewer_capability_policy']=='latest-capable', p
+assert p['reviewer_workers']==2, p
+assert p['review_stage']['min_successful_workers']==2, p
 PY
 
-# quality_intent must not affect topology or resources for non-quality strategies.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile balanced --routing delegate \
-  --quality-intent normal --complexity routine --risk medium > "$TMP/non-quality-normal.json"
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile balanced --routing delegate \
-  --quality-intent strong --complexity routine --risk medium > "$TMP/non-quality-strong.json"
+# quality_intent must not affect non-quality topology, resources, or lifecycle.
+plan --profile balanced --routing delegate --quality-intent normal --complexity routine --risk medium > "$TMP/non-quality-normal.json"
+plan --profile balanced --routing delegate --quality-intent strong --complexity routine --risk medium > "$TMP/non-quality-strong.json"
 python3 - "$TMP/non-quality-normal.json" "$TMP/non-quality-strong.json" <<'PY'
 import json, sys
 normal=json.load(open(sys.argv[1])); strong=json.load(open(sys.argv[2]))
-assert normal['quality_intent']=='normal' and strong['quality_intent']=='strong', (normal,strong)
 keys=(
     'routing','worker_budget','exploration_workers','implementation_workers','reviewer_workers',
     'planned_worker_count','max_concurrent_threads','parent_reasoning',
     'explorer_capability_policy','explorer_model','explorer_reasoning',
     'implementer_capability_policy','implementer_model','implementer_reasoning',
-    'reviewer_capability_policy','reviewer_model','reviewer_reasoning','review_mode'
+    'reviewer_capability_policy','reviewer_model','reviewer_reasoning','review_mode',
+    'exploration_stage','implementation_stage','review_stage'
 )
 for key in keys:
     assert normal[key] == strong[key], (key, normal[key], strong[key])
 PY
 
-# parallelism=none is a hard TaskProfile constraint, including reviewers.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile quality \
-  --complexity complex --uncertainty high --parallelism none > "$TMP/no-parallel.json"
+# parallelism=none remains a hard topology constraint.
+plan --profile quality --complexity complex --uncertainty high --parallelism none > "$TMP/no-parallel.json"
 python3 - "$TMP/no-parallel.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['exploration_workers']==0 and p['implementation_workers']==1, p
-assert p['explorer_capability_policy'] is None and p['explorer_reasoning'] is None, p
+assert p['exploration_workers']==0 and p['exploration_stage'] is None, p
+assert p['implementation_workers']==1 and p['implementation_stage']['join_policy']=='required', p
 assert p['reviewer_workers']==1 and p['max_concurrent_threads']==1, p
 PY
 
-# Speed scales writable workers to proven isolated workstreams instead of a fixed cap of two.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile speed \
-  --complexity routine --parallelism high --write-conflict low > "$TMP/speed-one.json"
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile speed \
-  --complexity routine --parallelism high --write-conflict low --writable-workstreams 4 > "$TMP/speed-four.json"
-python3 - "$TMP/speed-one.json" "$TMP/speed-four.json" <<'PY'
+# Speed keeps speculative exploration opportunistic and short-lived.
+plan --profile speed --complexity routine --parallelism high --write-conflict low --writable-workstreams 4 > "$TMP/speed.json"
+python3 - "$TMP/speed.json" <<'PY'
 import json, sys
-one=json.load(open(sys.argv[1])); four=json.load(open(sys.argv[2]))
-assert one['implementation_workers']==1, one
-assert four['implementation_workers']==4, four
-assert four['max_concurrent_threads']==4, four
-assert four['worker_budget']['max_implementers']==8, four
-assert any('4 proven isolated workstreams' in n for n in four['notes']), four
+p=json.load(open(sys.argv[1]))
+assert p['implementation_workers']==4 and p['max_concurrent_threads']==4, p
+exp=p['exploration_stage']; imp=p['implementation_stage']
+assert exp['join_policy']=='opportunistic' and exp['min_successful_workers']==0, exp
+assert exp['idle_timeout_seconds']==60 and exp['hard_timeout_seconds']==600, exp
+assert exp['fallback_policy']=='continue_partial', exp
+assert imp['join_policy']=='required' and imp['hard_timeout_seconds']==1200, imp
 PY
 
-# Balanced also consumes multiple proven writable workstreams, but only within its smaller budget.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --profile balanced --routing delegate \
-  --complexity complex --parallelism high --write-conflict low --writable-workstreams 4 > "$TMP/balanced-four.json"
-python3 - "$TMP/balanced-four.json" <<'PY'
+# Balanced consumes multiple proven writable workstreams within its smaller budget.
+plan --profile balanced --routing delegate --complexity complex --parallelism high --write-conflict low --writable-workstreams 4 > "$TMP/balanced.json"
+python3 - "$TMP/balanced.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
 assert p['implementation_workers']==3, p
 assert p['worker_budget']['max_implementers']==3, p
+assert p['implementation_stage']['join_policy']=='required', p
 PY
 
-# Modifiers remain orthogonal and cannot bypass the strategy budget or safety proof.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown \
-  --profile efficient --review strict --fanout aggressive --complexity complex --uncertainty high \
-  --parallelism high --write-conflict low --writable-workstreams 2 > "$TMP/modifiers.json"
-python3 - "$TMP/modifiers.json" <<'PY'
+# Strict review is a generic modifier: every planned reviewer must return terminal evidence.
+plan --profile efficient --review strict --fanout aggressive --complexity complex --uncertainty high \
+  --parallelism high --write-conflict low --writable-workstreams 2 > "$TMP/strict.json"
+python3 - "$TMP/strict.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['strategy']=='efficient', p
 assert p['review_modifier']=='strict' and p['review_mode']=='independent+parent', p
-assert p['fanout_modifier']=='aggressive', p
-assert p['exploration_workers']==2 and p['implementation_workers']==2, p
-assert p['reviewer_workers']==1 and p['reviewer_reasoning']=='xhigh', p
-assert p['planned_worker_count']==5, p
+assert p['reviewer_workers']==1, p
+rev=p['review_stage']
+assert rev['join_policy']=='required', rev
+assert rev['min_successful_workers']==p['reviewer_workers'], rev
+assert rev['cancel_if_superseded'] is False, rev
+assert rev['cancel_stragglers_after_quorum'] is False, rev
+assert rev['fallback_policy']=='replan', rev
 PY
 
-# Direct routing remains orthogonal and cannot create workers/reviewer.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown \
-  --profile quality --routing direct --review strict --complexity critical --risk critical > "$TMP/direct.json"
+# Direct routing cannot create lifecycle stages even with quality + strict.
+plan --profile quality --routing direct --review strict --complexity critical --risk critical > "$TMP/direct.json"
 python3 - "$TMP/direct.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['routing']=='direct' and p['parent_reasoning']=='xhigh', p
-for prefix in ('explorer','implementer','reviewer'):
-    assert p[f'{prefix}_reasoning'] is None, p
-assert p['exploration_workers']==0 and p['implementation_workers']==0 and p['reviewer_workers']==0, p
-assert p['planned_worker_count']==0 and p['review_mode']=='parent', p
+assert p['routing']=='direct' and p['review_mode']=='parent', p
+assert p['planned_worker_count']==0, p
+assert p['exploration_stage'] is None and p['implementation_stage'] is None and p['review_stage'] is None, p
 PY
 
-# Quota adapter is deterministic and independent of strategy semantics.
+# Runtime hard lifecycle ceilings clamp an otherwise valid strategy preference.
+python3 - "$ROOT" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + '/scripts')
+from strategies.base import StagePolicy
+from strategy_runtime import Modifiers, TaskProfile, _bounded_stage_policy
+class Spec:
+    @staticmethod
+    def lifecycle(_task, _stage):
+        return StagePolicy('required', 99, 5000, 10000, False, False, 'replan')
+task=TaskProfile()
+p=_bounded_stage_policy(Spec(), task, 'implementation', 3, Modifiers())
+assert p.min_successful_workers == 3, p
+assert p.idle_timeout_seconds == 600, p
+assert p.hard_timeout_seconds == 3600, p
+PY
+
+# Lifecycle contract rejects internally inconsistent policies.
+python3 - "$ROOT" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + '/scripts')
+from strategies.base import StagePolicy, WorkerBudget
+from strategy_runtime import Modifiers, TaskProfile
+invalid=(
+    StagePolicy('opportunistic',1,60,600),
+    StagePolicy('quorum',0,60,600),
+    StagePolicy('required',1,600,300),
+    StagePolicy('required',1,60,600,fallback_policy='nonsense'),
+)
+for item in invalid:
+    try: item.validate()
+    except ValueError: pass
+    else: raise AssertionError(f'invalid StagePolicy accepted: {item}')
+for item in (TaskProfile(scope='nonsense'), TaskProfile(writable_workstreams=0), TaskProfile(quality_intent='nonsense')):
+    try: item.validate()
+    except ValueError: pass
+    else: raise AssertionError('invalid TaskProfile accepted')
+try: Modifiers(review='nonsense').validate()
+except ValueError: pass
+else: raise AssertionError('invalid modifier accepted')
+try: WorkerBudget(1,0,0,1).validate()
+except ValueError: pass
+else: raise AssertionError('invalid WorkerBudget accepted')
+PY
+
+# Quota adapter remains deterministic and independent of strategy/lifecycle semantics.
 python3 - "$ROOT" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1] + '/scripts')
@@ -336,7 +362,7 @@ assert quota_pressure_from_snapshot({'rateLimits': {'primary': {'usedPercent': 8
 assert quota_pressure_from_snapshot({'rateLimits': {'primary': {'usedPercent': 95}}}) == 'critical'
 PY
 
-# Repository policy overrides user strategy/routing/modifiers, tightens ceilings, and raises floors.
+# Repository policy precedence/ceilings continue to work with lifecycle v8.
 mkdir -p "$TMP/repo/subdir"
 touch "$TMP/repo/.git"
 cat > "$TMP/repo/.codex-flow.toml" <<'EOF'
@@ -364,11 +390,11 @@ show=json.load(open(sys.argv[1])); p=json.load(open(sys.argv[2]))
 assert show['strategy']=='quality' and show['routing']=='delegate', show
 assert show['review']=='strict' and show['fanout']=='conservative', show
 assert p['parent_reasoning']=='xhigh' and p['implementer_reasoning']=='max', p
-assert p['reviewer_workers']==1 and p['reviewer_reasoning']=='max', p
+assert p['reviewer_workers']==1 and p['review_stage']['join_policy']=='required', p
 assert p['max_concurrent_threads']<=2 and p['max_repair_cycles']==1, p
 PY
 
-# Explicit current-task strategy/routing/modifiers outrank repo policy without mutating it.
+# Explicit current-task overrides still outrank repo policy without mutating it.
 (
   cd "$TMP/repo/subdir"
   python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --quota-pressure unknown \
@@ -382,70 +408,19 @@ assert p['review_modifier']=='standard' and p['fanout_modifier']=='aggressive', 
 PY
 grep -Fq 'profile = "quality"' "$TMP/repo/.codex-flow.toml"
 
-# Explicit repo-policy none disables auto-discovery.
-(
-  cd "$TMP/repo/subdir"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" show --effective --repo-policy none --json > "$TMP/no-repo-show.json"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --complexity routine > "$TMP/no-repo-plan.json"
-)
-python3 - "$TMP/no-repo-show.json" "$TMP/no-repo-plan.json" <<'PY'
-import json, sys
-show=json.load(open(sys.argv[1])); p=json.load(open(sys.argv[2]))
-assert show['strategy']=='efficient' and show['routing']=='adaptive', show
-assert show['repo_policy'] is None and p['repo_policy'] is None, (show,p)
-PY
-
-# Runtime ceilings are hard: task flags may tighten but never raise them.
-(
-  cd "$TMP/repo/subdir"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --quota-pressure unknown --routing delegate \
-    --complexity complex --parallelism high --max-threads 99 --max-repairs 99 > "$TMP/hard-ceiling.json"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --quota-pressure unknown --routing delegate \
-    --complexity complex --parallelism high --max-threads 1 --max-repairs 0 > "$TMP/tightened.json"
-)
-python3 - "$TMP/hard-ceiling.json" "$TMP/tightened.json" <<'PY'
-import json, sys
-hard=json.load(open(sys.argv[1])); tight=json.load(open(sys.argv[2]))
-assert hard['max_concurrent_threads'] <= 2 and hard['max_repair_cycles'] == 1, hard
-assert tight['max_concurrent_threads'] == 1 and tight['max_repair_cycles'] == 0, tight
-PY
-
-# Critical quota pressure collapses cost-aware fan-out without lowering worker-role reasoning.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" set balanced >/dev/null
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" routing delegate >/dev/null
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none \
+# Critical quota pressure compresses worker counts; lifecycle is normalized after compression.
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --profile balanced --routing delegate \
   --complexity complex --uncertainty high --parallelism high --quota-pressure critical > "$TMP/quota.json"
 python3 - "$TMP/quota.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['strategy']=='balanced' and p['routing']=='delegate', p
-assert p['quota_pressure']=='critical', p
 assert p['exploration_workers']==1 and p['implementation_workers']==1, p
 assert p['max_concurrent_threads']==1 and p['max_repair_cycles']==1, p
-assert p['parent_reasoning']=='high' and p['implementer_reasoning']=='xhigh', p
-assert p['explorer_reasoning']=='xhigh', p
-assert any('quota pressure' in n for n in p['notes']), p
+assert p['exploration_stage']['min_successful_workers']==1, p
+assert p['implementation_stage']['min_successful_workers']==1, p
 PY
 
-# Validation covers profile/modifier/budget dimensions.
-python3 - "$ROOT" <<'PY'
-import sys
-sys.path.insert(0, sys.argv[1] + '/scripts')
-from strategies.base import WorkerBudget
-from strategy_runtime import Modifiers, TaskProfile
-for item in (TaskProfile(scope='nonsense'), TaskProfile(writable_workstreams=0), TaskProfile(quality_intent='nonsense')):
-    try: item.validate()
-    except ValueError: pass
-    else: raise AssertionError('invalid TaskProfile accepted')
-try: Modifiers(review='nonsense').validate()
-except ValueError: pass
-else: raise AssertionError('invalid modifier accepted')
-try: WorkerBudget(1, 0, 0, 1).validate()
-except ValueError: pass
-else: raise AssertionError('invalid WorkerBudget accepted')
-PY
-
-# Schema v3 compatibility retains historical strategy/routing defaults.
+# Schema-v3 persistent-policy users retain the historical default strategy/routing.
 cat > "$TMP/v3.toml" <<'EOF'
 schema_version = 3
 [parent]
@@ -463,14 +438,13 @@ p=json.load(open(sys.argv[1]))
 assert p['strategy']=='efficient' and p['routing']=='adaptive' and p['valid'], p
 PY
 
-# Guard against strategy logic drifting back into the Skill/runtime compiler.
+# Skill must treat lifecycle as an authoritative plan boundary, not a prose heuristic.
 grep -Fq 'FlowPilot profiles. `strategy_runtime.py` + the strategy registry decide. FlowPilot executes the returned plan.' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'Do not independently re-implement strategy topology' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'quality_intent' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'worker_budget' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'reviewer_workers' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'explorer_capability_policy' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'implementer_capability_policy' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'worker-reviewer' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'Current contract (schema v8)' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'A `wait()` timeout is never a Worker timeout.' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'cancel_if_superseded' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'Fallback always operates on the missing delta' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'scope_id' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'do not kill a Luna `xhigh/max` Explorer' "$ROOT/templates/skills/flow-pilot/SKILL.md"
 
 printf 'strategy runtime test passed\n'

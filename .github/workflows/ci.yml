@@ -19,6 +19,7 @@ jobs:
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
           bash -n tests/strategy-runtime.sh
+          bash -n tests/lifecycle-runtime.sh
           bash -n tests/telemetry.sh
           bash -n tests/chatgpt-mcp.sh
           bash -n tests/benchmark.sh
@@ -26,6 +27,7 @@ jobs:
           bash -n tests/corpus.sh
           bash -n tests/report.sh
           python3 -m py_compile scripts/strategy_runtime.py
+          python3 -m py_compile scripts/strategies/lifecycle_runtime.py
           python3 -m py_compile scripts/check-recommendation.py
           python3 -m py_compile scripts/analyze-benchmark.py
           python3 -m py_compile scripts/run-benchmark.py
@@ -48,6 +50,8 @@ jobs:
           ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].each { |f| YAML.parse_file(f) }'
       - name: Strategy runtime test
         run: bash tests/strategy-runtime.sh
+      - name: Lifecycle runtime and restored regression test
+        run: bash tests/lifecycle-runtime.sh
       - name: Recommendation policy test
         run: |
           python3 scripts/check-recommendation.py --fixture tests/fixtures/models.json --json | tee /tmp/recommendation.json
@@ -159,6 +163,10 @@ jobs:
           if ($policyBytes.Length -ge 3 -and $policyBytes[0] -eq 0xef -and $policyBytes[1] -eq 0xbb -and $policyBytes[2] -eq 0xbf) { throw 'policy unexpectedly has a UTF-8 BOM' }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'skills/flow-pilot/SKILL.md'))) { throw 'FlowPilot skill missing' }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow/strategy_runtime.py'))) { throw 'strategy runtime helper missing' }
+          $lifecycleHelper = Join-Path $env:CODEX_HOME 'codex-flow/strategies/lifecycle_runtime.py'
+          if (-not (Test-Path $lifecycleHelper)) { throw 'lifecycle runtime helper missing' }
+          & python3 -m py_compile $lifecycleHelper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'hooks.json'))) { throw 'telemetry hooks missing' }
 
           # Change every policy family that reinstall/update must round-trip without loss.
