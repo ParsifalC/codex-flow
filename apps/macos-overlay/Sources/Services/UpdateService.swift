@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-public struct FlowPilotUpdateSnapshot: Codable, Equatable {
+public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
     public var schema: Int?
     public var status: String?
     public var currentVersion: String?
@@ -44,13 +44,12 @@ public final class FlowPilotUpdateService: ObservableObject {
     @Published public private(set) var actionMessage: String?
 
     private var timer: Timer?
-    private let workerQueue = DispatchQueue(label: "codex-flow.update-service", qos: .utility)
 
     private init() {
         refreshFromDisk()
-        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
             Task { @MainActor in
-                self?.refreshFromDisk()
+                FlowPilotUpdateService.shared.refreshFromDisk()
             }
         }
         requestCachedCheck()
@@ -127,10 +126,15 @@ public final class FlowPilotUpdateService: ObservableObject {
         runUpdater(arguments: ["update"], mode: .install)
     }
 
-    private enum RunMode {
+    private enum RunMode: Sendable {
         case backgroundCheck
         case foregroundCheck
         case install
+    }
+
+    private struct ProcessResult: Sendable {
+        let exitCode: Int32
+        let output: String
     }
 
     private func runUpdater(arguments: [String], mode: RunMode) {
@@ -143,46 +147,50 @@ public final class FlowPilotUpdateService: ObservableObject {
             return
         }
 
-        workerQueue.async { [weak self] in
-            let process = Process()
-            process.executableURL = executable
-            process.arguments = arguments
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            var output = ""
-            var exitCode: Int32 = -1
-            do {
-                try process.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                exitCode = process.terminationStatus
-                output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            } catch {
-                output = error.localizedDescription
+        Task.detached(priority: .utility) {
+            let result = Self.executeUpdater(executable: executable, arguments: arguments)
+            await MainActor.run {
+                FlowPilotUpdateService.shared.finish(mode: mode, result: result)
             }
+        }
+    }
 
-            Task { @MainActor in
-                guard let self else { return }
-                self.refreshFromDisk()
-                switch mode {
-                case .backgroundCheck:
-                    break
-                case .foregroundCheck:
-                    self.isChecking = false
-                    if exitCode != 0 {
-                        self.actionError = output.isEmpty ? L("Update check failed.", "检查更新失败。") : output
-                    } else {
-                        self.actionMessage = self.statusText
-                    }
-                case .install:
-                    self.isInstalling = false
-                    if exitCode != 0 {
-                        self.actionError = output.isEmpty ? L("Update failed.", "更新失败。") : output
-                    } else {
-                        self.actionMessage = output.isEmpty ? L("Update completed.", "更新完成。") : output
-                    }
-                }
+    nonisolated private static func executeUpdater(executable: URL, arguments: [String]) -> ProcessResult {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return ProcessResult(exitCode: process.terminationStatus, output: output)
+        } catch {
+            return ProcessResult(exitCode: -1, output: error.localizedDescription)
+        }
+    }
+
+    private func finish(mode: RunMode, result: ProcessResult) {
+        refreshFromDisk()
+        switch mode {
+        case .backgroundCheck:
+            break
+        case .foregroundCheck:
+            isChecking = false
+            if result.exitCode != 0 {
+                actionError = result.output.isEmpty ? L("Update check failed.", "检查更新失败。") : result.output
+            } else {
+                actionMessage = statusText
+            }
+        case .install:
+            isInstalling = false
+            if result.exitCode != 0 {
+                actionError = result.output.isEmpty ? L("Update failed.", "更新失败。") : result.output
+            } else {
+                actionMessage = result.output.isEmpty ? L("Update completed.", "更新完成。") : result.output
             }
         }
     }
