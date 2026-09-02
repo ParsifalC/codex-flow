@@ -6,6 +6,7 @@ on:
   push:
     paths:
       - 'scripts/updater.py'
+      - 'scripts/update_runtime_config.py'
       - 'scripts/package-release.py'
       - 'scripts/generate-release-manifest.py'
       - 'scripts/migrations/**'
@@ -21,6 +22,7 @@ on:
   pull_request:
     paths:
       - 'scripts/updater.py'
+      - 'scripts/update_runtime_config.py'
       - 'scripts/package-release.py'
       - 'scripts/generate-release-manifest.py'
       - 'scripts/migrations/**'
@@ -49,6 +51,7 @@ jobs:
         run: |
           python3 -m py_compile \
             scripts/updater.py \
+            scripts/update_runtime_config.py \
             scripts/package-release.py \
             scripts/generate-release-manifest.py \
             scripts/migrations/0001_update_settings.py
@@ -70,21 +73,31 @@ jobs:
       - name: OTA updater tests
         shell: bash
         run: python3 -m unittest tests.test_updater
-      - name: Package release artifact
+      - name: Package release artifacts
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            platform="windows-x86_64"
+            platforms=(windows-x86_64 windows-arm64)
           else
-            platform="linux-x86_64"
+            platforms=(linux-x86_64 linux-arm64)
           fi
-          python3 scripts/package-release.py --platform "$platform" --output-dir dist
+          for platform in "${platforms[@]}"; do
+            python3 scripts/package-release.py --platform "$platform" --output-dir dist
+          done
           python3 scripts/generate-release-manifest.py --dist dist --tag "v$(tr -d '\r\n' < VERSION)" --output dist/codex-flow-update.json
           test -s dist/codex-flow-update.json
 
   macos-app:
-    name: macos-app
-    runs-on: macos-14
+    name: macos-app-${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: darwin-arm64
+          - os: macos-15-intel
+            platform: darwin-x86_64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: OTA updater tests
@@ -93,6 +106,6 @@ jobs:
         run: bash apps/macos-overlay/build.sh
       - name: Package macOS OTA artifact
         run: |
-          python3 scripts/package-release.py --platform darwin-arm64 --output-dir dist
+          python3 scripts/package-release.py --platform '${{ matrix.platform }}' --output-dir dist
           python3 scripts/generate-release-manifest.py --dist dist --tag "v$(tr -d '\r\n' < VERSION)" --output dist/codex-flow-update.json
           test -s dist/codex-flow-update.json
