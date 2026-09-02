@@ -12,7 +12,6 @@ def sub_once(text: str, pattern: str, replacement: str, label: str) -> str:
 path = Path("scripts/updater.py")
 text = path.read_text(encoding="utf-8")
 
-# Add a portable exclusive-file lock immediately after migration-state helper.
 text = sub_once(
     text,
     r'(def _migration_state_path\(\) -> Path:\n    return _update_dir\(\) / "migrations\.json"\n)',
@@ -59,7 +58,6 @@ def update_lock(stale_after_seconds: int = 2 * 60 * 60):
     "insert lock",
 )
 
-# Extend snapshot targets without rewriting surrounding implementation.
 text = sub_once(
     text,
     r'("defaults": _state_dir\(\) / "defaults\.toml",\n)(\s*})',
@@ -69,7 +67,6 @@ text = sub_once(
     "snapshot targets",
 )
 
-# Restore migration marker + hooks after normal state metadata.
 anchor = '''    for name in ("version", "source", "defaults"):
         src = backup / name
         dst_name = "defaults.toml" if name == "defaults" else name
@@ -90,7 +87,6 @@ text = text.replace(anchor, anchor + '''    migrations = backup / "migrations"
         _atomic_copy(hooks, hooks_path)
 ''', 1)
 
-# Wrap update and rollback writers. Function bodies remain unchanged.
 text = text.replace("def perform_update(*, force_check: bool = True) -> UpdateState:\n", "def _perform_update_unlocked(*, force_check: bool = True) -> UpdateState:\n", 1)
 needle = '''        return _install_package(root, version, manifest)
 
@@ -131,8 +127,7 @@ def rollback() -> UpdateState:
 def _legacy_git_update() -> int:
 ''', 1)
 
-# Gracefully degrade glyphs on legacy Windows consoles instead of crashing.
-needle = "def main(argv: list[str] | None = None) -> int:\n"
+needle = "def main(argv: Iterable[str] | None = None) -> int:\n"
 if needle not in text:
     raise SystemExit("main anchor missing")
 text = text.replace(needle, '''def _configure_stdio() -> None:
@@ -146,13 +141,23 @@ text = text.replace(needle, '''def _configure_stdio() -> None:
             pass
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Iterable[str] | None = None) -> int:
     _configure_stdio()
+''', 1)
+
+old_check = '''    if args.check:
+        with update_lock() as acquired:
+            state = check_for_updates(force=args.force, quiet=args.quiet) if acquired else load_state()
+'''
+if old_check not in text:
+    raise SystemExit("check lock anchor missing")
+text = text.replace(old_check, '''    if args.check:
+        with update_lock():
+            state = check_for_updates(force=args.force, quiet=args.quiet)
 ''', 1)
 
 path.write_text(text, encoding="utf-8")
 
-# Add focused regressions.
 tests = Path("tests/test_updater.py")
 t = tests.read_text(encoding="utf-8")
 marker = '    def test_legacy_update_detached_checkout_reinstalls_without_pull(self) -> None:\n'
