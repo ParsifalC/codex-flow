@@ -1,0 +1,38 @@
+name: lifecycle-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lifecycle syntax
+        run: |
+          python3 -m py_compile scripts/strategies/lifecycle_runtime.py
+          bash -n tests/lifecycle-runtime.sh
+      - name: Lifecycle and restored regressions
+        run: bash tests/lifecycle-runtime.sh
+
+  windows-lifecycle-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify lifecycle helper installation
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'codex-flow-lifecycle-install'
+          $env:CODEX_HOME = Join-Path $tmp '.codex'
+          $env:CODEX_FLOW_BIN_DIR = Join-Path $tmp 'bin'
+          $env:CODEX_FLOW_TELEMETRY_ENABLED = 'false'
+          New-Item -ItemType Directory -Force -Path $env:CODEX_HOME,$env:CODEX_FLOW_BIN_DIR | Out-Null
+          & ./install.ps1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $helper = Join-Path $env:CODEX_HOME 'codex-flow/strategies/lifecycle_runtime.py'
+          if (-not (Test-Path $helper)) { throw 'installed lifecycle runtime helper missing' }
+          & python3 -m py_compile $helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & python3 $helper --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
