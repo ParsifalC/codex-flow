@@ -69,8 +69,14 @@ public class TelemetryWatcher {
                     queue: DispatchQueue.global(qos: .utility)
                 )
                 
-                source.setEventHandler { [weak self] in
-                    self?.handleFileOrDirChanged()
+                source.setEventHandler { [weak self, weak source] in
+                    guard let self = self else { return }
+                    let flags = source?.data ?? []
+                    if flags.contains(.rename) || flags.contains(.delete) {
+                        self.fileSource?.cancel()
+                        self.fileSource = nil
+                    }
+                    self.handleFileOrDirChanged()
                 }
                 
                 source.setCancelHandler {
@@ -120,7 +126,8 @@ public class TelemetryWatcher {
         do {
             let data = try Data(contentsOf: telemetryURL)
             let decoder = JSONDecoder()
-            let run = try decoder.decode(TaskRun.self, from: data)
+            var run = try decoder.decode(TaskRun.self, from: data)
+            TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
             state.update(run: run)
         } catch {
             // If decode fails, retain existing state
