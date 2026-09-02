@@ -1,73 +1,53 @@
-# Paid quick benchmark on GitHub Actions
+# GitHub Actions 云端基准评测
 
-The optional GitHub Actions workflow runs only the built-in 30-run `quick` profile. It is not scheduled and cannot run from `push` or `pull_request`; a user must manually dispatch it and provide the exact confirmation phrase before any model call.
+<div align="center">
 
-## One-time setup
+[ 简体中文 ](benchmark-actions.md) | [ English ](benchmark-actions.en.md)
 
-Create a repository Actions secret named:
+</div>
+
+本项目包含可选的 GitHub Actions 工作流，用于在云端自动化执行内置的 30 轮 `quick` 基准评测。该工作流绝不在 `push` 或 `pull_request` 时自动触发，必须由管理员在 GitHub 网页上手动派发并输入严格的确认口令。
+
+---
+
+## 初始准备
+
+在 GitHub 仓库中配置 Actions Secret：
 
 ```text
 OPENAI_API_KEY
 ```
 
-Use an API project/key with an intentionally bounded budget and only the model access needed for the benchmark. For comparisons across dates, pin the Codex npm version instead of using `latest`.
+建议使用设置了消费预算上限并仅开放所需模型权限的独立 API 密钥。
 
-## Start a run
+---
 
-Open the **benchmark quick** workflow and choose **Run workflow**:
+## 触发运行流程
 
-```text
-confirm:            RUN QUICK 30
-codex_npm_version:  latest   # or a pinned npm version
-```
+1. 进入 GitHub 仓库的 **Actions** 选项卡；
+2. 选择 **benchmark quick** 工作流并点击 **Run workflow**；
+3. 输入必填参数：
+   - `confirm`: `RUN QUICK 30`
+   - `codex_npm_version`: `latest`（或指定 npm 版本号）
 
-The key and exact confirmation are validated before execution.
+---
 
-## What runs
-
-```text
-6 tasks × 5 strategies × 1 repetition = 30 runs
-
-Luna direct / high
-Terra direct / high
-Sol direct / high
-Flow fixed / Sol parent high + Luna worker high
-Flow adaptive / routine high, complex xhigh, critical max
-```
-
-The first four strategies are the controlled same-effort comparison. Adaptive flow is analyzed separately against fixed-high flow. Every run starts from a frozen corpus commit, uses an external verifier, and includes bounded repairs. Flow usage includes both parent and worker.
-
-`--fail-fast-infrastructure` stops the batch when Codex exits non-zero before reporting usage, avoiding repeated spend attempts after credentials, CLI, or model-access failures.
-
-## Artifacts
-
-The workflow uploads available files for 30 days:
+## 评测矩阵构成
 
 ```text
-materialize.json
-plan.json
-manifest.json
-results.jsonl
-analysis.json
-report.md
-prices.json
-codex-version.txt
-codex-npm-version-requested.txt
-codex-flow-commit.txt
+6 任务 × 5 策略 × 1 次重复 = 30 轮运行
+
+1. Luna direct (high)
+2. Terra direct (high)
+3. Sol direct (high)
+4. Flow fixed (Sol parent high + Luna worker high)
+5. Flow adaptive (routine high, complex xhigh, critical max)
 ```
 
-A partial run still uploads diagnostics. When results exist, the Markdown report is also written to the Actions job summary. It includes final/first-pass rates, repairs, parent reviews, tokens, wall time, mixed-model API-equivalent reference cost, and the three evidence comparisons.
+---
 
-## Safety and interpretation
+## 产物与报告汇总
 
-The workflow spends real API/model quota and therefore has these boundaries:
-
-- manual `workflow_dispatch` only;
-- exact `RUN QUICK 30` confirmation;
-- quick profile only, with 30 runs;
-- no automatic full/90-run workflow;
-- missing API key fails before execution;
-- infrastructure failures can stop the batch immediately;
-- results remain advisory and never rewrite routing automatically.
-
-`quick` has two samples per class and strategy, below the default formal evidence minimum of three. Use it for smoke/observational evidence. The 90-run `full` profile has six samples per class and strategy and remains available only through explicit local/manual execution.
+工作流运行完毕后，将自动归档全部评测产物（保留 30 天）：
+- `manifest.json`, `results.jsonl`, `analysis.json`
+- `report.md`（自动渲染至 GitHub Actions Job Summary 汇总看板）

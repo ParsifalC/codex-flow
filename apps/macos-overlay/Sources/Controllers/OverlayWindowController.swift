@@ -16,6 +16,7 @@ public class OverlayState: ObservableObject {
     @Published public var isDocked: Bool = false
     @Published public var dockEdge: DockEdge = .right
     @Published public var latestRun: TaskRun? = nil
+    @Published public var isPrivacyMode: Bool = false
     
     // Tab & Explorer State
     @Published public var activeTab: OverlayTab = .inspector

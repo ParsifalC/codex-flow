@@ -375,14 +375,16 @@ public struct TokenDistributionBar: View {
 public struct SummaryView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
+    public var isFullHeight: Bool = false
     @State private var copiedSummary: Bool = false
     @State private var isSummaryExpanded: Bool = true
     @State private var isSkillsExpanded: Bool = false
     @State private var isTrajectoryExpanded: Bool = false
     @State private var isLogsExpanded: Bool = false
     
-    public init(state: OverlayState) {
+    public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
+        self.isFullHeight = isFullHeight
     }
     
     private var currentRun: TaskRun? {
@@ -413,9 +415,9 @@ public struct SummaryView: View {
                     idleInspectorContent
                 }
             case .history:
-                HistoryView(state: state)
+                HistoryView(state: state, isFullHeight: isFullHeight)
             case .analytics:
-                AnalyticsView(state: state)
+                AnalyticsView(state: state, isFullHeight: isFullHeight)
             }
         }
         .padding(12)
@@ -552,86 +554,94 @@ public struct SummaryView: View {
     
     // MARK: - Active Inspector Content (Scrollable Container)
     private func activeInspectorScrollContent(run: TaskRun) -> some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Historical Task Notice Bar
-                if isViewingHistoricalTask {
-                    historicalTaskBanner
-                }
-                
-                // Project & Branch + Session Preview
-                projectHeaderRow(run: run)
-                
-                // 1. Task Objective & Delivery Conclusion Card
-                if run.effectiveGoal != nil || run.effectiveConclusion != nil {
-                    TaskSummaryCardView(run: run, isExpanded: $isSummaryExpanded)
-                }
-                
-                // 3 KPI Rings
-                HStack(spacing: 6) {
-                    MetricRingView(
-                        title: L("Time", "耗时"),
-                        value: run.formattedDuration,
-                        progress: min(1.0, run.durationSeconds / 30.0),
-                        ringColor: Color.cyan,
-                        secondaryColor: Color.indigo
-                    )
-                    
-                    MetricRingView(
-                        title: L("Tokens", "Token"),
-                        value: run.formattedTotalTokens,
-                        progress: min(1.0, Double(run.aggregatedUsage.totalTokens ?? 0) / 100_000.0),
-                        ringColor: Color(red: 0.95, green: 0.35, blue: 0.8),
-                        secondaryColor: Color(red: 0.6, green: 0.2, blue: 0.9)
-                    )
-                    
-                    MetricRingView(
-                        title: L("Cost", "成本"),
-                        value: run.formattedCost,
-                        progress: min(1.0, (run.aggregatedUsage.estimatedCreditsMicros ?? 0) / 100_000.0),
-                        ringColor: Color(red: 0.2, green: 0.85, blue: 0.45),
-                        secondaryColor: Color.teal
-                    )
-                }
-                
-                // 2. Execution Trajectory Timeline Section
-                if run.hasTrajectory {
-                    TrajectoryTimelineSectionView(run: run, isExpanded: $isTrajectoryExpanded)
-                }
-                
-                // 3. Execution Logs Drawer Section
-                if run.hasLogs {
-                    LogsSectionView(run: run, isExpanded: $isLogsExpanded)
-                }
-                
-                // Quota & Rate Limit Windows Meter
-                if !run.effectiveQuotaWindows.isEmpty {
-                    QuotaWindowsView(windows: run.effectiveQuotaWindows)
-                }
-                
-                // Participants (Parent + Workers)
-                participantsSection(run: run)
-                
-                if run.allWorkers.contains(where: {
-                    !(($0.conclusion ?? "").trimmingCharacters(in: .whitespacesAndNewlines)).isEmpty
-                }) {
-                    workerOutcomesSection(run: run)
-                }
-                
-                // Token Distribution Bar
-                TokenDistributionBar(usage: run.aggregatedUsage)
-                
-                // 4. Skills & MCP Tools Badges Section (Bottom)
-                if run.hasSkillsOrTools {
-                    SkillsAndToolsSectionView(run: run, isExpanded: $isSkillsExpanded)
-                }
-                
-                // Action Footer
-                actionFooter(run: run)
+        let content = VStack(alignment: .leading, spacing: 8) {
+            // Historical Task Notice Bar
+            if isViewingHistoricalTask {
+                historicalTaskBanner
             }
-            .padding(.vertical, 2)
+            
+            // Project & Branch + Session Preview
+            projectHeaderRow(run: run)
+            
+            // 1. Task Objective & Delivery Conclusion Card
+            if run.effectiveGoal != nil || run.effectiveConclusion != nil {
+                TaskSummaryCardView(run: run, isExpanded: $isSummaryExpanded, isPrivacyMode: state.isPrivacyMode)
+            }
+            
+            // 3 KPI Rings
+            HStack(spacing: 6) {
+                MetricRingView(
+                    title: L("Time", "耗时"),
+                    value: run.formattedDuration,
+                    progress: min(1.0, run.durationSeconds / 30.0),
+                    ringColor: Color.cyan,
+                    secondaryColor: Color.indigo
+                )
+                
+                MetricRingView(
+                    title: L("Tokens", "Token"),
+                    value: run.formattedTotalTokens,
+                    progress: min(1.0, Double(run.aggregatedUsage.totalTokens ?? 0) / 100_000.0),
+                    ringColor: Color(red: 0.95, green: 0.35, blue: 0.8),
+                    secondaryColor: Color(red: 0.6, green: 0.2, blue: 0.9)
+                )
+                
+                MetricRingView(
+                    title: L("Cost", "成本"),
+                    value: run.formattedCost,
+                    progress: min(1.0, (run.aggregatedUsage.estimatedCreditsMicros ?? 0) / 100_000.0),
+                    ringColor: Color(red: 0.2, green: 0.85, blue: 0.45),
+                    secondaryColor: Color.teal
+                )
+            }
+            
+            // 2. Execution Trajectory Timeline Section
+            if run.hasTrajectory {
+                TrajectoryTimelineSectionView(run: run, isExpanded: $isTrajectoryExpanded)
+            }
+            
+            // 3. Execution Logs Drawer Section
+            if run.hasLogs {
+                LogsSectionView(run: run, isExpanded: $isLogsExpanded)
+            }
+            
+            // Quota & Rate Limit Windows Meter
+            if !run.effectiveQuotaWindows.isEmpty {
+                QuotaWindowsView(windows: run.effectiveQuotaWindows)
+            }
+            
+            // Participants (Parent & Worker Topology)
+            participantsSection(run: run)
+            
+            if run.allWorkers.contains(where: {
+                !(($0.conclusion ?? "").trimmingCharacters(in: .whitespacesAndNewlines)).isEmpty
+            }) {
+                workerOutcomesSection(run: run)
+            }
+            
+            // Token Distribution Bar
+            TokenDistributionBar(usage: run.aggregatedUsage)
+            
+            // 4. Skills & MCP Tools Badges Section (Bottom)
+            if run.hasSkillsOrTools {
+                SkillsAndToolsSectionView(run: run, isExpanded: $isSkillsExpanded)
+            }
+            
+            // Action Footer
+            actionFooter(run: run)
         }
-        .frame(maxHeight: 440)
+        .padding(.vertical, 2)
+        
+        return Group {
+            if isFullHeight {
+                content
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    content
+                }
+                .frame(maxHeight: 440)
+            }
+        }
     }
     
     // MARK: - Idle / Ready Inspector Content (Clean Zero/Cleared State)
@@ -834,6 +844,7 @@ public struct SummaryView: View {
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundColor(.white.opacity(0.95))
                         .lineLimit(1)
+                        .blur(radius: state.isPrivacyMode ? 4.5 : 0)
                     
                     if let branch = run.gitBranch {
                         Text("·")
@@ -875,15 +886,20 @@ public struct SummaryView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .blur(radius: state.isPrivacyMode ? 4.5 : 0)
             }
         }
     }
     
     // MARK: - Task Picker Dropdown Menu
+    @ViewBuilder
     private func taskPickerMenu<LabelContent: View>(label: LabelContent) -> some View {
-        Menu {
-            // 1. Live Task Option
-            if let latest = state.latestRun {
+        if state.isPrivacyMode || isFullHeight {
+            label
+        } else {
+            Menu {
+                // 1. Live Task Option
+                if let latest = state.latestRun {
                 Section(L("Live Session", "当前会话")) {
                     Button {
                         state.jumpToLive()
@@ -953,6 +969,7 @@ public struct SummaryView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        }
     }
     
     // MARK: - Status Badge
@@ -1119,6 +1136,46 @@ public struct SummaryView: View {
     }
     
     // MARK: - Worker Outcomes
+    @ViewBuilder
+    private func workerOutcomeCard(worker: ParticipantInfo) -> some View {
+        let title = worker.agentType ?? worker.name ?? L("Worker", "Worker")
+        let model = worker.displayModel
+        let conclusionText = (worker.conclusion ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.9))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(model)
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .foregroundColor(.teal.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            
+            if !conclusionText.isEmpty {
+                Text(conclusionText)
+                    .font(.system(size: 9, weight: .regular))
+                    .foregroundColor(.white.opacity(0.68))
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.white.opacity(0.035))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Color.teal.opacity(0.14), lineWidth: 0.7)
+                )
+        )
+    }
+
     private func workerOutcomesSection(run: TaskRun) -> some View {
         let workers = run.allWorkers.filter { worker in
             guard let conclusion = worker.conclusion else { return false }
@@ -1139,39 +1196,8 @@ public struct SummaryView: View {
                     .foregroundColor(.teal.opacity(0.9))
             }
             
-            ForEach(Array(workers.enumerated()), id: \.offset) { _, worker in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        Text(worker.agentType ?? worker.name ?? L("Worker", "Worker"))
-                            .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white.opacity(0.9))
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text(worker.displayModel)
-                            .font(.system(size: 8, weight: .medium, design: .monospaced))
-                            .foregroundColor(.teal.opacity(0.8))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    
-                    if let conclusion = worker.conclusion {
-                        Text(conclusion.trimmingCharacters(in: .whitespacesAndNewlines))
-                            .font(.system(size: 9, weight: .regular))
-                            .foregroundColor(.white.opacity(0.68))
-                            .lineLimit(3)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(Color.white.opacity(0.035))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(Color.teal.opacity(0.14), lineWidth: 0.7)
-                        )
-                )
+            ForEach(workers) { worker in
+                workerOutcomeCard(worker: worker)
             }
         }
         .padding(8)
@@ -1304,10 +1330,12 @@ public struct TaskSummaryCardView: View {
     @ObservedObject private var localization = AppLocalization.shared
     public var run: TaskRun
     @Binding public var isExpanded: Bool
+    public var isPrivacyMode: Bool = false
     
-    public init(run: TaskRun, isExpanded: Binding<Bool>) {
+    public init(run: TaskRun, isExpanded: Binding<Bool>, isPrivacyMode: Bool = false) {
         self.run = run
         self._isExpanded = isExpanded
+        self.isPrivacyMode = isPrivacyMode
     }
     
     public var body: some View {
@@ -1373,6 +1401,7 @@ public struct TaskSummaryCardView: View {
                 .font(.system(size: 9.5, weight: .regular))
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(3)
+                .blur(radius: isPrivacyMode ? 4.5 : 0)
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1397,6 +1426,7 @@ public struct TaskSummaryCardView: View {
                 .font(.system(size: 9.5, weight: .regular))
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(4)
+                .blur(radius: isPrivacyMode ? 4.5 : 0)
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)

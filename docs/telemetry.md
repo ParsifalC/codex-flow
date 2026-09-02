@@ -1,53 +1,58 @@
-# Telemetry & Quota Attribution
+# Telemetry 遥测归因与配额感知
 
-`codex-flow` includes a zero-overhead, deterministic telemetry system that tracks multi-agent turn lifecycles, token breakdowns, and account rate-limit quotas without invoking secondary LLMs.
+<div align="center">
 
----
+[ 简体中文 ](telemetry.md) | [ English ](telemetry.en.md)
 
-## Design Principles
+</div>
 
-1. **Zero LLM Invocation**: The telemetry collector and formatter are written in pure Python. No secondary LLM calls are made to summarize runs.
-2. **Turn-Based Isolation**: Each user interaction turn is tracked as a single atomic `flow run`.
-3. **Deterministic Token Attribution**: Turn-level delta arithmetic is computed from native Codex `token_count` transcript events.
-4. **App-Server Rate Limits**: Live quota snapshots (`usedPercent`, remaining, and `+X pp` delta) are collected from the local `codex app-server`.
-5. **Fail-Open Resilience**: If any hook, app-server endpoint, or transcript field is missing, execution continues unimpeded with graceful fallbacks.
+`codex-flow` 内置了零开销、确定性的 Telemetry 遥测引擎，能够在不额外调用任何二次 LLM 的前提下，精确捕获多 Agent 轮次生命周期、细分 Token 归因差值与账户速率配额变动。
 
 ---
 
-## Telemetry Flow
+## 核心设计原则
+
+1. **零 LLM 额外开销**：遥测采集器与格式化器全部由纯 Python 编写，绝不产生二次 LLM Token 浪费。
+2. **轮次级原子隔离**：用户每一次交互轮次均作为单一原子的 `flow run` 独立追踪。
+3. **确定性 Token 差值归因**：直接从 Codex 原生 transcript 的 `token_count` 事件计算轮次差值，精准归因。
+4. **App-Server 实时配额采样**：通过本地 `codex app-server` 端点实时捕获账户配额水位（`usedPercent`、剩余量及本次变动 `+X pp`）。
+5. **Fail-Open 容错设计**：即使 Hook 异常、端点无法访问或字段缺失，整体执行流程绝对不被阻塞。
+
+---
+
+## 遥测采集架构
 
 ```mermaid
 flowchart LR
-    User[User Turn Start] --> HookStart[Codex Start Hook]
-    HookStart --> AppServerStart[Sample Rate Limit Snapshot]
-    HookStart --> Execute[Parent & Subagent Execution]
+    User[用户交互开始] --> HookStart[Codex Start Hook]
+    HookStart --> AppServerStart[采样初始配额快照]
+    HookStart --> Execute[Parent 与 Subagent 协同执行]
     Execute --> HookStop[Codex Stop Hook]
-    HookStop --> AppServerEnd[Sample Rate Limit Snapshot End]
-    HookStop --> TranscriptCollector[Parse Transcripts & Diff Tokens]
-    TranscriptCollector --> LocalJSON[Save run-*.json & last.json]
-    TranscriptCollector --> Formatter[Pure-Python Terminal Summary]
-    TranscriptCollector --> Notification[macOS Notification Alert]
-    TranscriptCollector --> OverlayIPC[Emit IPC Update to Native Widget]
+    HookStop --> AppServerEnd[采样结束配额快照]
+    HookStop --> TranscriptCollector[解析 Transcript 计算差值]
+    TranscriptCollector --> LocalJSON[保存 run-*.json 与 last.json]
+    TranscriptCollector --> Formatter[终端纯 Python 报告输出]
+    TranscriptCollector --> Notification[macOS 系统通知中心推送]
+    TranscriptCollector --> OverlayIPC[发射 IPC 信号更新桌面悬浮窗]
 ```
 
 ---
 
-## Collected Metrics
+## 采集指标维度
 
-| Category | Metric | Source | Description |
-| :--- | :--- | :--- | :--- |
-| **Participants** | Parent / Worker count, models & outcomes | Transcript / Hooks | Models, reasoning levels, and worker completion messages |
-| **Token Breakdown** | Input / Cached / Output / Reasoning | Transcript diffs | Attributed token consumption per turn |
-| **Quota Snapshot** | 5m, 1h, 1d window usage (`usedPercent`) | `codex app-server` | Live account quota usage percentage and delta |
-| **Cost & Credits** | Estimated credits / API-equivalent | Billing routes | Derived only when official billing routes are available |
-| **Session Metadata** | Project name, Git branch, Thread ID | Local index / Hooks | Project context without recording full prompts |
+| 指标分类 | 核心字段 | 数据源 | 详细描述 |
+| **参与角色** | Parent / Worker 数量、模型与交付结论 | Transcript / Hook | 记录参与调度的模型、实际推理强度及 Worker 任务交付信息 |
+| **Token 细分** | Input / Cached / Output / Reasoning | Transcript 差值计算 | 精确归因各阶段的输入、缓存命中、输出与思考 Token |
+| **配额水位** | 5m, 1h, 1d 窗口使用率 (`usedPercent`) | `codex app-server` | 账户实时速率限制百分比及本轮消耗差值 |
+| **费用预估** | Estimated credits / API-equivalent | 计费规则推导 | 官方计费路由可用时自动折算为额度与费用 |
+| **会话上下文** | 工程名称、Git 分支、Thread ID | 本地索引 / Hook | 仅记录工程元数据，绝不上传私有完整 Prompt |
 
 ---
 
-## Output Examples
+## 输出呈现格式
 
-### Terminal Summary Card
-At the conclusion of a task, FlowPilot outputs a structured summary:
+### 1. 终端摘要卡片 (Terminal Summary Card)
+任务执行结束时，FlowPilot 会在终端输出结构化卡片：
 
 ```text
 FlowPilot summary
@@ -60,55 +65,55 @@ FlowPilot summary
   account quota (used) 5h 31%→34% (+3 pp; 66% remaining); 7d 18%→19% (+1 pp; 81% remaining)
 ```
 
-### macOS Notification
-A lightweight notification is dispatched to macOS Notification Center:
+### 2. macOS 原生系统通知
+任务完成时自动向 macOS 通知中心发送轻量提示：
 ```text
 FlowPilot • my-project
-Completed with 3 workers (668.8k tokens, 42s)
+已完成（派发 3 个 Worker，消耗 668.8k tokens，耗时 42s）
 ```
 
 ---
 
-## Telemetry CLI Commands
+## 遥测 CLI 命令
 
-### 1. View Last Task
+### 1. 查看最近一次任务
 ```bash
-# Formatted terminal card
+# 格式化终端卡片
 codex-flow usage last
 
-# Raw JSON data
+# 原始 JSON 数据输出
 codex-flow usage last --json
 ```
 
-### 2. History Listing
+### 2. 历史任务列表
 ```bash
-# List recent 10 runs
+# 查看最近 10 次任务
 codex-flow usage list -n 10
 
-# Filter by project or today only
+# 按工程过滤或仅查看今日
 codex-flow usage list -p my-project --today
 ```
 
-### 3. Detailed Run Inspection
+### 3. 指定任务穿透详情
 ```bash
-# View details of a specific historical run (#1, #2 or session ID)
+# 查看指定历史任务详情（支持 #1、#2 或 session_id）
 codex-flow usage show 1
 ```
 
-### 4. Aggregate Analytics
+### 4. 聚合效能看板
 ```bash
-# 30-day cross-project efficiency & offload analysis
+# 跨工程 30 天效能与 Worker 分流分析
 codex-flow usage stats -d 30
 
-# Filter by project
+# 指定工程 7 天分析
 codex-flow usage stats -p my-project -d 7
 ```
 
 ---
 
-## Log Storage & Retention
+## 日志存储与生命周期
 
-- **Directory**: `~/.codex/codex-flow/telemetry/runs/`
-- **Latest Pointer**: `~/.codex/codex-flow/telemetry/last.json`
-- **Default Retention**: 30 days (`retention_days = 30`).
-- **Orphan Auto-Merging**: Unattached worker transcripts are linked by `agent_id` or parent/worker timestamp windows and merged on the next parent stop event.
+- **存储目录**：`~/.codex/codex-flow/telemetry/runs/`
+- **最新任务指针**：`~/.codex/codex-flow/telemetry/last.json`
+- **默认保留期**：30 天（可由 `retention_days = 30` 配置）。
+- **孤儿 Worker 自动归集**：无挂载的 Worker 会根据 `agent_id` 或时间窗口在下次 Parent Stop 事件时自动合并入父级 Session。

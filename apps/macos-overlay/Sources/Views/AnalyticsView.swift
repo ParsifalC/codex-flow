@@ -3,9 +3,11 @@ import SwiftUI
 public struct AnalyticsView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
+    public var isFullHeight: Bool = false
     
-    public init(state: OverlayState) {
+    public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
+        self.isFullHeight = isFullHeight
     }
     
     private var stats: TelemetryStats {
@@ -13,34 +15,42 @@ public struct AnalyticsView: View {
     }
     
     public var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(spacing: 9) {
-                // MARK: 1. Header & Period Selector
-                periodHeader
+        let content = VStack(spacing: 9) {
+            // MARK: 1. Header & Period Selector
+            periodHeader
+            
+            if stats.totalRuns == 0 {
+                emptyStatsState
+            } else {
+                // MARK: 2. Core KPIs Row
+                kpiSummaryGrid
                 
-                if stats.totalRuns == 0 {
-                    emptyStatsState
-                } else {
-                    // MARK: 2. Core KPIs Row
-                    kpiSummaryGrid
-                    
-                    // MARK: 3. Efficiency Rings / Bars (Cache & Offload)
-                    efficiencyCard
-                    
-                    // MARK: 4. Model Breakdown List
-                    if !stats.models.isEmpty {
-                        modelBreakdownCard
-                    }
-                    
-                    // MARK: 5. Project Breakdown List
-                    if !stats.projects.isEmpty {
-                        projectBreakdownCard
-                    }
+                // MARK: 3. Efficiency Rings / Bars (Cache & Offload)
+                efficiencyCard
+                
+                // MARK: 4. Model Breakdown List
+                if !stats.models.isEmpty {
+                    modelBreakdownCard
+                }
+                
+                // MARK: 5. Project Breakdown List
+                if !stats.projects.isEmpty {
+                    projectBreakdownCard
                 }
             }
-            .padding(.vertical, 2)
         }
-        .frame(maxHeight: 345)
+        .padding(.vertical, 2)
+        
+        return Group {
+            if isFullHeight {
+                content
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    content
+                }
+                .frame(maxHeight: 345)
+            }
+        }
         .onAppear {
             state.loadStats()
         }
@@ -267,7 +277,7 @@ public struct AnalyticsView: View {
             
             VStack(spacing: 3.5) {
                 ForEach(Array(stats.projects.prefix(5))) { p in
-                    ProjectBreakdownRow(project: p)
+                    ProjectBreakdownRow(project: p, isPrivacyMode: state.isPrivacyMode)
                 }
             }
         }
@@ -356,6 +366,12 @@ public struct ModelBreakdownRow: View {
 public struct ProjectBreakdownRow: View {
     @ObservedObject private var localization = AppLocalization.shared
     public var project: ProjectStats
+    public var isPrivacyMode: Bool = false
+    
+    public init(project: ProjectStats, isPrivacyMode: Bool = false) {
+        self.project = project
+        self.isPrivacyMode = isPrivacyMode
+    }
     
     public var body: some View {
         HStack(spacing: 5) {
@@ -367,6 +383,7 @@ public struct ProjectBreakdownRow: View {
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
                 .lineLimit(1)
+                .blur(radius: isPrivacyMode ? 4.5 : 0)
             
             Spacer(minLength: 2)
             

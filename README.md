@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡️ codex-flow
+# ✨ codex-flow
 
 **智能、高效、自适应的 Codex 多 Agent 协同编排引擎**
 

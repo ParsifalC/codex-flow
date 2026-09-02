@@ -1,44 +1,61 @@
 # macOS 原生悬浮窗 (Native Floating Widget)
 
-`codex-flow-overlay` 是专为 macOS 设计的 100% 纯原生（SwiftUI + AppKit）悬浮窗组件，深度集成了 `codex-flow usage` 的全部核心能力（实时巡检、配额监控、历史回溯、聚合效能分析）。
+<div align="center">
+
+[ 简体中文 ](README.md) | [ English ](README.en.md)
+
+</div>
+
+`codex-flow-overlay` 是专为 macOS 设计的 100% 纯原生（基于 **SwiftUI + AppKit** 构建）桌面悬浮窗组件，深度集成了 `codex-flow usage` 的全部核心能力（实时巡检、配额监控、历史回溯、聚合效能分析）。
 
 ---
 
 <div align="center">
-  <img src="assets/promo/flowpilot_promo_poster.png" alt="FlowPilot Native Overlay Showcase" width="100%" style="border-radius: 12px; margin: 12px 0;" />
+  <img src="../../docs/assets/promo/flowpilot_promo_poster.png" alt="FlowPilot Native Overlay Showcase" width="100%" style="border-radius: 12px; margin: 12px 0;" />
 </div>
 
 ---
 
 ## ✨ 核心特性
 
-- 🟢 **默认形态（圆形悬浮气泡）**：
-  - 直径 68px 的 Frosted Glass 毛玻璃拟物风格（macOS `ultraThinMaterial`）；
+- 🟢 **默认形态（灵动微胶囊 Micro Capsule）**：
+  - 直径 68px 的 Frosted Glass 毛玻璃拟物圆环（macOS `ultraThinMaterial`）；
   - 外圈动态彩虹渐变边框与实时呼吸灯；
   - 实时状态角标（🟢 空闲/完成 · 🔵 任务运行中 · 🟠 异常/告警）；
-  - 底部微缩显示最近任务的 Token 消耗徽章（如 `42.5k`）；
+  - 底部微缩显示最近任务的 Token 消耗徽章（如 `198.2k`）；
   - 边缘自动半收起（Half-Tuck）与屏幕防溢出磁吸贴靠。
 
 - ⚡️ **展开态（全功能 Glass TabBar 监控台）**：
   - **⚡️ Inspector（任务巡检）**：
     - **Header**：项目名标签、Git 分支胶囊、任务状态徽章、Pin 锁定按钮与折叠按钮；
+    - **任务目标与交付结论卡**：智能提炼展示会话目标与交付成果；
     - **KPI Rings**：3 组高精环形仪表盘（Time 耗时、Tokens 消耗、Cost 费用估算）；
-    - **Rate Limits & Quota**：5m / 1h / 1d 账户配额消耗百分比进度与重置倒计时（集成 `usage last` 配额感知）；
+    - **Rate Limits & Quota**：5m / 1h / 1d / 7d 账户配额消耗百分比进度与重置倒计时；
     - **Token 细分条**：多色堆叠胶囊条，直观呈现 Prompt、Output、Cached 与 Reasoning 思考 Token 分布；
     - **多 Agent 路由拓扑**：展示 Parent Agent（模型与 Reasoning 强度）及各个 Worker Subagents 的独立用量与状态；
-    - **历史查看态导航**：支持回溯任意历史任务，提供一键 `[⚡️ Jump to Live]` 返回实时任务；
+    - **技能与 MCP 标签**：自动标注调用的 Skills 与 MCP Server 工具；
+    - **历史查看态导航**：支持回溯任意历史任务，提供一键 `[⚡️ 查看最新]` 返回实时任务；
     - **操作底栏**：一键复制 Summary 剪贴板（带 Copied 动画反馈）、唤起终端控制台、Pin 锁定常驻。
   - **📜 History（历史回溯）**：
-    - 集成 `usage list` 时间线任务列表（展示任务序号、时间戳、项目分支、会话摘要、Worker 数量与消耗）；
-    - 支持 `All / Today` 快速筛选、项目过滤与即时关键词搜索；
+    - 多维历史会话：支持按工程过滤、`All` / `Today` 切换与实时关键词检索；
+    - **会话手风琴 (Chat Accordion)**：按会话聚合多轮任务，展示会话总 Token 与最大并发；
+    - **轮次流水线 (Session Turns)**：精确展开每一轮次的时间、耗时、Worker 标签与配额消耗差值（`+1%` / `-1%`）；
     - 点击任意历史任务条目即刻在 Inspector 中展开深度详情。
   - **📊 Analytics（效能看板）**：
-    - 集成 `usage stats` 聚合分析，支持 `7 Days` / `30 Days` 周期切换；
+    - 集成聚合效能分析，支持 `7 Days` / `30 Days` 周期切换；
     - 汇总总任务数（委派 vs 直接）、总活跃时长、总 Token 消耗与费用预估；
     - **Cache Efficiency**：缓存命中率与节省 Token 统计；
     - **Worker Offload**：Worker 算力委派比例仪表；
     - **Model Breakdown**：各模型调用次数、Token 占比与角色标签（Parent/Worker）；
     - **Projects Distribution**：多仓库/多项目活跃度排行。
+
+---
+
+## 🔒 隐私脱敏与演示模式
+
+内置 `isPrivacyMode` 隐私保护：
+- 所有敏感项目名、对话指令、任务目标与交付结论均自动采用平滑的高斯模糊滤镜（`blur(radius: 4.5)`）打码；
+- 非常适合录屏演示、公开分享与制作文档插图。
 
 ---
 
@@ -48,14 +65,14 @@
 ```bash
 bash apps/macos-overlay/build.sh
 ```
-编译产物位于 `apps/macos-overlay/bin/codex-flow-overlay`。
+编译产物位于 `apps/macos-overlay/bin/FlowPilot`。
 
 ### 2. 启动悬浮窗守护进程
 ```bash
 # 启动后台常驻悬浮窗
 codex-flow overlay start
 # 或直接执行二进制
-./apps/macos-overlay/bin/codex-flow-overlay start &
+./apps/macos-overlay/bin/FlowPilot start &
 ```
 
 ### 3. CLI 控制指令
@@ -65,9 +82,8 @@ codex-flow overlay status
 
 # 切换展开 / 折叠
 codex-flow overlay toggle
-
-# 展开悬浮窗
 codex-flow overlay expand
+codex-flow overlay collapse
 
 # 切换视图选项卡
 codex-flow overlay tab inspector

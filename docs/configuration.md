@@ -1,17 +1,23 @@
-# Configuration & Adaptive Strategy
+# 配置系统与自适应策略
 
-This document details the configuration system, policy parameters, reasoning levels, and environment overrides for **codex-flow**.
+<div align="center">
+
+[ 简体中文 ](configuration.md) | [ English ](configuration.en.md)
+
+</div>
+
+本文档详细说明 **codex-flow** 的配置体系、策略参数、推理强度矩阵以及环境变量覆盖规则。
 
 ---
 
-## Configuration File
+## 配置文件路径
 
-The configuration file is located at:
+配置文件默认位于用户主目录下：
 ```text
 ~/.codex/codex-flow.toml
 ```
 
-When installed without custom environment overrides, `codex-flow` generates a configuration conforming to `schema_version = 3`:
+安装后生成的标准配置（符合 `schema_version = 3` 规范）：
 
 ```toml
 schema_version = 3
@@ -52,87 +58,57 @@ language = "auto"
 
 ---
 
-## Configuration Reference
+## 配置字段详解
 
-### `[parent]`
-- `model_policy`: `"latest-capable"` — Always favors the strongest reasoning model.
-- `min_model`: `"auto"` — Follows codex-flow recommended baseline.
-- `min_reasoning_effort`: `"high"` — Minimum reasoning level for parent orchestration.
-- `reasoning_policy`: `"adaptive"` — Dynamically adjusts reasoning effort based on task complexity.
-- `routine_effort`, `complex_effort`, `critical_effort`: Effort targets for each tier (`high`, `xhigh`, `max`).
+### `[parent]`（父级规划模型策略）
+- `model_policy`: `"latest-capable"` — 优先采用能力最强的大参数推理模型（负责顶层任务拆解与全局决策）。
+- `min_model`: `"auto"` — 遵循官方推荐基线。
+- `min_reasoning_effort`: `"high"` — 父级编排的最低推理思考强度底线。
+- `reasoning_policy`: `"adaptive"` — 依据任务输入复杂度动态缩放推理强度（`high` / `xhigh` / `max`）。
 
-### `[worker]`
-- `model_policy`: `"latest-efficient"` — Selects the most cost-effective and coding-capable model.
-- `model`: `"auto"` — Auto-resolved to the latest recommended worker model (e.g., `gpt-5.6-luna`).
-- `resolved_model`: Current pinned/resolved model identifier.
-- `min_reasoning_effort`: Default lower bound for worker tasks.
-- `reasoning_policy`: `"adaptive"` — Worker reasoning adapts along with the parent's task categorization.
+### `[worker]`（子任务执行模型策略）
+- `model_policy`: `"latest-efficient"` — 优先采用高吞吐、高性价比的经济型模型（负责具体编码、执行与探索）。
+- `model`: `"auto"` — 自动匹配本地环境可用模型。
+- `resolved_model`: `"gpt-5.6-luna"` — 默认固定的子任务执行模型。
+- `min_reasoning_effort`: `"high"` — 子任务执行的推理基线。
+- `reasoning_policy`: `"adaptive"` — 在复杂重构、架构探索和排障时自适应上调。
 
-### `[runtime]`
-- `max_concurrent_threads`: Maximum concurrent worker threads per session (default: `4`).
-- `max_repair_cycles`: Maximum repair iterations when external verifier reports errors (default: `2`).
+### `[runtime]`（运行时控制）
+- `max_concurrent_threads`: `4` — 子 Agent 最大并行并发数。
+- `max_repair_cycles`: `2` — 自动自我修复重试上限，超限后升级至 Parent 重新仲裁。
 
-### `[telemetry]`
-- `enabled`: `true` — Activates lifecycle hooks and transcript token tracking.
-- `summary`: `true` — Emits formatted terminal summary upon task completion.
-- `notifications`: `true` — Sends macOS Notification Center alerts.
-- `retention_days`: `30` — Number of days to retain run telemetry JSON files.
-- `source`: `"hooks+app-server"` — Data sources for usage extraction and rate-limit tracking.
+### `[telemetry]`（遥测与通知）
+- `enabled`: `true` — 启用确定性 Token 与配额记录。
+- `summary`: `true` — 任务结束后在终端输出格式化卡片。
+- `notifications`: `true` — 发送 macOS 系统通知中心弹窗。
+- `retention_days`: `30` — 日志与历史保留天数。
+- `source`: `"hooks+app-server"` — 遥测数据采集源。
 
-### `[ui]`
-- `language`: `"auto"` (`"zh"` / `"en"`) — Language for CLI, notifications, and interactive console.
+### `[ui]`（用户界面语言）
+- `language`: `"auto"` — 支持 `"auto"`（随系统）、`"zh"`（简体中文）、`"en"`（English）。
 
 ---
 
-## Reasoning Effort Matrix
+## 推理强度策略矩阵 (Reasoning Effort Matrix)
 
-The core philosophy is **"use the lowest qualified reasoning effort sufficient to accomplish the task"**, avoiding unconditional maximums:
-
-| Task Class | Parent Reasoning | Worker Reasoning | Delegation Trigger |
+| 任务复杂度等级 | Parent 推理强度 | Worker 推理强度 | 适用工作负载示例 |
 | :--- | :--- | :--- | :--- |
-| **SMALL** | `high` or current qualified | None (executed directly) | Single-file, localized, trivial changes |
-| **ROUTINE** | `high` | `high` | Standard multi-file edits, straightforward features |
-| **COMPLEX** | `high` / `xhigh` | `high` / `xhigh` | Architecture refactoring, cross-module migrations |
-| **CRITICAL** | `xhigh` / `max` | Quality-first (`xhigh`/`max`) | Atomic state mutations, zero-downtime data migrations |
-
-> **Note**: `max` reasoning is never a blanket default. It is only activated when task complexity or prior lower-tier failures justify it.
+| **常规日常 (Routine)** | `high` | `high` | 文档更新、单文件微调、常规脚本修补 |
+| **复杂工程 (Complex)** | `xhigh` | `xhigh` | 多文件跨模块特性开发、接口深度重构、并发 Bug 排查 |
+| **关键核心 (Critical)** | `max` | `max` | 核心架构重构、底层内核调试、安全性漏洞加固 |
 
 ---
 
-## Environment Variable Overrides
+## 环境变量即时覆盖 (Environment Variables)
 
-Any configuration item can be temporarily or permanently overridden via environment variables during installation or execution:
+无需修改 TOML 文件即可通过环境变量直接覆盖任意参数：
 
-| Environment Variable | Default Value | Description |
+| 环境变量 | 覆盖配置项 | 示例取值 |
 | :--- | :--- | :--- |
-| `CODEX_FLOW_PARENT_MODEL_POLICY` | `latest-capable` | Parent model selection policy |
-| `CODEX_FLOW_PARENT_MIN_MODEL` | `auto` | Parent baseline model requirement |
-| `CODEX_FLOW_PARENT_MIN_EFFORT` | `high` | Parent minimum reasoning effort |
-| `CODEX_FLOW_WORKER_MODEL_POLICY` | `latest-efficient` | Worker model selection policy |
-| `CODEX_FLOW_WORKER_MODEL` | `auto` | Pinned worker model or auto |
-| `CODEX_FLOW_WORKER_MIN_EFFORT` | `high` | Worker minimum reasoning effort |
-| `CODEX_FLOW_MAX_THREADS` | `4` | Maximum parallel worker threads |
-| `CODEX_FLOW_MAX_REPAIR_CYCLES` | `2` | Maximum automatic repair retries |
-| `CODEX_FLOW_TELEMETRY_ENABLED` | `true` | Telemetry capture toggle |
-| `CODEX_FLOW_TELEMETRY_NOTIFICATIONS`| `true` | macOS Notification Center alerts |
-| `CODEX_FLOW_TELEMETRY_RETENTION_DAYS`| `30` | Run telemetry log retention (days) |
-| `CODEX_FLOW_LANGUAGE` | `auto` | Per-process UI language override |
-| `CODEX_FLOW_BIN_DIR` | `~/.local/bin` | Binary installation directory |
-| `CODEX_FLOW_SHELL` | `basename $SHELL` | Target shell for path & auto-completion |
-| `CODEX_FLOW_SHELL_CONFIG_DIR` | `$HOME` | Directory housing shell configuration files |
-
----
-
-## Codex Agent Runtime Fallback
-
-During installation, `codex-flow` also configures Codex's native `[agents]` runtime in `~/.codex/config.toml` to guarantee graceful subagent execution:
-
-```toml
-[agents]
-enabled = true
-max_concurrent_threads_per_session = 4
-default_subagent_model = "gpt-5.6-luna"
-default_subagent_reasoning_effort = "high"
-```
-
-This ensures consistent fallback behavior without altering the user's primary interactive session model.
+| `CODEX_FLOW_PARENT_MODEL` | `parent.model_policy` | `gpt-5.6-sol` |
+| `CODEX_FLOW_WORKER_MODEL` | `worker.model` | `gpt-5.6-luna` |
+| `CODEX_FLOW_PARENT_EFFORT` | `parent.routine_effort` | `high` / `xhigh` / `max` |
+| `CODEX_FLOW_WORKER_EFFORT` | `worker.routine_effort` | `high` / `xhigh` / `max` |
+| `CODEX_FLOW_THREADS` | `runtime.max_concurrent_threads` | `8` |
+| `CODEX_FLOW_TELEMETRY` | `telemetry.enabled` | `true` / `false` |
+| `CODEX_FLOW_UI_LANG` | `ui.language` | `zh` / `en` |

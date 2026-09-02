@@ -3,10 +3,12 @@ import SwiftUI
 public struct HistoryView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
+    public var isFullHeight: Bool = false
     @State private var availableProjects: [String] = []
     
-    public init(state: OverlayState) {
+    public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
+        self.isFullHeight = isFullHeight
     }
     
     public var body: some View {
@@ -23,7 +25,9 @@ public struct HistoryView: View {
         }
         .onAppear {
             availableProjects = ["All"] + TelemetryQueryEngine.shared.allProjects()
-            state.loadHistory()
+            if state.historyChats.isEmpty && state.historyRuns.isEmpty {
+                state.loadHistory()
+            }
         }
     }
     
@@ -47,51 +51,80 @@ public struct HistoryView: View {
                 
                 // Project picker (Dimension 1: Project)
                 if availableProjects.count > 2 {
-                    Menu {
-                        ForEach(availableProjects, id: \.self) { proj in
-                            Button(proj == "All" ? L("All", "全部") : proj) {
-                                state.selectedProject = (proj == "All" ? nil : proj)
-                                state.loadHistory()
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 9))
-                            Text(state.selectedProject ?? L("All Projects", "全部项目"))
-                                .font(.system(size: 9.5, weight: .medium))
-                                .lineLimit(1)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 7.5))
-                        }
-                        .foregroundColor(.white.opacity(0.8))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3.5)
-                        .background(Capsule().fill(Color.white.opacity(0.07)))
+                    let projectPickerLabel = HStack(spacing: 3) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 9))
+                            .foregroundColor(.cyan.opacity(0.9))
+                        
+                        Text(state.selectedProject ?? L("All", "全部"))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.white.opacity(0.85))
+                            .lineLimit(1)
+                            .blur(radius: (state.isPrivacyMode && state.selectedProject != nil) ? 4.5 : 0)
+                        
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7))
+                            .foregroundColor(.white.opacity(0.5))
                     }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    
+                    if state.isPrivacyMode || isFullHeight {
+                        projectPickerLabel
+                    } else {
+                        Menu {
+                            ForEach(availableProjects, id: \.self) { proj in
+                                Button(proj == "All" ? L("All", "全部") : proj) {
+                                    state.selectedProject = (proj == "All" ? nil : proj)
+                                    state.loadHistory()
+                                }
+                            }
+                        } label: {
+                            projectPickerLabel
+                        }
+                        .menuStyle(.borderlessButton)
+                    }
                 }
                 
                 Spacer()
                 
-                // Aggregate Count Badge (Chats & Total Runs)
-                countBadge
+                // Refresh button
+                Button {
+                    state.loadHistory()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.6))
+                        .padding(4)
+                        .background(Circle().fill(Color.white.opacity(0.06)))
+                }
+                .buttonStyle(.plain)
             }
             
-            // Search Input Box
-            HStack(spacing: 6) {
+            // Search field
+            HStack(spacing: 5) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 9))
                     .foregroundColor(.white.opacity(0.4))
                 
-                TextField(L("Search chat, prompt, branch or id...", "搜索对话、提示词、分支或 ID…"), text: $state.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(.white)
-                    .onChange(of: state.searchQuery) {
-                        state.loadHistory()
-                    }
+                if state.isPrivacyMode || isFullHeight {
+                    Text(state.searchQuery.isEmpty ? L("Search chat or session...", "搜索对话或会话...") : state.searchQuery)
+                        .font(.system(size: 9.5))
+                        .foregroundColor(state.searchQuery.isEmpty ? .white.opacity(0.35) : .white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    TextField(L("Search chat or session...", "搜索对话或会话..."), text: $state.searchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 9.5))
+                        .foregroundColor(.white)
+                        .onChange(of: state.searchQuery) { _ in
+                            state.loadHistory()
+                        }
+                }
                 
                 if !state.searchQuery.isEmpty {
                     Button {
@@ -99,48 +132,35 @@ public struct HistoryView: View {
                         state.loadHistory()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: 9))
                             .foregroundColor(.white.opacity(0.4))
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 7)
             .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.05))
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.white.opacity(0.04))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                     )
             )
         }
     }
     
-    private var countBadge: some View {
-        let chatCount = state.historyChats.count
-        let runCount = state.historyRuns.count
-        let text = chatCount == runCount
-            ? L("\(chatCount) chats", "\(chatCount) 个对话")
-            : L("\(chatCount) chats · \(runCount) runs", "\(chatCount) 个对话 · \(runCount) 次执行")
-        
-        return Text(text)
-            .font(.system(size: 9.0, weight: .semibold, design: .rounded))
-            .foregroundColor(.white.opacity(0.5))
-    }
-    
     private func scopeButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? .white : .white.opacity(0.55))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3.5)
-                .contentShape(Capsule())
+                .font(.system(size: 8.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                .foregroundColor(isSelected ? .white : .white.opacity(0.5))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
                 .background(
                     Capsule()
-                        .fill(isSelected ? Color.cyan.opacity(0.3) : Color.white.opacity(0.001))
+                        .fill(isSelected ? Color.cyan.opacity(0.35) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -148,26 +168,35 @@ public struct HistoryView: View {
     
     // MARK: - Chat List (Accordion)
     private var chatList: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            LazyVStack(spacing: 8) {
-                ForEach(Array(state.historyChats.enumerated()), id: \.element.id) { index, chat in
-                    ChatAccordionRow(
-                        index: index + 1,
-                        chat: chat,
-                        isExpanded: state.isChatExpanded(chat.sessionId),
-                        inspectedRunId: state.inspectedRun?.id,
-                        onToggleExpand: {
-                            state.toggleChatExpansion(chat.sessionId)
-                        },
-                        onSelectRun: { run in
-                            state.inspect(run: run)
-                        }
-                    )
-                }
+        let listContent = LazyVStack(spacing: 8) {
+            ForEach(Array(state.historyChats.enumerated()), id: \.element.id) { index, chat in
+                ChatAccordionRow(
+                    index: index + 1,
+                    chat: chat,
+                    isExpanded: state.isChatExpanded(chat.sessionId),
+                    inspectedRunId: state.inspectedRun?.id,
+                    isPrivacyMode: state.isPrivacyMode,
+                    onToggleExpand: {
+                        state.toggleChatExpansion(chat.sessionId)
+                    },
+                    onSelectRun: { run in
+                        state.inspect(run: run)
+                    }
+                )
             }
-            .padding(.vertical, 2)
         }
-        .frame(maxHeight: 340)
+        .padding(.vertical, 2)
+        
+        return Group {
+            if isFullHeight {
+                listContent
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    listContent
+                }
+                .frame(maxHeight: 340)
+            }
+        }
     }
     
     // MARK: - Contextual Empty State
@@ -251,10 +280,29 @@ public struct ChatAccordionRow: View {
     public var chat: ChatSession
     public var isExpanded: Bool
     public var inspectedRunId: String?
+    public var isPrivacyMode: Bool = false
     public var onToggleExpand: () -> Void
     public var onSelectRun: (TaskRun) -> Void
     
     @State private var isHovered: Bool = false
+    
+    public init(
+        index: Int,
+        chat: ChatSession,
+        isExpanded: Bool,
+        inspectedRunId: String?,
+        isPrivacyMode: Bool = false,
+        onToggleExpand: @escaping () -> Void,
+        onSelectRun: @escaping (TaskRun) -> Void
+    ) {
+        self.index = index
+        self.chat = chat
+        self.isExpanded = isExpanded
+        self.inspectedRunId = inspectedRunId
+        self.isPrivacyMode = isPrivacyMode
+        self.onToggleExpand = onToggleExpand
+        self.onSelectRun = onSelectRun
+    }
     
     public var body: some View {
         VStack(spacing: 0) {
@@ -302,6 +350,7 @@ public struct ChatAccordionRow: View {
                             .font(.system(size: 10, weight: .bold, design: .rounded))
                             .foregroundColor(.white.opacity(0.95))
                             .lineLimit(1)
+                            .blur(radius: isPrivacyMode ? 4.5 : 0)
                         
                         if let branch = chat.gitBranch, !branch.isEmpty {
                             Text("(\(branch))")
@@ -323,6 +372,7 @@ public struct ChatAccordionRow: View {
                         .foregroundColor(.white.opacity(0.85))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .blur(radius: isPrivacyMode ? 4.5 : 0)
                     
                     // Chat Aggregated Metrics Row (Chat Totals)
                     HStack(spacing: 6) {
@@ -437,6 +487,7 @@ public struct ChatAccordionRow: View {
                         turnNumber: turnNumber,
                         run: run,
                         isSelected: inspectedRunId == run.id,
+                        isPrivacyMode: isPrivacyMode,
                         onSelect: {
                             onSelectRun(run)
                         }
@@ -499,7 +550,24 @@ public struct SessionItemRow: View {
     public var turnNumber: Int
     public var run: TaskRun
     public var isSelected: Bool
+    public var isPrivacyMode: Bool = false
     public var onSelect: () -> Void
+    
+    public init(
+        chatIndex: Int,
+        turnNumber: Int,
+        run: TaskRun,
+        isSelected: Bool,
+        isPrivacyMode: Bool = false,
+        onSelect: @escaping () -> Void
+    ) {
+        self.chatIndex = chatIndex
+        self.turnNumber = turnNumber
+        self.run = run
+        self.isSelected = isSelected
+        self.isPrivacyMode = isPrivacyMode
+        self.onSelect = onSelect
+    }
     
     @State private var isHovered: Bool = false
     
@@ -595,6 +663,7 @@ public struct SessionItemRow: View {
                             .foregroundColor(.white.opacity(0.65))
                             .lineLimit(1)
                             .truncationMode(.tail)
+                            .blur(radius: isPrivacyMode ? 4.5 : 0)
                     }
                 }
             }

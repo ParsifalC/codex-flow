@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡️ codex-flow
+# ✨ codex-flow
 
 **Intelligent, Efficient, and Adaptive Multi-Agent Orchestration for Codex**
 
@@ -158,12 +158,12 @@ For detailed configurations, architectural specifications, and advanced benchmar
 
 | Module | Document | Description |
 | :--- | :--- | :--- |
-| **⚙️ Configuration** | [docs/configuration.md](docs/configuration.md) | Full `codex-flow.toml` parameters, reasoning matrix, and env overrides |
-| **📈 Telemetry & Quota** | [docs/telemetry.md](docs/telemetry.md) | Hook lifecycle, transcript token delta algorithm, app-server quota sampling |
-| **🪟 Native Overlay** | [docs/overlay.md](docs/overlay.md) | Gestures, keyboard shortcuts, IPC protocol, and SwiftUI architecture |
-| **🧪 Local Benchmarks** | [docs/benchmark.md](docs/benchmark.md) | 6-task balanced corpus, keyless local testing, and multi-strategy comparisons |
-| **☁️ Actions CI** | [docs/benchmark-actions.md](docs/benchmark-actions.md) | GitHub Actions automated cloud benchmark workflow |
-| **🌐 Localization** | [docs/localization.md](docs/localization.md) | English / Chinese (i18n) setup and coverage |
+| **⚙️ Configuration** | [docs/configuration.en.md](docs/configuration.en.md) | Full `codex-flow.toml` parameters, reasoning matrix, and env overrides |
+| **📈 Telemetry & Quota** | [docs/telemetry.en.md](docs/telemetry.en.md) | Hook lifecycle, transcript token delta algorithm, app-server quota sampling |
+| **🪟 Native Overlay** | [docs/overlay.en.md](docs/overlay.en.md) | Gestures, keyboard shortcuts, IPC protocol, and SwiftUI architecture |
+| **🧪 Local Benchmarks** | [docs/benchmark.en.md](docs/benchmark.en.md) | 6-task balanced corpus, keyless local testing, and multi-strategy comparisons |
+| **☁️ Actions CI** | [docs/benchmark-actions.en.md](docs/benchmark-actions.en.md) | GitHub Actions automated cloud benchmark workflow |
+| **🌐 Localization** | [docs/localization.en.md](docs/localization.en.md) | English / Chinese (i18n) setup and coverage |
 
 ---
 

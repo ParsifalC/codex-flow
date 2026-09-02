@@ -1,165 +1,68 @@
-# Benchmark-driven routing
+# 基准测试驱动的路由评估 (Benchmark)
 
-The benchmark is designed to answer three different questions without mixing their evidence:
+<div align="center">
 
-1. Does Sol outperform Luna and Terra when all three run directly at the same reasoning effort?
-2. Does the fixed-effort codex-flow strategy preserve Sol-level quality while reducing total cost and improving on Luna direct?
-3. Does class-adaptive reasoning add enough quality to justify its extra cost over fixed-high flow?
+[ 简体中文 ](benchmark.md) | [ English ](benchmark.en.md)
 
-Results are advisory. Real model runs must accumulate enough evidence before routing changes are considered, and `policy/benchmark.toml` keeps `auto_apply = false`.
+</div>
 
-## Five pre-registered strategies
+基准测试套件旨在严谨回答以下三个独立问题，且绝不混淆各自的实证数据：
 
-Both `quick` and `full` use the same matrix:
+1. **同等推理强度下**，Sol 是否直接超越 Luna 和 Terra？
+2. **固定强度协同策略** 是否能在降低总成本的同时，保持 Sol 级别的高质量并超越 Luna 直连？
+3. **分级自适应推理策略** 是否能以可控的成本提升换取关键任务质量的实质跃升？
 
-| Strategy ID | Execution | Reasoning |
-| --- | --- | --- |
-| `luna-direct` | Luna implements and repairs | `high` |
-| `terra-direct` | Terra implements and repairs | `high` |
-| `sol-direct` | Sol implements and repairs | `high` |
-| `codex-flow-high` | Sol parent + Luna worker | both `high` |
-| `codex-flow-adaptive` | Sol parent + Luna worker | routine `high`, complex `xhigh`, critical `max` |
+测试结果仅供参考。实际模型运行必须积累足够的证据后才会考虑调整路由策略，且 `policy/benchmark.toml` 默认保持 `auto_apply = false`。
 
-The first four strategies form the controlled same-effort comparison. `codex-flow-adaptive` is deliberately excluded from the Sol and fixed-flow advantage claims; it is compared only with `codex-flow-high`.
+---
 
-The adaptive policy is class-adaptive and pre-registered before execution. It does not inspect a result and then retroactively change the reasoning effort.
+## 五种预注册评估策略
 
-## Balanced corpus
+`quick`（快速模式）与 `full`（完整模式）采用完全相同的策略对照矩阵：
 
-The corpus contains six deterministic engineering tasks, balanced across the three classes:
+| 策略 ID | 执行方式 | 推理强度配置 |
+| :--- | :--- | :--- |
+| `luna-direct` | Luna 独立实现与修复 | `high` |
+| `terra-direct` | Terra 独立实现与修复 | `high` |
+| `sol-direct` | Sol 独立实现与修复 | `high` |
+| `codex-flow-high` | Sol 父级规划 + Luna 子任务执行 | 双方固定 `high` |
+| `codex-flow-adaptive` | Sol 父级规划 + Luna 子任务执行 | 常规 `high` · 复杂 `xhigh` · 核心 `max` |
 
-| Task | Class | Focus |
-| --- | --- | --- |
-| `routine-query-normalization` | routine | localized Unicode and whitespace behavior |
-| `routine-env-precedence` | routine | configuration precedence and edge cases |
-| `complex-renew-provider-refactor` | complex | reusable provider registry, validation, and legacy compatibility |
-| `complex-config-migration` | complex | deep-copy-safe old/new configuration migration and idempotency |
-| `critical-resumable-migration` | critical | validated, journaled, resumable, idempotent migration |
-| `critical-atomic-state-write` | critical | durable atomic replacement, permissions, symlink safety, and cleanup |
+前四种策略构成严格受控的**同等推理强度对照组**。`codex-flow-adaptive` 策略仅用于同 `codex-flow-high` 对比自适应收益。
 
-`benchmark/corpus.json` stores each seed repository, fixed prompt, and verifier. `scripts/materialize-corpus.py` creates independent Git repositories with deterministic seed commits. Verifiers are written outside the worker-writable repository and invoked by absolute path, so a strategy cannot pass by editing its acceptance criteria.
+---
 
-Generate the corpus without calling a model:
+## 平衡工程语料库 (Corpus)
+
+语料库包含 6 个确定性工程任务，严格平衡分布于三类复杂度：
+
+| 任务名称 | 复杂度分类 | 核心考察焦点 |
+| :--- | :--- | :--- |
+| `routine-query-normalization` | 常规 (Routine) | 本地化 Unicode 与空白字符处理 |
+| `routine-env-precedence` | 常规 (Routine) | 配置加载优先级与边界分支 |
+| `complex-renew-provider-refactor` | 复杂 (Complex) | 模块化 Provider 注册表重构、校验与向下兼容 |
+| `complex-config-migration` | 复杂 (Complex) | 深拷贝安全的新旧配置迁移与幂等性保证 |
+| `critical-resumable-migration` | 关键 (Critical) | 带审计日志、校验可恢复的幂等数据迁移 |
+| `critical-atomic-state-write` | 关键 (Critical) | 原子化文件持久替换、权限控制、软链安全与异常回滚 |
+
+无需调用大模型即可本地初始化语料库：
 
 ```bash
 codex-flow benchmark-corpus quick
 ```
 
-Profiles are defined in `benchmark/profiles.json`:
+测试配置文件见 `benchmark/profiles.json`：
 
 ```text
-quick: 6 tasks × 5 strategies × 1 repetition = 30 runs
-full:  6 tasks × 5 strategies × 3 repetitions = 90 runs
+quick: 6 任务 × 5 策略 × 1 次重复 = 30 轮运行
+full:  6 任务 × 5 策略 × 3 次重复 = 90 轮运行
 ```
 
-`quick` contains only two samples per class and strategy, so it is a smoke/observational run. `full` contains six samples per class and strategy and meets the default minimum of three samples. Neither profile is launched automatically by install, update, ordinary CI, recommendation automation, or corpus materialization.
+---
 
-## Explicit flow protocol
+## 实证检验规则 (Evidence Tests)
 
-Direct strategies use one model for implementation and bounded verifier-guided repairs. Flow strategies use explicit, separately metered phases:
-
-```text
-fresh clone at fixed commit
-        ↓
-Sol parent: read-only plan
-        ↓
-Luna worker: implementation
-        ↓
-fixed external verifier
-        ↓
-Sol parent: read-only review
-        ↓
-pass? ── yes ──> record result
-  │
-  no
-  ↓
-Luna worker: bounded delta repair
-        ↓
-verify and review again
-```
-
-The parent never writes the task repository. Flow cost and wall time include both parent and worker calls; token usage is attributed by role, model, and resolved reasoning effort. This makes the strategy comparison an end-to-end measurement instead of pricing only the worker.
-
-Every strategy/repetition starts from a new temporary clone at the configured full commit SHA. A failed external verifier can trigger at most `max_repair_cycles` repairs. Authentication, quota, timeout, or CLI failures are fail-closed and are not treated as implementation defects.
-
-## Manifest schema v2
-
-`benchmark/manifest.schema.json` is the canonical manifest schema and `benchmark/manifest.example.json` contains the complete five-strategy matrix. A compact custom example is:
-
-```json
-{
-  "schema_version": 2,
-  "repetitions": 3,
-  "timeout_seconds": 1800,
-  "max_repair_cycles": 2,
-  "matrix": [
-    {"id":"luna-direct","strategy":"direct","model":"gpt-5.6-luna","reasoning_effort":"high"},
-    {"id":"terra-direct","strategy":"direct","model":"gpt-5.6-terra","reasoning_effort":"high"},
-    {"id":"sol-direct","strategy":"direct","model":"gpt-5.6-sol","reasoning_effort":"high"},
-    {
-      "id":"codex-flow-high",
-      "strategy":"flow",
-      "reasoning_policy":"fixed",
-      "parent":{"model":"gpt-5.6-sol","reasoning_effort":"high"},
-      "worker":{"model":"gpt-5.6-luna","reasoning_effort":"high"}
-    },
-    {
-      "id":"codex-flow-adaptive",
-      "strategy":"flow",
-      "reasoning_policy":"adaptive",
-      "parent":{"model":"gpt-5.6-sol","reasoning_effort":{"routine":"high","complex":"xhigh","critical":"max"}},
-      "worker":{"model":"gpt-5.6-luna","reasoning_effort":{"routine":"high","complex":"xhigh","critical":"max"}}
-    }
-  ],
-  "tasks": [{
-    "id":"compatibility-refactor",
-    "class":"complex",
-    "source":"/absolute/path/to/frozen-repo",
-    "base_ref":"0123456789abcdef0123456789abcdef01234567",
-    "prompt":"Implement the requested change without weakening acceptance criteria.",
-    "verify":["python3","/absolute/path/to/external-verifier.py"]
-  }]
-}
-```
-
-The runner enforces fixed string efforts for direct/fixed strategies and complete per-class maps for adaptive flow. Built-in profile materialization additionally enforces one identical effort across all controlled strategies.
-
-Validate or filter a manifest without model calls:
-
-```bash
-codex-flow benchmark --manifest manifest.json --dry-run
-```
-
-`--only-task`, `--only-model`, and `--only-strategy` support bounded experiments.
-
-## Running and measurement
-
-After materializing the built-in corpus:
-
-```bash
-codex-flow benchmark \
-  --manifest .codex-flow-benchmark/manifest.json \
-  --output benchmark/results/quick-001.jsonl \
-  --fail-fast-infrastructure
-```
-
-The runner invokes non-interactive, ephemeral `codex exec` sessions with user configuration ignored, an explicit model, and an explicit reasoning effort. Authentication still comes from the user's Codex installation.
-
-Current Codex JSONL provides input, cached-input, and output usage. It does not reliably expose a separate reasoning-token field or a provider-returned final model identifier, so the benchmark records only the requested model/effort and usage fields that can be measured consistently. A wall-clock timeout and repair budget bound execution; wall time is observational rather than deterministic.
-
-Each result row uses `benchmark/schema.json` schema v2. Important fields include:
-
-- `strategy_id`, `strategy`, and `reasoning_policy`
-- parent `model`/`reasoning_effort` and optional worker fields
-- `passed`, `first_passed`, `repair_cycles`, and `review_cycles`
-- top-level aggregate token usage and per-actor `model_usage`
-- wall time, source commit, verifier excerpt, and diagnostics
-
-For mixed-model flow rows, top-level usage must exactly equal the sum of `model_usage`. The analyzer and report renderer retain read compatibility with schema-v1 direct results.
-
-## Evidence tests
-
-Analyze with the immutable GPT-5.6 price snapshot:
+使用 GPT-5.6 官方不可变价格快照执行分析：
 
 ```bash
 codex-flow benchmark-analyze \
@@ -168,48 +71,14 @@ codex-flow benchmark-analyze \
   --json
 ```
 
-Thresholds are pre-registered in `policy/benchmark.toml`. Evidence is marked sufficient only when the compared strategies have the same task/repetition sample keys; partial or unpaired batches remain visible but cannot demonstrate an advantage.
+### 1. Sol 综合能力判定
+在每一复杂度级别下，Sol/high 与最强的 Luna/high 或 Terra/high 对比。Sol 必须在最终通过率上不低于对照组，并在首次通过率或修复轮次上有显著提升。
 
-### Sol capability
+### 2. 固定流协同优势判定 (Flow Advantage)
+`codex-flow-high` 必须同时满足：
+- 最终交付质量保持在 Sol/high 的非劣效区间内；
+- 父子总折算成本相比 Sol/high 降低指定幅度；
+- 相比 Luna/high 直连，在最终质量、首通率或修复轮次上有实质改进。
 
-For each class, Sol/high is compared with the strongest Luna/high or Terra/high direct result. Sol must be no worse on final pass rate and materially improve at least one registered quality measure: final pass rate, first-pass rate, or repairs. Cost is not part of this capability claim.
-
-### Fixed-high flow advantage
-
-`codex-flow-high` must:
-
-- preserve Sol/high final quality within the configured non-inferiority margin;
-- reduce total parent+worker reference cost versus Sol/high by the configured amount; and
-- materially improve final quality, first-pass quality, or repairs versus Luna/high direct.
-
-This prevents a cheap but lower-quality worker from being labeled a flow advantage and prevents parent usage from disappearing from cost accounting.
-
-### Adaptive reasoning value
-
-`codex-flow-adaptive` is compared only with `codex-flow-high`. It must materially improve final pass rate, first-pass rate, or repairs while remaining inside the configured cost-increase ceiling. Its result cannot be used to claim that Sol or fixed-high flow won a same-effort comparison.
-
-The analyzer also applies class quality gates before recommending the lowest-cost eligible strategy:
-
-```toml
-[quality]
-routine_min_pass_rate = 0.90
-complex_min_pass_rate = 0.95
-critical_min_pass_rate = 1.00
-min_samples_per_configuration = 3
-max_average_repair_cycles = 1.0
-```
-
-A `null` recommendation means no tested strategy has enough evidence to pass the class gate.
-
-## Reporting and interpretation
-
-`scripts/render-benchmark-report.py` produces four views:
-
-- aggregate strategy quality, repairs, reviews, wall time, and mixed-model reference cost;
-- Sol same-effort capability evidence;
-- fixed-high flow evidence against Sol and Luna;
-- adaptive reasoning evidence against fixed-high flow.
-
-Dollar values use the immutable `benchmark/prices/gpt-5.6-2026-08-30.json` API snapshot. They are API-equivalent reference costs, not ChatGPT subscription charges.
-
-The corpus is a controlled calibration set, not a claim of broad production representativeness. Future additions should preserve class balance, use frozen starting commits and external acceptance criteria, and add languages, larger codebases, dependency migrations, CI/CD work, and infrastructure changes. Model and strategy comparisons are meaningful only when they begin from equivalent state and keep the controlled reasoning effort fixed.
+### 3. 自适应推理收益判定 (Adaptive Value)
+`codex-flow-adaptive` 仅与 `codex-flow-high` 比较，必须在控制成本涨幅上限的前提下，显著提升复杂和关键任务的交付率。

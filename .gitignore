@@ -5,3 +5,4 @@ benchmark/results/*.report.md
 !benchmark/results/.gitkeep
 __pycache__/
 *.pyc
+bin/generate_showcase
