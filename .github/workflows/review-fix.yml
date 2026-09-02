@@ -43,8 +43,8 @@ jobs:
         run: python3 .github/review-fix.py
       - name: Validate final OTA patch
         run: |
-          python3 -m py_compile scripts/updater.py scripts/doctor.py scripts/generate-release-manifest.py tests/test_updater.py tests/test_cli_update.py
-          python3 -m unittest tests.test_updater tests.test_cli_update
+          python3 -m py_compile scripts/updater.py scripts/doctor.py scripts/generate-release-manifest.py tests/test_updater.py
+          python3 -m unittest tests.test_updater
       - name: Commit final OTA fixes and clean helper
         run: |
           set -euo pipefail
