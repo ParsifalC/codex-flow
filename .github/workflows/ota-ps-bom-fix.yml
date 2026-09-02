@@ -1,0 +1,47 @@
+name: ota-ps-bom-fix
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths:
+      - '.github/workflows/ota-ps-bom-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore UTF-8 BOM and verify Windows PowerShell 5 parsing
+        shell: powershell
+        run: |
+          $path = Join-Path (Get-Location) 'install.ps1'
+          $bytes = [System.IO.File]::ReadAllBytes($path)
+          $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xef -and $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf
+          if (-not $hasBom) {
+            $bom = [byte[]](0xef,0xbb,0xbf)
+            $out = New-Object byte[] ($bom.Length + $bytes.Length)
+            [Array]::Copy($bom, 0, $out, 0, $bom.Length)
+            [Array]::Copy($bytes, 0, $out, $bom.Length, $bytes.Length)
+            [System.IO.File]::WriteAllBytes($path, $out)
+          }
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error "install.ps1:$($_.Extent.StartLineNumber): $($_.Message)" }
+            exit 1
+          }
+      - name: Commit BOM fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'codex-flow-ci'
+          git config user.email 'codex-flow-ci@users.noreply.github.com'
+          git add install.ps1
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix(windows): preserve installer UTF-8 BOM'
+          git push origin HEAD:feat/ota-update-system
