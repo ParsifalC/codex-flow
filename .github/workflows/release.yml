@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'nightly-*'
   workflow_dispatch:
     inputs:
       channel:
@@ -60,7 +61,7 @@ jobs:
           pattern: ota-*
           path: dist
           merge-multiple: true
-      - name: Resolve release tag
+      - name: Resolve release tag and channel
         id: release
         shell: bash
         run: |
@@ -68,28 +69,53 @@ jobs:
           version="$(tr -d '\r\n' < VERSION)"
           if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
             tag="$GITHUB_REF_NAME"
+            if [[ "$tag" == nightly-* ]]; then
+              channel=nightly
+            elif [[ "$tag" == *-* ]]; then
+              channel=beta
+            else
+              channel=stable
+            fi
           else
-            tag="v$version"
+            channel='${{ inputs.channel || 'stable' }}'
+            case "$channel" in
+              stable) tag="v$version" ;;
+              beta) tag="v${version}-beta.${GITHUB_RUN_NUMBER}" ;;
+              nightly) tag="nightly-$(date -u +%Y%m%d%H%M)-${GITHUB_RUN_NUMBER}" ;;
+              *) echo "unsupported channel: $channel" >&2; exit 2 ;;
+            esac
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          if [[ "$channel" == stable ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Create or update GitHub Release
         shell: bash
         run: |
           set -euo pipefail
           tag='${{ steps.release.outputs.tag }}'
+          channel='${{ steps.release.outputs.channel }}'
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA"
+            args=(release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA")
+            if [[ "$channel" != stable ]]; then
+              args+=(--prerelease)
+            fi
+            gh "${args[@]}"
+          elif [[ "$channel" != stable ]]; then
+            gh release edit "$tag" --prerelease
           fi
           gh release view "$tag" --json body --jq .body > dist/release-notes.md
       - name: Generate update manifest
         shell: bash
         run: |
           set -euo pipefail
-          channel='${{ inputs.channel || 'stable' }}'
           python3 scripts/generate-release-manifest.py \
             --dist dist \
             --tag '${{ steps.release.outputs.tag }}' \
-            --channel "$channel" \
+            --channel '${{ steps.release.outputs.channel }}' \
             --release-notes-file dist/release-notes.md \
             --output dist/codex-flow-update.json
       - name: Publish OTA assets
