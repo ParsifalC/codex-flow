@@ -1,0 +1,28 @@
+name: ota-rebuild-overlay
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths: ['.github/workflows/ota-rebuild-overlay.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-sync:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ota-update-system
+          fetch-depth: 0
+      - name: Build current FlowPilot sources
+        run: bash apps/macos-overlay/build.sh
+      - name: Commit synchronized binaries
+        run: |
+          rm -f .github/workflows/ota-rebuild-overlay.yml
+          git config user.name 'codex-flow automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add apps/macos-overlay/bin/FlowPilot apps/macos-overlay/bin/codex-flow-overlay .github/workflows/ota-rebuild-overlay.yml
+          git commit -m 'build(app): sync FlowPilot OTA update UI binary'
+          git push origin HEAD:feat/ota-update-system
