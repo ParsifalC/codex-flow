@@ -853,11 +853,18 @@ public struct TokenUsageBreakdownView: View {
     }
 
     public var body: some View {
+        // `inputTokens` includes cached input and `outputTokens` can include
+        // reasoning output. Make the rendered segments mutually exclusive so
+        // the bar and legend do not double-count those subsets.
         let input = usage.effectivePromptTokens
         let output = usage.effectiveOutputTokens
-        let cached = usage.effectiveCachedTokens
-        let reasoning = usage.effectiveReasoningTokens
-        let total = max(1, input + output + cached + reasoning)
+        let cached = min(max(0, usage.effectiveCachedTokens), max(0, input))
+        let reasoning = min(max(0, usage.effectiveReasoningTokens), max(0, output))
+        let newInput = max(0, input - cached)
+        let visibleOutput = max(0, output - reasoning)
+        let segmentedTotal = newInput + cached + visibleOutput + reasoning
+        let total = max(1, segmentedTotal)
+        let reportedTotal = usage.totalTokens ?? segmentedTotal
 
         return VStack(alignment: .leading, spacing: 5) {
             HStack {
@@ -865,16 +872,16 @@ public struct TokenUsageBreakdownView: View {
                     .font(.system(size: 8.8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
                 Spacer()
-                Text(TaskRun.formatTokenCount(usage.totalTokens ?? 0))
+                Text(TaskRun.formatTokenCount(reportedTotal))
                     .font(.system(size: 8.5, weight: .bold, design: .rounded))
                     .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
             }
 
             GeometryReader { proxy in
                 HStack(spacing: 1) {
-                    segment(proxy.size.width, input, total, .cyan)
-                    segment(proxy.size.width, output, total, .green)
+                    segment(proxy.size.width, newInput, total, .cyan)
                     segment(proxy.size.width, cached, total, .indigo)
+                    segment(proxy.size.width, visibleOutput, total, .green)
                     segment(proxy.size.width, reasoning, total, .purple)
                 }
             }
@@ -882,9 +889,11 @@ public struct TokenUsageBreakdownView: View {
             .clipShape(Capsule())
 
             HStack(spacing: 8) {
-                legend(L("Input", "输入"), input, .cyan)
-                legend(L("Output", "输出"), output, .green)
-                legend(L("Cached", "缓存"), cached, .indigo)
+                legend(L("New input", "新输入"), newInput, .cyan)
+                if cached > 0 {
+                    legend(L("Cached", "缓存"), cached, .indigo)
+                }
+                legend(L("Output", "输出"), visibleOutput, .green)
                 if reasoning > 0 {
                     legend(L("Reasoning", "推理"), reasoning, .purple)
                 }
