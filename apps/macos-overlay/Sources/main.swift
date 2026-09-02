@@ -23,27 +23,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 func printUsage() {
-    print("""
-    FlowPilot - Native macOS Assistant & Telemetry Widget
+    print(L(
+        """
+        FlowPilot - Native macOS Assistant & Telemetry Widget
 
-    Usage:
-      FlowPilot [command] [options]
+        Usage:
+          FlowPilot [command] [options]
 
-    Commands:
-      start, --daemon           Start/Restart the FlowPilot floating daemon (default)
-      restart                   Restart the running FlowPilot daemon with fresh build
-      stop, quit                Stop running FlowPilot daemon
-      status                    Check if FlowPilot daemon is currently active
-      toggle                    Toggle between circular bubble and expanded summary
-      expand                    Expand summary window
-      collapse                  Collapse to circular bubble
-      tab <inspector|hist|stat> Switch active tab in expanded view
-      show <#|id|session>       Inspect specific task in FlowPilot
-      stats [days]              Open analytics dashboard with N days (default: 30)
-      history, list             Open history task timeline
-      update [path|json]        Push telemetry run update and expand
-      help, -h                  Show this help message
-    """)
+        Commands:
+          start, --daemon           Start/Restart the FlowPilot floating daemon (default)
+          restart                   Restart the running FlowPilot daemon with fresh build
+          stop, quit                Stop running FlowPilot daemon
+          status                    Check if FlowPilot daemon is currently active
+          toggle                    Toggle between circular bubble and expanded summary
+          expand                    Expand summary window
+          collapse                  Collapse to circular bubble
+          tab <inspector|hist|stat> Switch active tab in expanded view
+          show <#|id|session>       Inspect specific task in FlowPilot
+          stats [days]              Open analytics dashboard with N days (default: 30)
+          history, list             Open history task timeline
+          update [path|json]        Push telemetry run update and expand
+          help, -h                  Show this help message
+        """,
+        """
+        FlowPilot - macOS 原生助手与遥测悬浮窗
+
+        用法：
+          FlowPilot [命令] [选项]
+
+        命令：
+          start, --daemon           启动/重启 FlowPilot 悬浮窗（默认）
+          restart                   使用最新构建重启 FlowPilot
+          stop, quit                停止 FlowPilot
+          status                    查看 FlowPilot 是否正在运行
+          toggle                    在悬浮球与展开摘要之间切换
+          expand                    展开摘要窗口
+          collapse                  收起为悬浮球
+          tab <inspector|hist|stat> 切换展开视图中的标签页
+          show <#|id|session>       查看指定任务
+          stats [days]              打开 N 天统计面板（默认：30）
+          history, list             打开历史任务列表
+          update [path|json]        推送遥测任务更新并展开
+          help, -h                  显示帮助
+        """
+    ))
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -66,10 +89,10 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
     case "status":
         let res = IPCService.sendCommand("status")
         if res.success {
-            print("● FlowPilot is RUNNING: \(res.response)")
+            print(L("● FlowPilot is RUNNING: \(res.response)", "● FlowPilot 正在运行：\(res.response)"))
             exit(0)
         } else {
-            print("○ FlowPilot is NOT running.")
+            print(L("○ FlowPilot is NOT running.", "○ FlowPilot 未运行。"))
             exit(1)
         }
     case "toggle":
@@ -122,7 +145,7 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
         printUsage()
         exit(0)
     default:
-        print("Unknown command: \(cmd)")
+        print(L("Unknown command: \(cmd)", "未知命令：\(cmd)"))
         printUsage()
         exit(1)
     }

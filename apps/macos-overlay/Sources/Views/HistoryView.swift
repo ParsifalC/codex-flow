@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct HistoryView: View {
     @ObservedObject var state: OverlayState
+    @ObservedObject private var localization = AppLocalization.shared
     @State private var availableProjects: [String] = []
     
     public init(state: OverlayState) {
@@ -32,11 +33,11 @@ public struct HistoryView: View {
             HStack(spacing: 6) {
                 // Scope selector (All / Today)
                 HStack(spacing: 2) {
-                    scopeButton(title: "All", isSelected: !state.isTodayOnly) {
+                    scopeButton(title: L("All", "全部"), isSelected: !state.isTodayOnly) {
                         state.isTodayOnly = false
                         state.loadHistory()
                     }
-                    scopeButton(title: "Today", isSelected: state.isTodayOnly) {
+                    scopeButton(title: L("Today", "今天"), isSelected: state.isTodayOnly) {
                         state.isTodayOnly = true
                         state.loadHistory()
                     }
@@ -48,7 +49,7 @@ public struct HistoryView: View {
                 if availableProjects.count > 2 {
                     Menu {
                         ForEach(availableProjects, id: \.self) { proj in
-                            Button(proj) {
+                            Button(proj == "All" ? L("All", "全部") : proj) {
                                 state.selectedProject = (proj == "All" ? nil : proj)
                                 state.loadHistory()
                             }
@@ -57,7 +58,7 @@ public struct HistoryView: View {
                         HStack(spacing: 3) {
                             Image(systemName: "folder")
                                 .font(.system(size: 9))
-                            Text(state.selectedProject ?? "All Projects")
+                            Text(state.selectedProject ?? L("All Projects", "全部项目"))
                                 .font(.system(size: 9.5, weight: .medium))
                                 .lineLimit(1)
                             Image(systemName: "chevron.down")
@@ -75,7 +76,7 @@ public struct HistoryView: View {
                 Spacer()
                 
                 // Task Count Badge
-                Text("\(state.historyRuns.count) runs")
+                Text(L("\(state.historyRuns.count) runs", "\(state.historyRuns.count) 次任务"))
                     .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                     .foregroundColor(.white.opacity(0.45))
             }
@@ -86,7 +87,7 @@ public struct HistoryView: View {
                     .font(.system(size: 9.5))
                     .foregroundColor(.white.opacity(0.4))
                 
-                TextField("Search session, branch, or prompt...", text: $state.searchQuery)
+                TextField(L("Search session, branch, or prompt...", "搜索会话、分支或提示词…"), text: $state.searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: 10.5))
                     .foregroundColor(.white)
@@ -164,7 +165,7 @@ public struct HistoryView: View {
                 .padding(.top, 24)
             
             if !state.searchQuery.isEmpty {
-                Text("No results for \"\(state.searchQuery)\"")
+                Text(L("No results for \"\(state.searchQuery)\"", "没有找到‘\(state.searchQuery)’的结果"))
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(.white.opacity(0.75))
                 
@@ -172,7 +173,7 @@ public struct HistoryView: View {
                     state.searchQuery = ""
                     state.loadHistory()
                 } label: {
-                    Text("Clear Search")
+                    Text(L("Clear Search", "清除搜索"))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.cyan)
                         .padding(.horizontal, 10)
@@ -181,7 +182,7 @@ public struct HistoryView: View {
                 }
                 .buttonStyle(.plain)
             } else if state.isTodayOnly {
-                Text("No tasks recorded today")
+                Text(L("No tasks recorded today", "今天还没有任务记录"))
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(.white.opacity(0.75))
                 
@@ -189,7 +190,7 @@ public struct HistoryView: View {
                     state.isTodayOnly = false
                     state.loadHistory()
                 } label: {
-                    Text("Show All Time")
+                    Text(L("Show All Time", "查看全部时间"))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.cyan)
                         .padding(.horizontal, 10)
@@ -198,7 +199,7 @@ public struct HistoryView: View {
                 }
                 .buttonStyle(.plain)
             } else if let p = state.selectedProject {
-                Text("No runs for project \"\(p)\"")
+                Text(L("No runs for project \"\(p)\"", "项目‘\(p)’暂无任务"))
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(.white.opacity(0.75))
                 
@@ -206,7 +207,7 @@ public struct HistoryView: View {
                     state.selectedProject = nil
                     state.loadHistory()
                 } label: {
-                    Text("Show All Projects")
+                    Text(L("Show All Projects", "查看全部项目"))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.cyan)
                         .padding(.horizontal, 10)
@@ -215,11 +216,11 @@ public struct HistoryView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Text("No telemetry runs recorded yet")
+                Text(L("No telemetry runs recorded yet", "尚未记录遥测任务"))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white.opacity(0.75))
                 
-                Text("FlowPilot logs token and duration telemetry automatically.")
+                Text(L("FlowPilot logs token and duration telemetry automatically.", "FlowPilot 会自动记录 Token 和耗时遥测。"))
                     .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.4))
                     .multilineTextAlignment(.center)
@@ -231,6 +232,7 @@ public struct HistoryView: View {
 
 // MARK: - Individual History Row
 public struct HistoryItemRow: View {
+    @ObservedObject private var localization = AppLocalization.shared
     public var index: Int
     public var run: TaskRun
     public var isSelected: Bool
@@ -241,103 +243,122 @@ public struct HistoryItemRow: View {
     public var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 7) {
-                // Index badge
-                Text("#\(index)")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(index == 1 ? .cyan : .white.opacity(0.45))
-                    .frame(width: 24, alignment: .leading)
-                
-                // Main Info
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        // Project & branch chip
-                        Text(run.projectName)
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundColor(.white.opacity(0.95))
-                            .lineLimit(1)
-                        
-                        if let b = run.gitBranch, !b.isEmpty {
-                            Text("(\(b))")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundColor(.cyan.opacity(0.8))
-                                .lineLimit(1)
-                        }
-                        
-                        Spacer()
-                        
-                        // Time stamp
-                        Text(run.formattedDate)
-                            .font(.system(size: 8.5, weight: .regular))
-                            .foregroundColor(.white.opacity(0.4))
-                    }
-                    
-                    // Task Preview / Title
-                    Text(run.sessionTitle)
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundColor(.white.opacity(0.7))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    
-                    // Footer details: Workers, Duration, Tokens
-                    HStack(spacing: 6) {
-                        let wCount = run.allWorkers.count
-                        if wCount > 0 {
-                            HStack(spacing: 2) {
-                                Image(systemName: "person.2.fill")
-                                    .font(.system(size: 7.5))
-                                Text("\(wCount) workers")
-                                    .font(.system(size: 8.5, weight: .medium))
-                            }
-                            .foregroundColor(.teal.opacity(0.85))
-                        } else {
-                            Text("Direct")
-                                .font(.system(size: 8.5, weight: .regular))
-                                .foregroundColor(.white.opacity(0.4))
-                        }
-                        
-                        Text("·")
-                            .foregroundColor(.white.opacity(0.2))
-                        
-                        Text(run.formattedDuration)
-                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.55))
-                        
-                        Spacer()
-                        
-                        // Tokens Badge
-                        Text(run.formattedTotalTokens)
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
-                        
-                        // Status dot
-                        Circle()
-                            .fill(statusColor)
-                            .frame(width: 4.5, height: 4.5)
-                    }
-                }
+                indexBadge
+                mainInfo
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(
-                        isSelected ? Color.cyan.opacity(0.15) :
-                        (isHovered ? Color.white.opacity(0.07) : Color.white.opacity(0.03))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(
-                                isSelected ? Color.cyan.opacity(0.4) :
-                                (isHovered ? Color.white.opacity(0.12) : Color.white.opacity(0.05)),
-                                lineWidth: 0.8
-                            )
-                    )
-            )
+            .background(rowBackground)
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
     }
-    
+
+    private var indexBadge: some View {
+        Text("#\(index)")
+            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+            .foregroundColor(index == 1 ? .cyan : .white.opacity(0.45))
+            .frame(width: 24, alignment: .leading)
+    }
+
+    private var mainInfo: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            headerRow
+
+            Text(run.sessionTitle)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundColor(.white.opacity(0.7))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            footerRow
+        }
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 4) {
+            Text(run.projectName)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(.white.opacity(0.95))
+                .lineLimit(1)
+
+            if let branch = run.gitBranch, !branch.isEmpty {
+                Text("(\(branch))")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(.cyan.opacity(0.8))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(run.localizedFormattedDate)
+                .font(.system(size: 8.5, weight: .regular))
+                .foregroundColor(.white.opacity(0.4))
+        }
+    }
+
+    private var footerRow: some View {
+        HStack(spacing: 6) {
+            executionMode
+
+            Text("·")
+                .foregroundColor(.white.opacity(0.2))
+
+            Text(run.formattedDuration)
+                .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                .foregroundColor(.white.opacity(0.55))
+
+            Spacer()
+
+            Text(run.formattedTotalTokens)
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+
+            Circle()
+                .fill(statusColor)
+                .frame(width: 4.5, height: 4.5)
+        }
+    }
+
+    @ViewBuilder
+    private var executionMode: some View {
+        let workerCount = run.allWorkers.count
+        if workerCount > 0 {
+            HStack(spacing: 2) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 7.5))
+                Text(L("\(workerCount) workers", "\(workerCount) 个 Worker"))
+                    .font(.system(size: 8.5, weight: .medium))
+            }
+            .foregroundColor(.teal.opacity(0.85))
+        } else {
+            Text(L("Direct", "直接执行"))
+                .font(.system(size: 8.5, weight: .regular))
+                .foregroundColor(.white.opacity(0.4))
+        }
+    }
+
+    private var rowFillColor: Color {
+        if isSelected { return Color.cyan.opacity(0.15) }
+        if isHovered { return Color.white.opacity(0.07) }
+        return Color.white.opacity(0.03)
+    }
+
+    private var rowStrokeColor: Color {
+        if isSelected { return Color.cyan.opacity(0.4) }
+        if isHovered { return Color.white.opacity(0.12) }
+        return Color.white.opacity(0.05)
+    }
+
+    private var rowBackground: some View {
+        RoundedRectangle(cornerRadius: 9)
+            .fill(rowFillColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(rowStrokeColor, lineWidth: 0.8)
+            )
+    }
+
     private var statusColor: Color {
         if run.isRunning {
             return .cyan

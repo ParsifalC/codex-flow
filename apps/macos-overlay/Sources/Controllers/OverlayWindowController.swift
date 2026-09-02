@@ -357,7 +357,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         if let state = windowController?.state {
             if state.isExpanded {
                 let pinItem = NSMenuItem(
-                    title: state.isPinned ? "Unpin Window" : "Pin Window",
+                    title: state.isPinned ? L("Unpin Window", "取消置顶") : L("Pin Window", "置顶窗口"),
                     action: #selector(togglePin),
                     keyEquivalent: "p"
                 )
@@ -365,7 +365,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
                 menu.addItem(pinItem)
                 
                 let collapseItem = NSMenuItem(
-                    title: "Collapse to Bubble",
+                    title: L("Collapse to Bubble", "收起为悬浮球"),
                     action: #selector(collapseBubble),
                     keyEquivalent: "c"
                 )
@@ -373,7 +373,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
                 menu.addItem(collapseItem)
             } else {
                 let expandItem = NSMenuItem(
-                    title: "Expand Summary",
+                    title: L("Expand Summary", "展开摘要"),
                     action: #selector(expandSummary),
                     keyEquivalent: "e"
                 )
@@ -385,7 +385,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         menu.addItem(NSMenuItem.separator())
         
         let consoleItem = NSMenuItem(
-            title: "Open FlowPilot Console",
+            title: L("Open FlowPilot Console", "打开 FlowPilot 控制台"),
             action: #selector(openConsole),
             keyEquivalent: "t"
         )
@@ -393,7 +393,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         menu.addItem(consoleItem)
         
         let refreshItem = NSMenuItem(
-            title: "Refresh Telemetry",
+            title: L("Refresh Telemetry", "刷新遥测数据"),
             action: #selector(refreshData),
             keyEquivalent: "r"
         )
@@ -403,7 +403,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         menu.addItem(NSMenuItem.separator())
         
         let quitItem = NSMenuItem(
-            title: "Quit FlowPilot",
+            title: L("Quit FlowPilot", "退出 FlowPilot"),
             action: #selector(quitApp),
             keyEquivalent: "q"
         )

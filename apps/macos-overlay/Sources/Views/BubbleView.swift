@@ -3,6 +3,7 @@ import AppKit
 
 public struct BubbleView: View {
     @ObservedObject var state: OverlayState
+    @ObservedObject private var localization = AppLocalization.shared
     @State private var isHovered: Bool = false
     @State private var breathePhase: CGFloat = 0.0
     @State private var shimmerAngle: Double = 0.0
@@ -78,7 +79,7 @@ public struct BubbleView: View {
             }
             
             // Clean, bold Token metric (no decimals in docked half-screen mode)
-            Text(state.latestRun?.formattedCompactTokens ?? "Ready")
+            Text(state.latestRun?.formattedCompactTokens ?? L("Ready", "就绪"))
                 .font(.system(size: 9.0, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
@@ -92,7 +93,7 @@ public struct BubbleView: View {
                         .foregroundColor(.cyan.opacity(0.9))
                 }
                 
-                Text(state.isTaskRunning ? "RUN" : "OK")
+                Text(state.isTaskRunning ? L("RUN", "运行") : L("OK", "正常"))
                     .font(.system(size: 7.5, weight: .black, design: .rounded))
                     .foregroundColor(statusColor)
                 
@@ -205,7 +206,7 @@ public struct BubbleView: View {
                         .font(.system(size: 6.5, weight: .bold))
                         .foregroundColor(statusColor)
                     
-                    Text(state.latestRun?.formattedCompactTokens ?? "Ready")
+                    Text(state.latestRun?.formattedCompactTokens ?? L("Ready", "就绪"))
                         .font(.system(size: 8, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.95))
                         .lineLimit(1)

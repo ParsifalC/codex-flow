@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct AnalyticsView: View {
     @ObservedObject var state: OverlayState
+    @ObservedObject private var localization = AppLocalization.shared
     
     public init(state: OverlayState) {
         self.state = state
@@ -48,15 +49,15 @@ public struct AnalyticsView: View {
     // MARK: - Period Header
     private var periodHeader: some View {
         HStack {
-            Text("Aggregation Summary")
+            Text(L("Aggregation Summary", "聚合统计"))
                 .font(.system(size: 10.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
             
             Spacer()
             
             HStack(spacing: 2) {
-                dayButton(days: 7, title: "7 Days")
-                dayButton(days: 30, title: "30 Days")
+                dayButton(days: 7, title: L("7 Days", "7 天"))
+                dayButton(days: 30, title: L("30 Days", "30 天"))
             }
             .padding(2)
             .background(Capsule().fill(Color.white.opacity(0.06)))
@@ -109,23 +110,23 @@ public struct AnalyticsView: View {
     private var kpiSummaryGrid: some View {
         HStack(spacing: 6) {
             kpiCard(
-                title: "Tasks",
+                title: L("Tasks", "任务"),
                 value: "\(stats.totalRuns)",
-                subtext: "\(stats.delegatedRuns) delegated",
+                subtext: L("\(stats.delegatedRuns) delegated", "委派 \(stats.delegatedRuns) 次"),
                 icon: "sparkles",
                 accentColor: .cyan
             )
             
             kpiCard(
-                title: "Active Time",
+                title: L("Active Time", "活跃时长"),
                 value: stats.formattedTotalDuration,
-                subtext: "\(stats.days)d total",
+                subtext: L("\(stats.days)d total", "累计 \(stats.days) 天"),
                 icon: "timer",
                 accentColor: .indigo
             )
             
             kpiCard(
-                title: "Tokens",
+                title: L("Tokens", "Token"),
                 value: TaskRun.formatTokenCount(stats.totalTokens),
                 subtext: stats.formattedCost,
                 icon: "circle.grid.cross.fill",
@@ -173,15 +174,15 @@ public struct AnalyticsView: View {
         VStack(spacing: 6) {
             // Cache Ratio Bar
             efficiencyRow(
-                title: "Cache Efficiency",
+                title: L("Cache Efficiency", "缓存效率"),
                 percentage: stats.cacheRatio,
-                detail: "\(TaskRun.formatTokenCount(stats.cachedInputTokens)) cached",
+                detail: L("\(TaskRun.formatTokenCount(stats.cachedInputTokens)) cached", "缓存 \(TaskRun.formatTokenCount(stats.cachedInputTokens))"),
                 color: Color(red: 0.28, green: 0.58, blue: 0.95)
             )
             
             // Worker Offload Bar
             efficiencyRow(
-                title: "Worker Offload",
+                title: L("Worker Offload", "Worker 分流"),
                 percentage: stats.workerOffloadRatio,
                 detail: "\(TaskRun.formatTokenCount(stats.workerTokens)) / \(TaskRun.formatTokenCount(stats.totalTokens))",
                 color: Color(red: 0.22, green: 0.88, blue: 0.58)
@@ -234,7 +235,7 @@ public struct AnalyticsView: View {
     // MARK: - Model Breakdown Card
     private var modelBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("Model Breakdown")
+            Text(L("Model Breakdown", "模型分布"))
                 .font(.system(size: 9.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.7))
                 .textCase(.uppercase)
@@ -259,7 +260,7 @@ public struct AnalyticsView: View {
     // MARK: - Project Breakdown Card
     private var projectBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("Projects Distribution")
+            Text(L("Projects Distribution", "项目分布"))
                 .font(.system(size: 9.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.7))
                 .textCase(.uppercase)
@@ -284,6 +285,7 @@ public struct AnalyticsView: View {
 
 // MARK: - Model Breakdown Row
 public struct ModelBreakdownRow: View {
+    @ObservedObject private var localization = AppLocalization.shared
     public var model: ModelStats
     public var totalTokens: Int
     
@@ -299,7 +301,7 @@ public struct ModelBreakdownRow: View {
             // Roles chips
             HStack(spacing: 2) {
                 ForEach(model.roles, id: \.self) { role in
-                    Text(role)
+                    Text(localizedRole(role))
                         .font(.system(size: 7.5, weight: .medium))
                         .foregroundColor(role == "parent" ? .indigo.opacity(0.9) : .teal.opacity(0.9))
                         .padding(.horizontal, 3)
@@ -313,7 +315,7 @@ public struct ModelBreakdownRow: View {
             
             Spacer()
             
-            Text("\(model.calls) calls")
+            Text(L("\(model.calls) calls", "\(model.calls) 次调用"))
                 .font(.system(size: 8.0, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
             
@@ -338,6 +340,7 @@ public struct ModelBreakdownRow: View {
 
 // MARK: - Project Breakdown Row
 public struct ProjectBreakdownRow: View {
+    @ObservedObject private var localization = AppLocalization.shared
     public var project: ProjectStats
     
     public var body: some View {
@@ -353,7 +356,7 @@ public struct ProjectBreakdownRow: View {
             
             Spacer()
             
-            Text("\(project.runs) runs")
+            Text(L("\(project.runs) runs", "\(project.runs) 次任务"))
                 .font(.system(size: 8.0, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
             
