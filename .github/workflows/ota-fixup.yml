@@ -1,0 +1,57 @@
+name: ota-fixup
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths: ['.github/workflows/ota-fixup.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  fixup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ota-update-system
+          fetch-depth: 0
+      - name: Apply OTA compatibility fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Windows PowerShell 5.1 needs a UTF-8 BOM for this localized script.
+          ps = Path('install.ps1')
+          raw = ps.read_bytes()
+          bom = b'\xef\xbb\xbf'
+          if not raw.startswith(bom):
+              ps.write_bytes(bom + raw)
+
+          updater = Path('scripts/updater.py')
+          text = updater.read_text(encoding='utf-8')
+          old = '''    release = candidates[0]\n    assets = release.get("assets") or []\n    manifest_asset = next(\n        (item for item in assets if isinstance(item, dict) and item.get("name") == MANIFEST_ASSET), None\n    )\n    if not manifest_asset or not manifest_asset.get("browser_download_url"):\n        raise RuntimeError(f"release {release.get('tag_name', '')} does not provide {MANIFEST_ASSET}")\n    manifest = _request_json(str(manifest_asset["browser_download_url"]))\n    if not isinstance(manifest, dict):\n        raise RuntimeError("update manifest is not an object")\n    return manifest, release\n'''
+          new = '''    # Prefer the newest release that actually participates in the OTA protocol.\n    # During rollout there may be older, pre-OTA GitHub releases without a\n    # manifest. If the newest public release is not newer than the installed\n    # version, treat the installed version as current instead of surfacing a\n    # spurious update-check error in the CLI/App.\n    for release in candidates:\n        assets = release.get("assets") or []\n        manifest_asset = next(\n            (item for item in assets if isinstance(item, dict) and item.get("name") == MANIFEST_ASSET), None\n        )\n        if not manifest_asset or not manifest_asset.get("browser_download_url"):\n            continue\n        manifest = _request_json(str(manifest_asset["browser_download_url"]))\n        if not isinstance(manifest, dict):\n            raise RuntimeError("update manifest is not an object")\n        return manifest, release\n\n    newest_release = candidates[0]\n    newest_tag = _strip_v(str(newest_release.get("tag_name") or "0.0.0"))\n    installed = current_version()\n    if not is_newer(newest_tag, installed):\n        return (\n            {\n                "schema": MANIFEST_SCHEMA,\n                "version": installed,\n                "channel": config.channel,\n                "restart_required": False,\n                "mandatory": False,\n                "release_url": newest_release.get("html_url"),\n                "release_notes": "",\n                "artifacts": {},\n            },\n            newest_release,\n        )\n    raise RuntimeError(f"release {newest_release.get('tag_name', '')} does not provide {MANIFEST_ASSET}")\n'''
+          if old not in text:
+              raise SystemExit('target updater block not found')
+          updater.write_text(text.replace(old, new), encoding='utf-8')
+
+          tests = Path('tests/test_updater.py')
+          t = tests.read_text(encoding='utf-8')
+          marker = '''    def test_safe_extract_rejects_zip_path_traversal(self) -> None:\n'''
+          addition = '''    def test_pre_ota_older_release_is_treated_as_latest(self) -> None:\n        release = {\n            "tag_name": "v1.6.0",\n            "draft": False,\n            "prerelease": False,\n            "html_url": "https://example.invalid/releases/v1.6.0",\n            "assets": [],\n        }\n        with patch.object(updater, "_request_json", return_value=[release]):\n            state = updater.check_for_updates(force=True)\n        self.assertEqual(state.status, "latest")\n        self.assertEqual(state.current_version, "1.7.0")\n        self.assertEqual(state.latest_version, "1.7.0")\n        self.assertFalse(state.update_available)\n        self.assertIsNone(state.last_error)\n\n'''
+          if addition not in t:
+              if marker not in t:
+                  raise SystemExit('test insertion point not found')
+              tests.write_text(t.replace(marker, addition + marker), encoding='utf-8')
+          PY
+      - name: Commit fix
+        shell: bash
+        run: |
+          rm -f .github/workflows/ota-fixup.yml
+          git config user.name 'codex-flow automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(update): preserve pre-OTA and Windows compatibility'
+          git push origin HEAD:feat/ota-update-system
