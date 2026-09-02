@@ -75,16 +75,34 @@ public struct FlowPilotUpdateView: View {
             }
 
             if service.isRestartRequired {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(.orange)
-                    Text(L(
-                        "The update is installed. Fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
-                        "更新已经安装。请完整重启 Codex，以激活新的 FlowPilot 策略和 Hook 快照。"
-                    ))
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.orange)
+                        Text(L(
+                            "The update is installed. Fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
+                            "更新已经安装。请完整重启 Codex，以激活新的 FlowPilot 策略和 Hook 快照。"
+                        ))
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                    }
+
+                    Button {
+                        service.acknowledgeRestart()
+                    } label: {
+                        HStack(spacing: 4) {
+                            if service.isAcknowledgingRestart {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "checkmark.circle")
+                            }
+                            Text(L("I've restarted Codex", "我已重启 Codex"))
+                        }
+                        .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(service.isAcknowledgingRestart || service.isInstalling || service.isChecking)
                 }
             }
 
@@ -104,7 +122,7 @@ public struct FlowPilotUpdateView: View {
                     .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.bordered)
-                .disabled(service.isChecking || service.isInstalling)
+                .disabled(service.isChecking || service.isInstalling || service.isAcknowledgingRestart)
 
                 Button {
                     service.installUpdate()
@@ -124,6 +142,7 @@ public struct FlowPilotUpdateView: View {
                 .disabled(
                     service.isInstalling
                     || service.isChecking
+                    || service.isAcknowledgingRestart
                     || service.snapshot.updateAvailable != true
                     || service.snapshot.artifactAvailable == false
                 )
