@@ -13,29 +13,33 @@ public struct AnalyticsView: View {
     
     public var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
-            VStack(spacing: 11) {
+            VStack(spacing: 9) {
                 // MARK: 1. Header & Period Selector
                 periodHeader
                 
-                // MARK: 2. Core KPIs Row
-                kpiSummaryGrid
-                
-                // MARK: 3. Efficiency Rings / Bars (Cache & Offload)
-                efficiencyCard
-                
-                // MARK: 4. Model Breakdown List
-                if !stats.models.isEmpty {
-                    modelBreakdownCard
-                }
-                
-                // MARK: 5. Project Breakdown List
-                if stats.projects.count > 1 {
-                    projectBreakdownCard
+                if stats.totalRuns == 0 {
+                    emptyStatsState
+                } else {
+                    // MARK: 2. Core KPIs Row
+                    kpiSummaryGrid
+                    
+                    // MARK: 3. Efficiency Rings / Bars (Cache & Offload)
+                    efficiencyCard
+                    
+                    // MARK: 4. Model Breakdown List
+                    if !stats.models.isEmpty {
+                        modelBreakdownCard
+                    }
+                    
+                    // MARK: 5. Project Breakdown List
+                    if !stats.projects.isEmpty {
+                        projectBreakdownCard
+                    }
                 }
             }
             .padding(.vertical, 2)
         }
-        .frame(maxHeight: 330)
+        .frame(maxHeight: 345)
         .onAppear {
             state.loadStats()
         }
@@ -45,7 +49,7 @@ public struct AnalyticsView: View {
     private var periodHeader: some View {
         HStack {
             Text("Aggregation Summary")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .font(.system(size: 10.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
             
             Spacer()
@@ -67,10 +71,10 @@ public struct AnalyticsView: View {
             }
         } label: {
             Text(title)
-                .font(.system(size: 9.5, weight: state.statsDays == days ? .bold : .medium, design: .rounded))
+                .font(.system(size: 9, weight: state.statsDays == days ? .bold : .medium, design: .rounded))
                 .foregroundColor(state.statsDays == days ? .white : .white.opacity(0.55))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3.5)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
                 .contentShape(Capsule())
                 .background(
                     Capsule()
@@ -78,6 +82,27 @@ public struct AnalyticsView: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+    
+    // MARK: - Empty Stats State
+    private var emptyStatsState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 24))
+                .foregroundColor(.white.opacity(0.3))
+                .padding(.top, 28)
+            
+            Text("No activity in past \(state.statsDays) days")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundColor(.white.opacity(0.75))
+            
+            Text("Multi-model usage, cache efficiencies, and worker offload metrics will appear here automatically.")
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.4))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+        }
+        .frame(maxWidth: .infinity, minHeight: 220)
     }
     
     // MARK: - Core KPI Summary Grid
@@ -110,7 +135,7 @@ public struct AnalyticsView: View {
     }
     
     private func kpiCard(title: String, value: String, subtext: String, icon: String, accentColor: Color) -> some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 2.5) {
             HStack(spacing: 3) {
                 Image(systemName: icon)
                     .font(.system(size: 8))
@@ -122,22 +147,22 @@ public struct AnalyticsView: View {
             }
             
             Text(value)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .font(.system(size: 12.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
             
             Text(subtext)
-                .font(.system(size: 8.5, weight: .regular, design: .rounded))
+                .font(.system(size: 8.0, weight: .regular, design: .rounded))
                 .foregroundColor(.white.opacity(0.45))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 7)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 9)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 9)
                         .stroke(Color.white.opacity(0.07), lineWidth: 0.8)
                 )
         )
@@ -145,7 +170,7 @@ public struct AnalyticsView: View {
     
     // MARK: - Efficiency & Offload Card
     private var efficiencyCard: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 6) {
             // Cache Ratio Bar
             efficiencyRow(
                 title: "Cache Efficiency",
@@ -162,32 +187,32 @@ public struct AnalyticsView: View {
                 color: Color(red: 0.22, green: 0.88, blue: 0.58)
             )
         }
-        .padding(9)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 9)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 9)
                         .stroke(Color.white.opacity(0.07), lineWidth: 0.8)
                 )
         )
     }
     
     private func efficiencyRow(title: String, percentage: Double, detail: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3.5) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(title)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 9.0, weight: .medium))
                     .foregroundColor(.white.opacity(0.75))
                 
                 Spacer()
                 
                 Text(String(format: "%.1f%%", percentage))
-                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 9.0, weight: .bold, design: .rounded))
                     .foregroundColor(color)
                 
                 Text("(\(detail))")
-                    .font(.system(size: 8.5, weight: .regular, design: .rounded))
+                    .font(.system(size: 8.0, weight: .regular, design: .rounded))
                     .foregroundColor(.white.opacity(0.4))
             }
             
@@ -202,30 +227,30 @@ public struct AnalyticsView: View {
                         .frame(width: fillW)
                 }
             }
-            .frame(height: 5)
+            .frame(height: 4.5)
         }
     }
     
     // MARK: - Model Breakdown Card
     private var modelBreakdownCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             Text("Model Breakdown")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.7))
                 .textCase(.uppercase)
             
-            VStack(spacing: 5) {
+            VStack(spacing: 4) {
                 ForEach(stats.models) { m in
                     ModelBreakdownRow(model: m, totalTokens: stats.totalTokens)
                 }
             }
         }
-        .padding(9)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 9)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 9)
                         .stroke(Color.white.opacity(0.07), lineWidth: 0.8)
                 )
         )
@@ -233,24 +258,24 @@ public struct AnalyticsView: View {
     
     // MARK: - Project Breakdown Card
     private var projectBreakdownCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             Text("Projects Distribution")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.7))
                 .textCase(.uppercase)
             
-            VStack(spacing: 4) {
+            VStack(spacing: 3.5) {
                 ForEach(Array(stats.projects.prefix(5))) { p in
                     ProjectBreakdownRow(project: p)
                 }
             }
         }
-        .padding(9)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 9)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 9)
                         .stroke(Color.white.opacity(0.07), lineWidth: 0.8)
                 )
         )
@@ -264,11 +289,11 @@ public struct ModelBreakdownRow: View {
     
     public var body: some View {
         let pct = totalTokens > 0 ? (Double(model.tokens) / Double(totalTokens) * 100.0) : 0
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             Text(model.name)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(.white.opacity(0.9))
-                .frame(width: 96, alignment: .leading)
+                .frame(width: 90, alignment: .leading)
                 .lineLimit(1)
             
             // Roles chips
@@ -277,8 +302,8 @@ public struct ModelBreakdownRow: View {
                     Text(role)
                         .font(.system(size: 7.5, weight: .medium))
                         .foregroundColor(role == "parent" ? .indigo.opacity(0.9) : .teal.opacity(0.9))
-                        .padding(.horizontal, 3.5)
-                        .padding(.vertical, 1)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 0.5)
                         .background(
                             Capsule()
                                 .fill((role == "parent" ? Color.indigo : Color.teal).opacity(0.2))
@@ -289,21 +314,21 @@ public struct ModelBreakdownRow: View {
             Spacer()
             
             Text("\(model.calls) calls")
-                .font(.system(size: 8.5, weight: .regular))
+                .font(.system(size: 8.0, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
             
             Text(TaskRun.formatTokenCount(model.tokens))
-                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .font(.system(size: 9.0, weight: .bold, design: .rounded))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
-                .frame(width: 42, alignment: .trailing)
+                .frame(width: 40, alignment: .trailing)
             
             Text(String(format: "%.0f%%", pct))
-                .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                .font(.system(size: 8.0, weight: .medium, design: .rounded))
                 .foregroundColor(.white.opacity(0.5))
-                .frame(width: 26, alignment: .trailing)
+                .frame(width: 24, alignment: .trailing)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4.5)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3.5)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.white.opacity(0.025))
@@ -316,27 +341,28 @@ public struct ProjectBreakdownRow: View {
     public var project: ProjectStats
     
     public var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             Image(systemName: "folder.fill")
-                .font(.system(size: 8))
+                .font(.system(size: 7.5))
                 .foregroundColor(.white.opacity(0.5))
             
             Text(project.name)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
                 .lineLimit(1)
             
             Spacer()
             
             Text("\(project.runs) runs")
-                .font(.system(size: 8.5, weight: .regular))
+                .font(.system(size: 8.0, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
             
             Text(TaskRun.formatTokenCount(project.tokens))
-                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .font(.system(size: 9.0, weight: .bold, design: .rounded))
                 .foregroundColor(.cyan)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3.5)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3)
     }
 }
+

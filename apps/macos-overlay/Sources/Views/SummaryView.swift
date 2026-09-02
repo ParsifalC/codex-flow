@@ -20,19 +20,20 @@ public struct MetricRingView: View {
     ) {
         self.title = title
         self.value = value
-        self.progress = min(max(progress, 0.05), 1.0)
+        let cleanProgress = progress.isFinite ? progress : 0.04
+        self.progress = min(max(cleanProgress, 0.04), 1.0)
         self.ringColor = ringColor
         self.secondaryColor = secondaryColor
         self.iconName = iconName
     }
     
     public var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 5) {
             ZStack {
                 // Background track
                 Circle()
-                    .stroke(Color.white.opacity(0.08), lineWidth: 4.0)
-                    .frame(width: 44, height: 44)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 3.5)
+                    .frame(width: 40, height: 40)
                 
                 // Progress stroke
                 Circle()
@@ -42,42 +43,46 @@ public struct MetricRingView: View {
                             colors: [ringColor, secondaryColor, ringColor],
                             center: .center
                         ),
-                        style: StrokeStyle(lineWidth: 4.0, lineCap: .round)
+                        style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 44, height: 44)
-                    .shadow(color: ringColor.opacity(0.4), radius: 3)
+                    .frame(width: 40, height: 40)
+                    .shadow(color: ringColor.opacity(0.35), radius: 2.5)
                 
                 // Value or icon inside ring
                 if let icon = iconName {
                     Image(systemName: icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white.opacity(0.9))
                 } else {
                     Circle()
                         .fill(Color.white.opacity(0.05))
-                        .frame(width: 30, height: 30)
+                        .frame(width: 26, height: 26)
                 }
             }
             
             VStack(spacing: 1) {
                 Text(title)
-                    .font(.system(size: 9.0, weight: .medium, design: .rounded))
+                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.55))
                     .textCase(.uppercase)
+                    .lineLimit(1)
                 
                 Text(value)
-                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 7)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 2)
         .background(
-            RoundedRectangle(cornerRadius: 11)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 11)
+                    RoundedRectangle(cornerRadius: 10)
                         .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                 )
         )
@@ -101,16 +106,18 @@ public struct QuotaWindowsView: View {
                             .font(.system(size: 9))
                             .foregroundColor(.cyan)
                         Text("Rate Limits & Account Quota")
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                             .foregroundColor(.white.opacity(0.85))
+                            .lineLimit(1)
                     }
                     
-                    Spacer()
+                    Spacer(minLength: 4)
                     
                     if let firstReset = windows.compactMap({ $0.formattedResetsAt }).first {
                         Text(firstReset)
-                            .font(.system(size: 8.5, weight: .regular))
+                            .font(.system(size: 8.0, weight: .regular))
                             .foregroundColor(.white.opacity(0.45))
+                            .lineLimit(1)
                     }
                 }
                 
@@ -122,10 +129,10 @@ public struct QuotaWindowsView: View {
             }
             .padding(8)
             .background(
-                RoundedRectangle(cornerRadius: 11)
+                RoundedRectangle(cornerRadius: 10)
                     .fill(Color.white.opacity(0.04))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 11)
+                        RoundedRectangle(cornerRadius: 10)
                             .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                     )
             )
@@ -137,17 +144,20 @@ public struct QuotaWindowsView: View {
         let rem = window.remainingPercent
         let color = used > 80 ? Color.orange : (used > 50 ? Color.yellow : Color.cyan)
         
-        return VStack(alignment: .leading, spacing: 2.5) {
+        return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(window.label)
                     .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.85))
+                    .lineLimit(1)
                 
-                Spacer()
+                Spacer(minLength: 4)
                 
                 Text(String(format: "%.0f%% rem", rem))
                     .font(.system(size: 8.0, weight: .semibold, design: .rounded))
                     .foregroundColor(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             
             // Progress Bar
@@ -162,19 +172,20 @@ public struct QuotaWindowsView: View {
                         .frame(width: fillW)
                 }
             }
-            .frame(height: 3.5)
+            .frame(height: 3)
             
             if let delta = window.deltaPercentagePoints, delta != 0 {
                 Text(String(format: "%+.1f pp", delta))
                     .font(.system(size: 7.5, weight: .regular))
                     .foregroundColor(delta > 0 ? .orange.opacity(0.85) : .green.opacity(0.85))
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .background(
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 6)
                 .fill(Color.white.opacity(0.03))
         )
     }
@@ -192,27 +203,28 @@ public struct TokenDistributionBar: View {
     private var completion: Int { usage.effectiveOutputTokens }
     private var cached: Int { usage.effectiveCachedTokens }
     private var reasoning: Int { usage.effectiveReasoningTokens }
-    private var total: Int { max(usage.totalTokens ?? (prompt + completion), 1) }
+    private var rawTotal: Int { usage.totalTokens ?? (prompt + completion) }
+    private var total: Int { max(rawTotal, 1) }
     
     private var promptOnly: Int { max(0, prompt - cached) }
     
-    private var promptOnlyRatio: CGFloat { CGFloat(promptOnly) / CGFloat(total) }
-    private var cachedRatio: CGFloat { CGFloat(cached) / CGFloat(total) }
-    private var completionRatio: CGFloat { CGFloat(max(0, completion - reasoning)) / CGFloat(total) }
-    private var reasoningRatio: CGFloat { CGFloat(reasoning) / CGFloat(total) }
+    private var promptOnlyRatio: CGFloat { rawTotal > 0 ? CGFloat(promptOnly) / CGFloat(total) : 0 }
+    private var cachedRatio: CGFloat { rawTotal > 0 ? CGFloat(cached) / CGFloat(total) : 0 }
+    private var completionRatio: CGFloat { rawTotal > 0 ? CGFloat(max(0, completion - reasoning)) / CGFloat(total) : 0 }
+    private var reasoningRatio: CGFloat { rawTotal > 0 ? CGFloat(reasoning) / CGFloat(total) : 0 }
     
     public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             headerRow
             progressBar
             legendRow
         }
-        .padding(9)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 11)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 11)
+                    RoundedRectangle(cornerRadius: 10)
                         .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                 )
         )
@@ -220,15 +232,17 @@ public struct TokenDistributionBar: View {
     
     private var headerRow: some View {
         HStack {
-            Text("Token Progress")
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+            Text("Token Distribution")
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
+                .lineLimit(1)
             
-            Spacer()
+            Spacer(minLength: 4)
             
-            Text("Total: \(TaskRun.formatTokenCount(usage.totalTokens ?? (prompt + completion)))")
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+            Text("Total: \(TaskRun.formatTokenCount(rawTotal))")
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.6))
+                .lineLimit(1)
         }
     }
     
@@ -236,80 +250,93 @@ public struct TokenDistributionBar: View {
         GeometryReader { geo in
             let w = geo.size.width
             HStack(spacing: 0) {
-                if promptOnly > 0 {
-                    Rectangle()
-                        .fill(Color(red: 0.88, green: 0.35, blue: 0.82))
-                        .frame(width: w * promptOnlyRatio)
-                }
-                
-                if cached > 0 {
-                    Rectangle()
-                        .fill(Color(red: 0.28, green: 0.58, blue: 0.95))
-                        .frame(width: w * cachedRatio)
-                }
-                
-                if completion > 0 && reasoning == 0 {
-                    Rectangle()
-                        .fill(Color(red: 0.22, green: 0.88, blue: 0.58))
-                        .frame(width: w * completionRatio)
-                } else if completion > 0 {
-                    Rectangle()
-                        .fill(Color(red: 0.22, green: 0.88, blue: 0.58))
-                        .frame(width: w * completionRatio)
-                    
-                    if reasoning > 0 {
+                if rawTotal == 0 {
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                } else {
+                    if promptOnly > 0 {
                         Rectangle()
-                            .fill(Color(red: 0.65, green: 0.45, blue: 0.95))
-                            .frame(width: w * reasoningRatio)
+                            .fill(Color(red: 0.88, green: 0.35, blue: 0.82))
+                            .frame(width: max(2, w * promptOnlyRatio))
+                    }
+                    
+                    if cached > 0 {
+                        Rectangle()
+                            .fill(Color(red: 0.28, green: 0.58, blue: 0.95))
+                            .frame(width: max(2, w * cachedRatio))
+                    }
+                    
+                    if completion > 0 {
+                        Rectangle()
+                            .fill(Color(red: 0.22, green: 0.88, blue: 0.58))
+                            .frame(width: max(2, w * completionRatio))
+                        
+                        if reasoning > 0 {
+                            Rectangle()
+                                .fill(Color(red: 0.65, green: 0.45, blue: 0.95))
+                                .frame(width: max(2, w * reasoningRatio))
+                        }
                     }
                 }
             }
         }
-        .frame(height: 6)
+        .frame(height: 5)
         .clipShape(Capsule())
         .background(Capsule().fill(Color.white.opacity(0.08)))
     }
     
     private var legendRow: some View {
-        HStack {
-            let promptPct = Int(Double(prompt) / Double(total) * 100)
-            legendItem(
-                color: Color(red: 0.88, green: 0.35, blue: 0.82),
-                label: "Prompt",
-                count: TaskRun.formatTokenCount(prompt),
-                pct: promptPct
-            )
-            
-            Spacer()
-            
-            let compPct = Int(Double(completion) / Double(total) * 100)
-            legendItem(
-                color: Color(red: 0.22, green: 0.88, blue: 0.58),
-                label: "Output",
-                count: TaskRun.formatTokenCount(completion),
-                pct: compPct
-            )
-            
-            if cached > 0 {
-                Spacer()
-                let cachedPct = Int(Double(cached) / Double(total) * 100)
+        VStack(spacing: 3.5) {
+            // Row 1: Prompt & Output
+            HStack {
+                let promptPct = rawTotal > 0 ? Int(Double(prompt) / Double(total) * 100) : 0
                 legendItem(
-                    color: Color(red: 0.28, green: 0.58, blue: 0.95),
-                    label: "Cached",
-                    count: TaskRun.formatTokenCount(cached),
-                    pct: cachedPct
+                    color: Color(red: 0.88, green: 0.35, blue: 0.82),
+                    label: "Prompt",
+                    count: TaskRun.formatTokenCount(prompt),
+                    pct: promptPct
+                )
+                
+                Spacer(minLength: 8)
+                
+                let compPct = rawTotal > 0 ? Int(Double(completion) / Double(total) * 100) : 0
+                legendItem(
+                    color: Color(red: 0.22, green: 0.88, blue: 0.58),
+                    label: "Output",
+                    count: TaskRun.formatTokenCount(completion),
+                    pct: compPct
                 )
             }
             
-            if reasoning > 0 {
-                Spacer()
-                let rPct = Int(Double(reasoning) / Double(total) * 100)
-                legendItem(
-                    color: Color(red: 0.65, green: 0.45, blue: 0.95),
-                    label: "Reason",
-                    count: TaskRun.formatTokenCount(reasoning),
-                    pct: rPct
-                )
+            // Row 2: Cached & Reasoning (if present)
+            if cached > 0 || reasoning > 0 {
+                HStack {
+                    if cached > 0 {
+                        let cachedPct = Int(Double(cached) / Double(total) * 100)
+                        legendItem(
+                            color: Color(red: 0.28, green: 0.58, blue: 0.95),
+                            label: "Cached",
+                            count: TaskRun.formatTokenCount(cached),
+                            pct: cachedPct
+                        )
+                    } else {
+                        Spacer()
+                    }
+                    
+                    Spacer(minLength: 8)
+                    
+                    if reasoning > 0 {
+                        let rPct = Int(Double(reasoning) / Double(total) * 100)
+                        legendItem(
+                            color: Color(red: 0.65, green: 0.45, blue: 0.95),
+                            label: "Reason",
+                            count: TaskRun.formatTokenCount(reasoning),
+                            pct: rPct
+                        )
+                    } else {
+                        Spacer()
+                    }
+                }
             }
         }
         .padding(.top, 1)
@@ -319,21 +346,22 @@ public struct TokenDistributionBar: View {
         HStack(spacing: 3) {
             Circle()
                 .fill(color)
-                .frame(width: 5, height: 5)
+                .frame(width: 4.5, height: 4.5)
             
             Text(label)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 8.5, weight: .medium))
                 .foregroundColor(.white.opacity(0.6))
             
             Text("\(pct)%")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .font(.system(size: 8.5, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.95))
             
             Text("(\(count))")
-                .font(.system(size: 8.5, weight: .regular, design: .rounded))
-                .foregroundColor(.white.opacity(0.5))
+                .font(.system(size: 8.0, weight: .regular, design: .rounded))
+                .foregroundColor(.white.opacity(0.45))
         }
-        .fixedSize(horizontal: true, vertical: false)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
     }
 }
 
@@ -346,8 +374,8 @@ public struct SummaryView: View {
         self.state = state
     }
     
-    private var run: TaskRun {
-        return state.inspectedRun ?? state.latestRun ?? TaskRun.previewSample
+    private var currentRun: TaskRun? {
+        return state.inspectedRun ?? state.latestRun
     }
     
     private var isViewingHistoricalTask: Bool {
@@ -358,7 +386,7 @@ public struct SummaryView: View {
     }
     
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             // MARK: 1. Top Bar (App Title & Window Controls)
             topBar
             
@@ -368,15 +396,19 @@ public struct SummaryView: View {
             // MARK: 3. Dynamic Content
             switch state.activeTab {
             case .inspector:
-                inspectorContent
+                if let run = currentRun {
+                    activeInspectorScrollContent(run: run)
+                } else {
+                    idleInspectorContent
+                }
             case .history:
                 HistoryView(state: state)
             case .analytics:
                 AnalyticsView(state: state)
             }
         }
-        .padding(13)
-        .frame(width: 380)
+        .padding(12)
+        .frame(width: 384)
         .background(
             RoundedRectangle(cornerRadius: 20)
                 .fill(.ultraThinMaterial)
@@ -507,58 +539,181 @@ public struct SummaryView: View {
         )
     }
     
-    // MARK: - Inspector Content
-    private var inspectorContent: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            // Historical Task Notice Bar
-            if isViewingHistoricalTask {
-                historicalTaskBanner
-            }
-            
-            // Project & Branch + Session Preview
-            projectHeaderRow
-            
-            // 3 KPI Rings
-            HStack(spacing: 7) {
-                MetricRingView(
-                    title: "Time",
-                    value: run.formattedDuration,
-                    progress: min(1.0, run.durationSeconds / 30.0),
-                    ringColor: Color.cyan,
-                    secondaryColor: Color.indigo
-                )
+    // MARK: - Active Inspector Content (Scrollable Container)
+    private func activeInspectorScrollContent(run: TaskRun) -> some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Historical Task Notice Bar
+                if isViewingHistoricalTask {
+                    historicalTaskBanner
+                }
                 
-                MetricRingView(
-                    title: "Tokens",
-                    value: run.formattedTotalTokens,
-                    progress: min(1.0, Double(run.aggregatedUsage.totalTokens ?? 0) / 100_000.0),
-                    ringColor: Color(red: 0.95, green: 0.35, blue: 0.8),
-                    secondaryColor: Color(red: 0.6, green: 0.2, blue: 0.9)
-                )
+                // Project & Branch + Session Preview
+                projectHeaderRow(run: run)
                 
-                MetricRingView(
-                    title: "Cost",
-                    value: run.formattedCost,
-                    progress: min(1.0, (run.aggregatedUsage.estimatedCreditsMicros ?? 0) / 100_000.0),
-                    ringColor: Color(red: 0.2, green: 0.85, blue: 0.45),
-                    secondaryColor: Color.teal
-                )
+                // 3 KPI Rings
+                HStack(spacing: 6) {
+                    MetricRingView(
+                        title: "Time",
+                        value: run.formattedDuration,
+                        progress: min(1.0, run.durationSeconds / 30.0),
+                        ringColor: Color.cyan,
+                        secondaryColor: Color.indigo
+                    )
+                    
+                    MetricRingView(
+                        title: "Tokens",
+                        value: run.formattedTotalTokens,
+                        progress: min(1.0, Double(run.aggregatedUsage.totalTokens ?? 0) / 100_000.0),
+                        ringColor: Color(red: 0.95, green: 0.35, blue: 0.8),
+                        secondaryColor: Color(red: 0.6, green: 0.2, blue: 0.9)
+                    )
+                    
+                    MetricRingView(
+                        title: "Cost",
+                        value: run.formattedCost,
+                        progress: min(1.0, (run.aggregatedUsage.estimatedCreditsMicros ?? 0) / 100_000.0),
+                        ringColor: Color(red: 0.2, green: 0.85, blue: 0.45),
+                        secondaryColor: Color.teal
+                    )
+                }
+                
+                // Quota & Rate Limit Windows Meter
+                if !run.effectiveQuotaWindows.isEmpty {
+                    QuotaWindowsView(windows: run.effectiveQuotaWindows)
+                }
+                
+                // Token Distribution Bar
+                TokenDistributionBar(usage: run.aggregatedUsage)
+                
+                // Participants (Parent + Workers)
+                participantsSection(run: run)
+                
+                // Action Footer
+                actionFooter(run: run)
             }
-            
-            // Quota & Rate Limit Windows Meter
-            if !run.effectiveQuotaWindows.isEmpty {
-                QuotaWindowsView(windows: run.effectiveQuotaWindows)
-            }
-            
-            // Token Distribution Bar
-            TokenDistributionBar(usage: run.aggregatedUsage)
-            
-            // Participants (Parent + Workers)
-            participantsSection
-            
-            // Action Footer
-            actionFooter
+            .padding(.vertical, 2)
         }
+        .frame(maxHeight: 395)
+    }
+    
+    // MARK: - Idle / Ready Inspector Content (Clean Zero/Cleared State)
+    private var idleInspectorContent: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.cyan.opacity(0.12))
+                    .frame(width: 54, height: 54)
+                
+                Image(systemName: "sparkles")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [.cyan, .indigo],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+            .padding(.top, 14)
+            
+            VStack(spacing: 4) {
+                Text("FlowPilot is Ready")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text("Listening for live agent runs & telemetry")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color(red: 0.2, green: 0.85, blue: 0.45))
+                        .frame(width: 6, height: 6)
+                    Text("Telemetry Hook:")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.7))
+                    Spacer()
+                    Text("Active & Streaming")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Color(red: 0.2, green: 0.85, blue: 0.45))
+                }
+                
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.cyan)
+                        .frame(width: 6, height: 6)
+                    Text("IPC Daemon:")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.7))
+                    Spacer()
+                    Text("Connected")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.cyan)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color.white.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+                    )
+            )
+            
+            // Quick Actions
+            HStack(spacing: 8) {
+                Button {
+                    openConsole()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 9.5))
+                        Text("Open Console")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.cyan.opacity(0.3))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.cyan.opacity(0.5), lineWidth: 0.8)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                
+                Button {
+                    state.selectTab(.history)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 9.5))
+                        Text("History")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundColor(.white.opacity(0.85))
+                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.06))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.white.opacity(0.1), lineWidth: 0.8)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 6)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 4)
     }
     
     // MARK: - Historical Task Banner
@@ -606,7 +761,7 @@ public struct SummaryView: View {
     }
     
     // MARK: - Project Header Row
-    private var projectHeaderRow: some View {
+    private func projectHeaderRow(run: TaskRun) -> some View {
         HStack(spacing: 6) {
             // Project & Branch Chip
             HStack(spacing: 4) {
@@ -643,15 +798,16 @@ public struct SummaryView: View {
                             .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
                     )
             )
-            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
             
             // Task Subtitle / Preview
             if let preview = run.thread?.preview ?? run.summary, !preview.isEmpty {
                 Text(preview)
-                    .font(.system(size: 10.5, weight: .regular))
+                    .font(.system(size: 10, weight: .regular))
                     .foregroundColor(.white.opacity(0.65))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -681,6 +837,9 @@ public struct SummaryView: View {
     }
     
     private var statusBadgeColor: Color {
+        guard let run = currentRun else {
+            return Color(red: 0.2, green: 0.85, blue: 0.45)
+        }
         if run.isRunning {
             return .cyan
         } else if run.isError {
@@ -690,6 +849,9 @@ public struct SummaryView: View {
     }
     
     private var statusBadgeText: String {
+        guard let run = currentRun else {
+            return "READY"
+        }
         if run.isRunning {
             return "RUNNING"
         } else if run.isError {
@@ -699,97 +861,114 @@ public struct SummaryView: View {
     }
     
     // MARK: - Participants Section
-    private var participantsSection: some View {
-        HStack(spacing: 7) {
+    private func participantsSection(run: TaskRun) -> some View {
+        HStack(spacing: 6) {
             // Parent Agent
-            VStack(alignment: .leading, spacing: 3.5) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 3) {
                     Image(systemName: "brain.head.profile")
                         .font(.system(size: 9))
                         .foregroundColor(.indigo.opacity(0.9))
                     Text("Parent Model")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9.0, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                 }
                 
                 HStack(spacing: 3) {
-                    Text(run.parent?.displayModel ?? "gpt-5-pro")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                    Text(run.parent?.displayModel ?? "Direct CLI")
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     
                     if let effort = run.parent?.displayEffort {
                         Text(effort)
-                            .font(.system(size: 8, weight: .medium))
+                            .font(.system(size: 7.5, weight: .medium))
                             .foregroundColor(.indigo.opacity(0.9))
-                            .padding(.horizontal, 3.5)
+                            .padding(.horizontal, 3)
                             .padding(.vertical, 0.5)
                             .background(
                                 Capsule()
                                     .fill(Color.indigo.opacity(0.2))
                             )
+                            .lineLimit(1)
                     }
                 }
                 
-                if let u = run.parent?.effectiveUsage?.totalTokens {
-                    Text("\(TaskRun.formatTokenCount(u)) tokens")
-                        .font(.system(size: 9, weight: .regular))
-                        .foregroundColor(.white.opacity(0.5))
-                }
+                let u = run.parent?.effectiveUsage?.totalTokens ?? 0
+                Text("\(TaskRun.formatTokenCount(u)) tokens")
+                    .font(.system(size: 8.5, weight: .regular))
+                    .foregroundColor(.white.opacity(0.5))
+                    .lineLimit(1)
             }
-            .padding(7)
+            .padding(6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 9)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(Color.white.opacity(0.04))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 9)
+                        RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                     )
             )
             
             // Workers Section
-            VStack(alignment: .leading, spacing: 3.5) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 3) {
                     Image(systemName: "person.2.fill")
                         .font(.system(size: 9))
                         .foregroundColor(.teal.opacity(0.9))
                     Text("Workers (\(run.allWorkers.count))")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9.0, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                 }
                 
                 if run.allWorkers.isEmpty {
-                    Text("No subagents")
-                        .font(.system(size: 10.5, weight: .regular))
-                        .foregroundColor(.white.opacity(0.4))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Direct Execution")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.white.opacity(0.75))
+                        Text("No subagents")
+                            .font(.system(size: 8.5, weight: .regular))
+                            .foregroundColor(.white.opacity(0.4))
+                    }
                 } else {
-                    VStack(alignment: .leading, spacing: 2.5) {
+                    VStack(alignment: .leading, spacing: 2) {
                         ForEach(run.allWorkers.prefix(2)) { worker in
                             HStack(spacing: 3) {
                                 Text(worker.name ?? worker.displayModel)
-                                    .font(.system(size: 9.5, weight: .medium))
+                                    .font(.system(size: 9, weight: .medium))
                                     .foregroundColor(.white.opacity(0.85))
                                     .lineLimit(1)
+                                    .truncationMode(.tail)
                                 
-                                Spacer()
+                                Spacer(minLength: 2)
                                 
                                 if let tok = worker.effectiveUsage?.totalTokens {
                                     Text(TaskRun.formatTokenCount(tok))
-                                        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                                        .font(.system(size: 8.0, weight: .semibold, design: .rounded))
                                         .foregroundColor(.teal.opacity(0.9))
+                                        .lineLimit(1)
                                 }
                             }
+                        }
+                        
+                        if run.allWorkers.count > 2 {
+                            Text("+\(run.allWorkers.count - 2) more subagents")
+                                .font(.system(size: 8.0, weight: .regular))
+                                .foregroundColor(.teal.opacity(0.7))
+                                .lineLimit(1)
                         }
                     }
                 }
             }
-            .padding(7)
+            .padding(6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 9)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(Color.white.opacity(0.04))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 9)
+                        RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                     )
             )
@@ -797,26 +976,26 @@ public struct SummaryView: View {
     }
     
     // MARK: - Action Footer
-    private var actionFooter: some View {
-        HStack(spacing: 7) {
+    private func actionFooter(run: TaskRun) -> some View {
+        HStack(spacing: 6) {
             // Copy Summary Button
             Button {
-                copySummaryToClipboard()
+                copySummaryToClipboard(run: run)
             } label: {
-                HStack(spacing: 3.5) {
+                HStack(spacing: 3) {
                     Image(systemName: copiedSummary ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 9.5, weight: .semibold))
-                    Text(copiedSummary ? "Copied!" : "Copy Summary")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(copiedSummary ? "Copied!" : "Copy")
+                        .font(.system(size: 9.5, weight: .medium))
                 }
                 .foregroundColor(copiedSummary ? Color(red: 0.2, green: 0.85, blue: 0.45) : .white.opacity(0.85))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4.5)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
                 .background(
-                    RoundedRectangle(cornerRadius: 7)
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(copiedSummary ? Color.green.opacity(0.15) : Color.white.opacity(0.06))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 7)
+                            RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
                         )
                 )
@@ -827,20 +1006,20 @@ public struct SummaryView: View {
             Button {
                 openConsole()
             } label: {
-                HStack(spacing: 3.5) {
+                HStack(spacing: 3) {
                     Image(systemName: "terminal.fill")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                     Text("Console")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 9.5, weight: .medium))
                 }
                 .foregroundColor(.white.opacity(0.85))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4.5)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
                 .background(
-                    RoundedRectangle(cornerRadius: 7)
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(Color.white.opacity(0.06))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 7)
+                            RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
                         )
                 )
@@ -851,13 +1030,13 @@ public struct SummaryView: View {
             
             // Relative date / update time
             Text(run.formattedDate)
-                .font(.system(size: 9, weight: .regular))
+                .font(.system(size: 8.5, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
         }
         .padding(.top, 1)
     }
     
-    private func copySummaryToClipboard() {
+    private func copySummaryToClipboard(run: TaskRun) {
         let text = """
         📊 FlowPilot Task Summary
         • Project: \(run.projectName) (\(run.gitBranch ?? "main"))
@@ -896,3 +1075,4 @@ public struct SummaryView: View {
         }
     }
 }
+

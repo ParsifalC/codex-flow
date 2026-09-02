@@ -29,7 +29,12 @@ public class OverlayState: ObservableObject {
     
     public weak var windowController: OverlayWindowController?
     
-    public init() {}
+    public init() {
+        if let latest = TelemetryQueryEngine.shared.loadLatestRun() {
+            self.latestRun = latest
+            self.isTaskRunning = latest.isRunning
+        }
+    }
     
     public func expand() {
         guard !isExpanded else { return }
@@ -142,7 +147,7 @@ public struct OverlayRootView: View {
         ZStack(alignment: .topTrailing) {
             if state.isExpanded {
                 SummaryView(state: state)
-                    .frame(width: 380)
+                    .frame(width: 384)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing)),
@@ -452,7 +457,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var collapseTimer: Timer?
     private var tuckTimer: Timer?
     private let bubbleSize = NSSize(width: 76, height: 76)
-    private let summarySize = NSSize(width: 380, height: 460)
+    private let summarySize = NSSize(width: 384, height: 490)
     
     public init(state: OverlayState) {
         self.state = state
@@ -679,6 +684,18 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
     
     public func refreshTelemetry() {
-        // Will be triggered by watcher or manual refresh
+        DispatchQueue.global(qos: .userInitiated).async {
+            let latest = TelemetryQueryEngine.shared.loadLatestRun()
+            DispatchQueue.main.async {
+                if let run = latest {
+                    self.state.update(run: run)
+                } else {
+                    self.state.latestRun = nil
+                    self.state.isTaskRunning = false
+                    self.state.loadHistory()
+                    self.state.loadStats()
+                }
+            }
+        }
     }
 }

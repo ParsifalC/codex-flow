@@ -9,11 +9,11 @@ public struct HistoryView: View {
     }
     
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             // MARK: Filter & Search Bar
             filterBar
             
-            // MARK: History Task List
+            // MARK: History Task List / Empty State
             if state.historyRuns.isEmpty {
                 emptyState
             } else {
@@ -58,10 +58,10 @@ public struct HistoryView: View {
                             Image(systemName: "folder")
                                 .font(.system(size: 9))
                             Text(state.selectedProject ?? "All Projects")
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: 9.5, weight: .medium))
                                 .lineLimit(1)
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 8))
+                                .font(.system(size: 7.5))
                         }
                         .foregroundColor(.white.opacity(0.8))
                         .padding(.horizontal, 7)
@@ -83,12 +83,12 @@ public struct HistoryView: View {
             // Search Input Box
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9.5))
                     .foregroundColor(.white.opacity(0.4))
                 
                 TextField("Search session, branch, or prompt...", text: $state.searchQuery)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11))
+                    .font(.system(size: 10.5))
                     .foregroundColor(.white)
                     .onChange(of: state.searchQuery) {
                         state.loadHistory()
@@ -107,7 +107,7 @@ public struct HistoryView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 4.5)
+            .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.white.opacity(0.05))
@@ -122,7 +122,7 @@ public struct HistoryView: View {
     private func scopeButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .rounded))
+                .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .rounded))
                 .foregroundColor(isSelected ? .white : .white.opacity(0.55))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3.5)
@@ -152,25 +152,80 @@ public struct HistoryView: View {
             }
             .padding(.vertical, 2)
         }
-        .frame(maxHeight: 280)
+        .frame(maxHeight: 340)
     }
     
-    // MARK: - Empty State
+    // MARK: - Contextual Empty State
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "tray")
+            Image(systemName: !state.searchQuery.isEmpty ? "magnifyingglass" : "tray")
                 .font(.system(size: 24))
                 .foregroundColor(.white.opacity(0.3))
+                .padding(.top, 24)
             
-            Text("No telemetry runs found")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.6))
-            
-            Text("Run tasks with FlowPilot or check search filters")
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.35))
+            if !state.searchQuery.isEmpty {
+                Text("No results for \"\(state.searchQuery)\"")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.75))
+                
+                Button {
+                    state.searchQuery = ""
+                    state.loadHistory()
+                } label: {
+                    Text("Clear Search")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.cyan.opacity(0.15)))
+                }
+                .buttonStyle(.plain)
+            } else if state.isTodayOnly {
+                Text("No tasks recorded today")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.75))
+                
+                Button {
+                    state.isTodayOnly = false
+                    state.loadHistory()
+                } label: {
+                    Text("Show All Time")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.cyan.opacity(0.15)))
+                }
+                .buttonStyle(.plain)
+            } else if let p = state.selectedProject {
+                Text("No runs for project \"\(p)\"")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.75))
+                
+                Button {
+                    state.selectedProject = nil
+                    state.loadHistory()
+                } label: {
+                    Text("Show All Projects")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.cyan.opacity(0.15)))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text("No telemetry runs recorded yet")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.75))
+                
+                Text("FlowPilot logs token and duration telemetry automatically.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.4))
+                    .multilineTextAlignment(.center)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 180)
+        .frame(maxWidth: .infinity, minHeight: 220)
     }
 }
 
@@ -185,25 +240,25 @@ public struct HistoryItemRow: View {
     
     public var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 // Index badge
                 Text("#\(index)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                     .foregroundColor(index == 1 ? .cyan : .white.opacity(0.45))
                     .frame(width: 24, alignment: .leading)
                 
                 // Main Info
-                VStack(alignment: .leading, spacing: 2.5) {
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
                         // Project & branch chip
                         Text(run.projectName)
-                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
                             .foregroundColor(.white.opacity(0.95))
                             .lineLimit(1)
                         
-                        if let b = run.gitBranch {
+                        if let b = run.gitBranch, !b.isEmpty {
                             Text("(\(b))")
-                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
                                 .foregroundColor(.cyan.opacity(0.8))
                                 .lineLimit(1)
                         }
@@ -212,22 +267,22 @@ public struct HistoryItemRow: View {
                         
                         // Time stamp
                         Text(run.formattedDate)
-                            .font(.system(size: 9, weight: .regular))
+                            .font(.system(size: 8.5, weight: .regular))
                             .foregroundColor(.white.opacity(0.4))
                     }
                     
                     // Task Preview / Title
                     Text(run.sessionTitle)
-                        .font(.system(size: 10.5, weight: .regular))
+                        .font(.system(size: 10, weight: .regular))
                         .foregroundColor(.white.opacity(0.7))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     
                     // Footer details: Workers, Duration, Tokens
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         let wCount = run.allWorkers.count
                         if wCount > 0 {
-                            HStack(spacing: 2.5) {
+                            HStack(spacing: 2) {
                                 Image(systemName: "person.2.fill")
                                     .font(.system(size: 7.5))
                                 Text("\(wCount) workers")
@@ -251,26 +306,26 @@ public struct HistoryItemRow: View {
                         
                         // Tokens Badge
                         Text(run.formattedTotalTokens)
-                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
                             .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
                         
                         // Status dot
                         Circle()
                             .fill(statusColor)
-                            .frame(width: 5, height: 5)
+                            .frame(width: 4.5, height: 4.5)
                     }
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 9)
                     .fill(
                         isSelected ? Color.cyan.opacity(0.15) :
                         (isHovered ? Color.white.opacity(0.07) : Color.white.opacity(0.03))
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 9)
                             .stroke(
                                 isSelected ? Color.cyan.opacity(0.4) :
                                 (isHovered ? Color.white.opacity(0.12) : Color.white.opacity(0.05)),
@@ -292,3 +347,4 @@ public struct HistoryItemRow: View {
         return Color(red: 0.2, green: 0.85, blue: 0.45)
     }
 }
+

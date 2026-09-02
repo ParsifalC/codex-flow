@@ -226,10 +226,12 @@ public struct QuotaWindow: Codable, Identifiable {
         let date = Date(timeIntervalSince1970: r > 1_000_000_000_000 ? r / 1000.0 : r)
         let now = Date()
         let interval = date.timeIntervalSince(now)
-        if interval > 0 && interval < 86400 {
+        if interval <= 0 {
+            return "resets now"
+        } else if interval < 86400 {
             let mins = Int(interval) / 60
             if mins < 60 {
-                return "resets in \(mins)m"
+                return "resets in \(max(1, mins))m"
             } else {
                 let hours = mins / 60
                 let remMins = mins % 60
