@@ -26,12 +26,21 @@ jobs:
           - os: ubuntu-latest
             platform: linux-x86_64
             overlay: false
-          - os: macos-14
-            platform: darwin-arm64
-            overlay: true
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            overlay: false
           - os: windows-latest
             platform: windows-x86_64
             overlay: false
+          - os: windows-11-arm
+            platform: windows-arm64
+            overlay: false
+          - os: macos-14
+            platform: darwin-arm64
+            overlay: true
+          - os: macos-15-intel
+            platform: darwin-x86_64
+            overlay: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -92,23 +101,22 @@ jobs:
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-      - name: Create or update GitHub Release
+      - name: Prepare immutable draft Release
         shell: bash
         run: |
           set -euo pipefail
           tag='${{ steps.release.outputs.tag }}'
-          channel='${{ steps.release.outputs.channel }}'
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            args=(release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA")
-            if [[ "$channel" != stable ]]; then
-              args+=(--prerelease)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            draft="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/$tag" --jq .draft)"
+            if [[ "$draft" != true ]]; then
+              echo "release $tag is already published and immutable; bump VERSION instead of replacing OTA assets" >&2
+              exit 2
             fi
-            gh "${args[@]}"
-          elif [[ "$channel" != stable ]]; then
-            gh release edit "$tag" --prerelease
+          else
+            gh release create "$tag" --draft --title "$tag" --generate-notes --target "$GITHUB_SHA"
           fi
           gh release view "$tag" --json body --jq .body > dist/release-notes.md
-      - name: Generate update manifest
+      - name: Generate and validate update manifest
         shell: bash
         run: |
           set -euo pipefail
@@ -118,9 +126,35 @@ jobs:
             --channel '${{ steps.release.outputs.channel }}' \
             --release-notes-file dist/release-notes.md \
             --output dist/codex-flow-update.json
-      - name: Publish OTA assets
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('dist/codex-flow-update.json').read_text(encoding='utf-8'))
+          expected = {
+              'linux-x86_64', 'linux-arm64',
+              'windows-x86_64', 'windows-arm64',
+              'darwin-arm64', 'darwin-x86_64',
+          }
+          actual = set(payload.get('artifacts') or {})
+          missing = expected - actual
+          if missing:
+              raise SystemExit(f'manifest missing release targets: {sorted(missing)}')
+          PY
+      - name: Upload assets to draft Release
         shell: bash
         run: |
           set -euo pipefail
           rm -f dist/release-notes.md
           gh release upload '${{ steps.release.outputs.tag }}' dist/* --clobber
+      - name: Publish Release atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.release.outputs.tag }}'
+          channel='${{ steps.release.outputs.channel }}'
+          release_id="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/$tag" --jq .id)"
+          prerelease=false
+          if [[ "$channel" != stable ]]; then prerelease=true; fi
+          gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/releases/$release_id" \
+            -F draft=false \
+            -F prerelease="$prerelease" >/dev/null
