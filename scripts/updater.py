@@ -649,7 +649,7 @@ def _replace_dir(src: Path, dst: Path) -> None:
 
 
 def _snapshot(current: str) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup = _state_dir() / "backups" / f"{stamp}-{current}"
     backup.mkdir(parents=True, exist_ok=True)
     targets = {
@@ -1091,28 +1091,28 @@ def _rollback_unlocked() -> UpdateState:
     if not previous_path.exists():
         raise RuntimeError("no previous codex-flow version is available for rollback")
     previous = _strip_v(previous_path.read_text(encoding="utf-8-sig").strip())
-    package_root = state_dir / "versions" / previous
-    if not package_root.exists():
-        raise RuntimeError(f"rollback package is missing: {package_root}")
-    backup = _snapshot(current)
     history_entry = next(
         (entry for entry in reversed(_history()) if entry.get("from") == previous and entry.get("to") == current and entry.get("backup")),
         None,
     )
+    historical_backup = Path(str(history_entry["backup"])) if history_entry else None
+    has_exact_snapshot = bool(historical_backup and historical_backup.exists())
+    package_root = state_dir / "versions" / previous
+    if not has_exact_snapshot and not package_root.exists():
+        raise RuntimeError(f"rollback package is missing: {package_root}")
+    backup = _snapshot(current)
     try:
-        restored_exact_snapshot = False
-        if history_entry:
-            historical_backup = Path(str(history_entry["backup"]))
-            if historical_backup.exists():
-                _restore_snapshot(historical_backup)
-                restored_exact_snapshot = True
-        if not restored_exact_snapshot:
+        if has_exact_snapshot:
+            assert historical_backup is not None
+            _restore_snapshot(historical_backup)
+        else:
             _reconcile_runtime_config(package_root)
             _sync_managed_runtime(package_root)
         _run_health_check()
         atomic_write_text(state_dir / "version", previous + "\n")
         atomic_write_text(state_dir / "current-version", previous + "\n")
-        atomic_write_text(state_dir / "source", str(package_root) + "\n")
+        if not has_exact_snapshot:
+            atomic_write_text(state_dir / "source", str(package_root) + "\n")
         atomic_write_text(state_dir / "previous-version", current + "\n")
         state = load_state()
         state.current_version = previous

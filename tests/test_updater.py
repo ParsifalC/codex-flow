@@ -47,10 +47,7 @@ class UpdaterTest(unittest.TestCase):
             encoding="utf-8",
         )
         (self.codex_home / "config.toml").write_text(
-            "# user sentinel
-[unrelated]
-keep_me = true
-",
+            "# user sentinel\n[unrelated]\nkeep_me = true\n",
             encoding="utf-8",
         )
         self.bin_dir = self.root / "bin"
@@ -208,6 +205,7 @@ keep_me = true
 
     def test_failed_health_check_restores_policy_and_does_not_commit_migration(self) -> None:
         original_policy = (self.codex_home / "codex-flow.toml").read_text(encoding="utf-8")
+        original_config = (self.codex_home / "config.toml").read_text(encoding="utf-8")
         (self.state / "updater.py").write_text("# installed updater\n", encoding="utf-8")
         package = self.root / "failed-package"
         (package / "scripts" / "migrations").mkdir(parents=True)
@@ -231,6 +229,10 @@ keep_me = true
             (self.codex_home / "codex-flow.toml").read_text(encoding="utf-8"),
             original_policy,
         )
+        self.assertEqual(
+            (self.codex_home / "config.toml").read_text(encoding="utf-8"),
+            original_config,
+        )
         migration_state = self.state / "state" / "migrations.json"
         self.assertFalse(migration_state.exists())
 
@@ -248,6 +250,51 @@ keep_me = true
         self.assertFalse(any("pull" in command for command in commands))
         self.assertTrue(any(("install.ps1" in " ".join(command)) or ("install.sh" in " ".join(command)) for command in commands))
 
+
+
+    def test_rollback_uses_exact_snapshot_without_previous_package(self) -> None:
+        original_source = self.root / "original-checkout"
+        original_source.mkdir()
+        (original_source / "VERSION").write_text("1.7.0\n", encoding="utf-8")
+        (self.state / "source").write_text(str(original_source) + "\n", encoding="utf-8")
+        (self.state / "updater.py").write_text("# old updater\n", encoding="utf-8")
+        (self.bin_dir / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")).write_text(
+            "@echo off\r\n" if os.name == "nt" else "#!/usr/bin/env bash\n",
+            encoding="utf-8",
+        )
+
+        package = self.root / "rollback-package"
+        (package / "scripts").mkdir(parents=True)
+        (package / "bin").mkdir(parents=True)
+        (package / "policy").mkdir(parents=True)
+        (package / "VERSION").write_text("1.8.0\n", encoding="utf-8")
+        (package / "scripts" / "updater.py").write_text("# new updater\n", encoding="utf-8")
+        (package / "scripts" / "update_runtime_config.py").write_text(
+            (ROOT / "scripts" / "update_runtime_config.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (package / "policy" / "defaults.toml").write_text(
+            '[models]\nworker_model = "fixture-worker"\n\n[reasoning.worker]\nminimum = "xhigh"\n\n[runtime]\nmax_concurrent_threads = 4\n',
+            encoding="utf-8",
+        )
+        launcher = package / "bin" / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")
+        launcher.write_text("@echo off\r\n" if os.name == "nt" else "#!/usr/bin/env bash\n", encoding="utf-8")
+
+        updater._install_package(package, "1.8.0", self.manifest())
+        previous_package = self.state / "versions" / "1.7.0"
+        if previous_package.exists():
+            import shutil
+            shutil.rmtree(previous_package)
+        state = updater.rollback()
+        self.assertEqual(state.current_version, "1.7.0")
+        self.assertEqual(
+            (self.state / "source").read_text(encoding="utf-8").strip(),
+            str(original_source),
+        )
+        self.assertIn(
+            "# user sentinel",
+            (self.codex_home / "config.toml").read_text(encoding="utf-8"),
+        )
 
     def test_safe_extract_rejects_tar_special_member(self) -> None:
         archive = self.root / "special.tar"
