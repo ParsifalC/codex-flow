@@ -172,6 +172,7 @@ public struct AccountView: View {
     private func quotaRow(_ window: AccountQuotaWindow) -> some View {
         let used = max(0, min(100, window.usedPercent ?? 0))
         let remaining = window.remainingPercent
+        let remainingFraction = max(0, min(1, (remaining ?? 0) / 100.0))
         let accent: Color = used >= 85 ? .orange : (used >= 60 ? .yellow : .cyan)
 
         return VStack(alignment: .leading, spacing: 4) {
@@ -197,7 +198,7 @@ public struct AccountView: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.08))
                     Capsule().fill(accent)
-                        .frame(width: proxy.size.width * CGFloat(used / 100.0))
+                        .frame(width: proxy.size.width * CGFloat(remainingFraction))
                 }
             }
             .frame(height: 4)
@@ -337,7 +338,20 @@ public struct AccountView: View {
         guard let state = value.rateLimitReachedType, !state.isEmpty else {
             return L("Not reported", "未返回")
         }
-        return state.replacingOccurrences(of: "_", with: " ")
+        switch state.lowercased() {
+        case "rate_limit_reached":
+            return L("Rate limit reached", "已达到额度上限")
+        case "workspace_owner_credits_depleted":
+            return L("Workspace credits depleted", "工作区 Credits 已用尽")
+        case "workspace_member_credits_depleted":
+            return L("Member credits depleted", "成员 Credits 已用尽")
+        case "workspace_owner_usage_limit_reached":
+            return L("Workspace usage limit reached", "工作区用量上限已达到")
+        case "workspace_member_usage_limit_reached":
+            return L("Member usage limit reached", "成员用量上限已达到")
+        default:
+            return state.replacingOccurrences(of: "_", with: " ")
+        }
     }
 
     private func booleanStatus(_ value: Bool?, trueText: String, falseText: String) -> String {
