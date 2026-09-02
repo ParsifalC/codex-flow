@@ -108,12 +108,25 @@ public enum StrategyModeService {
         let process = Process()
         let output = Pipe()
         let error = Pipe()
-        let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
+        let environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let codexHome = environment["CODEX_HOME"]
             .map(URL.init(fileURLWithPath:))
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
-        let installedCLI = codexHome.appendingPathComponent("codex-flow/bin/codex-flow")
+            ?? home.appendingPathComponent(".codex")
 
-        if FileManager.default.isExecutableFile(atPath: installedCLI.path) {
+        // FlowPilot is commonly launched by Finder or a login item, where the
+        // process PATH does not include ~/.local/bin. Resolve the CLI locations
+        // used by install.sh directly before falling back to PATH lookup.
+        var candidates: [URL] = []
+        if let configuredBinDir = environment["CODEX_FLOW_BIN_DIR"], !configuredBinDir.isEmpty {
+            candidates.append(URL(fileURLWithPath: configuredBinDir).appendingPathComponent("codex-flow"))
+        }
+        candidates.append(home.appendingPathComponent(".local/bin/codex-flow"))
+        candidates.append(codexHome.appendingPathComponent("codex-flow/bin/codex-flow"))
+        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/codex-flow"))
+        candidates.append(URL(fileURLWithPath: "/usr/local/bin/codex-flow"))
+
+        if let installedCLI = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) {
             process.executableURL = installedCLI
             process.arguments = arguments
         } else {
