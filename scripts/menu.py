@@ -347,6 +347,119 @@ def handle_update() -> None:
     pause_prompt()
 
 
+def get_source_dir() -> Path:
+    source_file = STATE_DIR / "source"
+    if source_file.exists():
+        try:
+            p = Path(source_file.read_text(encoding="utf-8").strip())
+            if p.exists():
+                return p
+        except OSError:
+            pass
+    if (ROOT_DIR / "apps" / "macos-overlay").exists():
+        return ROOT_DIR
+    return ROOT_DIR
+
+
+def get_overlay_bin() -> Path | None:
+    # 1. Installed location in STATE_DIR
+    state_bin = STATE_DIR / "bin" / "codex-flow-overlay"
+    if state_bin.exists() and os.access(str(state_bin), os.X_OK):
+        return state_bin
+    # 2. Checkout location
+    src = get_source_dir()
+    src_bin = src / "apps" / "macos-overlay" / "bin" / "codex-flow-overlay"
+    if src_bin.exists() and os.access(str(src_bin), os.X_OK):
+        return src_bin
+    # 3. Try to build if build.sh exists
+    build_script = src / "apps" / "macos-overlay" / "build.sh"
+    if build_script.exists():
+        try:
+            print(f"\n{style.CYAN}🔨 首次使用，正在编译 macOS 原生悬浮窗组件...{style.RESET}")
+            subprocess.run(["bash", str(build_script)], check=True)
+            if src_bin.exists() and os.access(str(src_bin), os.X_OK):
+                return src_bin
+        except Exception:
+            pass
+    return src_bin if src_bin.exists() else None
+
+
+def handle_manage_overlay() -> None:
+    if sys.platform != "darwin":
+        print(f"\n{style.YELLOW}⚠️ 原生悬浮窗仅支持 macOS 系统。{style.RESET}")
+        pause_prompt()
+        return
+
+    overlay_bin = get_overlay_bin()
+    if overlay_bin is None or not overlay_bin.exists():
+        print(f"\n{style.RED}❌ 未找到悬浮窗二进制文件。{style.RESET}")
+        src = get_source_dir()
+        print(f"{style.DIM}请先在源码目录下执行: bash {src}/apps/macos-overlay/build.sh{style.RESET}")
+        pause_prompt()
+        return
+
+    while True:
+        try:
+            status_res = subprocess.run([str(overlay_bin), "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            is_running = (status_res.returncode == 0)
+        except Exception:
+            is_running = False
+
+        print(f"\n{style.BOLD}🪟 macOS 原生悬浮窗管理 (Native Floating Widget):{style.RESET}")
+        if is_running:
+            print(f"  当前状态: {style.GREEN}● 正在运行 (Hover 0.4s 展开 Summary){style.RESET}")
+        else:
+            print(f"  当前状态: {style.DIM}○ 未运行{style.RESET}")
+
+        print(f"\n  [{style.CYAN}1{style.RESET}] {'⏹ 停止浮窗' if is_running else '🚀 启动浮窗'}")
+        if is_running:
+            print(f"  [{style.CYAN}2{style.RESET}] 🔄 切换展开 / 折叠 (Toggle)")
+            print(f"  [{style.CYAN}3{style.RESET}] ⚡️ 发送最新数据并展开 (Push Last Summary)")
+        print(f"  [{style.CYAN}4{style.RESET}] 🔨 重新编译构建 (Rebuild)")
+        print(f"  [{style.CYAN}0{style.RESET}] 🔙 返回主菜单\n")
+
+        try:
+            choice = input(f"{style.CYAN}请选择操作: {style.RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+
+        if choice in ("0", "q", "exit", "back"):
+            break
+        elif choice == "1":
+            if is_running:
+                try:
+                    subprocess.run([str(overlay_bin), "stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+                print(f"{style.YELLOW}浮窗已停止。{style.RESET}")
+            else:
+                try:
+                    subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    print(f"{style.GREEN}浮窗已启动！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。{style.RESET}")
+                except Exception as e:
+                    print(f"{style.RED}启动失败: {e}{style.RESET}")
+            pause_prompt()
+        elif choice == "2" and is_running:
+            try:
+                subprocess.run([str(overlay_bin), "toggle"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+        elif choice == "3" and is_running:
+            try:
+                subprocess.run([str(overlay_bin), "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(f"{style.GREEN}已向浮窗推送最新 Summary 并展开。{style.RESET}")
+            except Exception as e:
+                print(f"{style.RED}推送失败: {e}{style.RESET}")
+            pause_prompt()
+        elif choice == "4":
+            src = get_source_dir()
+            build_script = src / "apps" / "macos-overlay" / "build.sh"
+            if build_script.exists():
+                subprocess.run(["bash", str(build_script)])
+                overlay_bin = get_overlay_bin()
+            pause_prompt()
+
+
 def main_menu() -> int:
     version = get_version()
     while True:
@@ -358,10 +471,11 @@ def main_menu() -> int:
         print(f"  [{style.CYAN}5{style.RESET}] 🩺 运行系统诊断检查 {style.DIM}(doctor){style.RESET}")
         print(f"  [{style.CYAN}6{style.RESET}] ⚡ 本地快速 Benchmark {style.DIM}(benchmark-local quick){style.RESET}")
         print(f"  [{style.CYAN}7{style.RESET}] 🔄 检查与拉取更新   {style.DIM}(update){style.RESET}")
+        print(f"  [{style.CYAN}8{style.RESET}] 🪟 macOS 原生悬浮窗  {style.DIM}(overlay widget){style.RESET}")
         print(f"  [{style.CYAN}0{style.RESET}] 🚪 退出\n")
 
         try:
-            choice = input(f"{style.CYAN}请输入选项 [0-7]: {style.RESET}").strip()
+            choice = input(f"{style.CYAN}请输入选项 [0-8]: {style.RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n👋 已退出 codex-flow 控制台。")
             return 0
@@ -383,8 +497,10 @@ def main_menu() -> int:
             handle_run_benchmark()
         elif choice == "7":
             handle_update()
+        elif choice == "8":
+            handle_manage_overlay()
         else:
-            print(f"{style.RED}❌ 无效选项，请输入 0-7{style.RESET}")
+            print(f"{style.RED}❌ 无效选项，请输入 0-8{style.RESET}")
             pause_prompt()
 
     return 0

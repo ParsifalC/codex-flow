@@ -173,6 +173,28 @@ case "$cmd" in
     printf '\n✨ Updated codex-flow %s -> %s\n' "$before" "$after"
     bash "$src/scripts/doctor"
     ;;
+  overlay)
+    shift
+    src="$(source_dir 2>/dev/null || pwd)"
+    overlay_bin="$STATE_DIR/bin/codex-flow-overlay"
+    [[ -x "$overlay_bin" ]] || overlay_bin="$src/apps/macos-overlay/bin/codex-flow-overlay"
+    if [[ ! -x "$overlay_bin" ]]; then
+      if [[ -f "$src/apps/macos-overlay/build.sh" ]]; then
+        bash "$src/apps/macos-overlay/build.sh"
+      fi
+    fi
+    [[ -x "$overlay_bin" ]] || fail "codex-flow-overlay binary not found; run apps/macos-overlay/build.sh first"
+    sub="${1:-toggle}"
+    case "$sub" in
+      start)
+        nohup "$overlay_bin" start >/dev/null 2>&1 &
+        printf '🚀 Launched codex-flow-overlay in background.\n'
+        ;;
+      *)
+        exec "$overlay_bin" "$@"
+        ;;
+    esac
+    ;;
   help|-h|--help)
     if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
       C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_CYAN=$'\033[36m'; C_RESET=$'\033[0m'
@@ -190,6 +212,7 @@ ${C_BOLD}Usage:${C_RESET} codex-flow <command> [options]
     ${C_CYAN}status${C_RESET}                  Show installed version and effective FlowPilot policy
     ${C_CYAN}update${C_RESET}                  Pull checkout, preserve policy, refresh recommendations
     ${C_CYAN}doctor${C_RESET}                  Verify installation, routing, and telemetry wiring
+    ${C_CYAN}overlay [start|stop|toggle]${C_RESET} Native macOS floating widget (bubble / summary card)
     ${C_CYAN}usage last [--json]${C_RESET}     Show the last task telemetry summary
     ${C_CYAN}usage list [options]${C_RESET}    List task history (-n N, --project P, --today, --json)
     ${C_CYAN}usage show <#|id> [opt]${C_RESET} Show specific task telemetry summary

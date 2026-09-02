@@ -466,6 +466,7 @@ def notification_body(run: dict[str, Any]) -> str:
 
 
 def send_system_notification(run: dict[str, Any]) -> None:
+    notify_overlay_if_active(run)
     telemetry_mod = sys.modules.get("telemetry")
     sub_mod = getattr(telemetry_mod, "subprocess", subprocess) if telemetry_mod else subprocess
     shutil_mod = getattr(telemetry_mod, "shutil", shutil) if telemetry_mod else shutil
@@ -490,6 +491,23 @@ def send_system_notification(run: dict[str, Any]) -> None:
         )
     except (OSError, Exception):
         return
+
+
+def notify_overlay_if_active(run: dict[str, Any]) -> None:
+    """Send immediate update event to macos-overlay daemon if running."""
+    import socket
+    codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
+    sock_path = os.path.join(codex_home, "codex-flow", "overlay.sock")
+    if not os.path.exists(sock_path):
+        return
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(0.5)
+        client.connect(sock_path)
+        client.sendall(b"update\n")
+        client.close()
+    except Exception:
+        pass
 
 
 def is_same_run(left: dict[str, Any] | None, right: dict[str, Any]) -> bool:

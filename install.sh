@@ -176,6 +176,15 @@ if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
   python3 "$STATE_DIR/shell/manage-shell.py" install --state-dir "$STATE_DIR" --shell "$SHELL_NAME" --config-dir "$SHELL_CONFIG_DIR" --bin-dir "$BIN_DIR"
 fi
 
+if [[ "$(uname -s)" == "Darwin" && -f "$ROOT_DIR/apps/macos-overlay/build.sh" ]]; then
+  mkdir -p "$STATE_DIR/bin"
+  bash "$ROOT_DIR/apps/macos-overlay/build.sh" || true
+  if [[ -f "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" ]]; then
+    cp "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" "$STATE_DIR/bin/codex-flow-overlay"
+    chmod +x "$STATE_DIR/bin/codex-flow-overlay"
+  fi
+fi
+
 if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
   C_BOLD=$'\033[1m'
   C_DIM=$'\033[2m'
