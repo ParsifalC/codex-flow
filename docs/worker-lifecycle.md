@@ -1,33 +1,33 @@
 # Worker Lifecycle Runtime
 
-本文定义 FlowPilot ExecutionPlan v8 的异步 Worker 生命周期语义。目标不是让 Parent 更少等待，而是让 Parent 与 Worker 的并行工作尽可能有效，同时减少重复执行、已投入但被丢弃的 Worker 工作和无价值等待。
+本文定义 FlowPilot ExecutionPlan v8 的异步 Worker 生命周期语义。目标不是简单让 Parent 少等待，而是最大化 Parent 与 Worker 的有效并行工作，同时减少重复执行、被丢弃的 Worker 工作和无价值等待。
 
-## 设计原则
-
-Strategy Runtime 决定期望资源拓扑与 StagePolicy；FlowPilot 负责观察真实运行状态并执行该策略。
+## 架构
 
 ```text
 TaskProfile
     ↓
 StrategySpec
     ↓
-ExecutionPlan v8
+ExecutionPlan v8 / StagePolicy
     ↓
-Async Worker Scheduler semantics
-    ├─ scope tracking
+FlowPilot scope observations
+    ↓
+Deterministic lifecycle evaluator
     ├─ progress lease
-    ├─ join policy
-    ├─ quorum
-    ├─ supersede
-    ├─ stall detection
-    └─ delta fallback
+    ├─ hard timeout
+    ├─ supersession
+    ├─ fallback
+    └─ writable replacement fencing
 ```
 
-Runtime 不把一次 `wait()` 返回超时解释成 Worker 超时。高 reasoning Worker 可能执行较慢；只要仍有可观察进展，它就是 `progressing`。
+Strategy Runtime 决定期望资源拓扑和 StagePolicy；FlowPilot 只提供可观察事实，例如 Worker 是否仍在活动、scope 是否已被覆盖、是否已经终止。时间计算、stall/fallback 和 writable replacement 是否允许，由 `scripts/strategies/lifecycle_runtime.py` 确定性计算。
+
+该 helper 随 `strategies/` 目录一起被 Unix/Windows 安装器复制到 `~/.codex/codex-flow/strategies/lifecycle_runtime.py`。
 
 ## StagePolicy
 
-每个存在 Worker 的阶段都会得到一个策略生成的 StagePolicy：
+每个存在 Worker 的阶段会得到：
 
 ```text
 join_policy
@@ -42,13 +42,11 @@ fallback_policy
   continue_partial | parent_delta | replan | fail
 ```
 
-`idle_timeout_seconds` 是可续期的 progress lease：新命令完成、新文件/搜索证据、新工具事件或其他明确活动都会刷新它。长时间正在执行且可见为 in-flight 的工具调用也不能仅因为 Parent 的 wait 返回而视为 idle。
+`idle_timeout_seconds` 是可续期 progress lease，不是完成 deadline。新的命令、文件读取、搜索、工具事件或明确可见的 in-flight 操作都说明 Worker 仍可能健康。
 
-`hard_timeout_seconds` 从 Worker 启动时计时，防止真正 runaway。策略值仍受 Runtime 硬上限约束。
+`hard_timeout_seconds` 是绝对 wall-clock 上限，即使存在 in-flight 操作也不能无限运行。
 
 ## Worker 状态
-
-FlowPilot 使用以下语义状态：
 
 ```text
 queued
@@ -61,112 +59,140 @@ superseded
 cancelled
 ```
 
-- `progressing`：持续产生新的可观察活动或存在明确 in-flight 工作。
-- `stalled`：超过 StagePolicy 的 idle lease，且没有可观察进展。
-- `failed`：Agent/工具/runtime 明确终止失败。
-- `superseded`：同一 bounded scope 已被 Parent 或另一个执行者用等价证据覆盖，继续执行不再有边际价值；只有 `cancel_if_superseded=true` 才可因此取消。
+- `progressing`：存在近期可观察活动或明确 in-flight 工作。
+- `stalled`：idle lease 已过期，且没有可见 in-flight 工作。
+- `failed`：Agent/tool/runtime 明确终止失败。
+- `superseded`：同一 bounded scope 已被 Parent 或其他执行路径用等价证据覆盖，并且 StagePolicy 允许取消。
+- `cancelled`：取消/终止已得到确认。
 
-如果当前 Codex runtime 不能可靠暴露中间活动，FlowPilot 不得凭 `wait()` 次数猜测 `stalled`；只能依据可用的终态/活动证据和 hard timeout。
+**Parent 的 `wait()` 返回超时永远不等于 Worker timeout。** 连续两次甚至更多次 wait 没有最终结果，也不能单独把高 reasoning Worker 判为 stalled。
 
-## Scope tracking
+如果当前 Codex runtime 无法可靠暴露中间活动，不得猜测 idle 状态；只能依据明确活动、终态、supersession 或 hard timeout。
 
-每个 Worker 在 spawn 时必须得到稳定的 `scope_id` 和 bounded scope。不同 Worker 不应重复同一 scope，除非计划明确要求独立重复验证。
+## Scope-aware fork/join
 
-Parent 默认继续执行与 Worker 不重叠的工作，直到真正依赖 Worker 结论的 join point。Parent 不应为了“等 Worker”立即停止自己的独立工作。
+每个 Worker spawn 前必须获得稳定的 `scope_id`。Parent 默认继续执行与 Worker scope 不重叠的工作，只有到真实依赖点才 join。
 
-`superseded` 是 overlap-aware cancellation，而不是 timeout：
+- PR metadata Worker 还没结束，但 Parent 已取得相同 metadata/checks：可以 `superseded`。
+- Runtime reviewer 持续读代码，而 Parent 在处理 Logo/build：scope 互补，不能因为耗时较长而取消。
 
-- PR metadata Worker 尚未完成，但 Parent 已完成同一 PR metadata 检查：可以 supersede。
-- Runtime 深度 reviewer 正持续审查，而 Parent 只在做 Logo/构建：scope 未覆盖，不可因为运行时间长而 supersede。
+`quorum` 只是阶段最低成功结果数量，不意味着所有剩余独立 scope 自动失去价值。`cancel_stragglers_after_quorum=true` 也只允许取消已经没有独立 acceptance value 的 straggler。
 
-## Join policy
+## Deterministic evaluator
 
-### opportunistic
+FlowPilot 在需要做 lifecycle 决策时，把 StagePolicy 与实际观察传给：
 
-阶段结果是 best effort。Parent 不专门阻塞等待；已返回的结果可消费。典型用于 `speed` 的 speculative exploration。
+```bash
+python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
+  --policy-json '<stage-policy-json>' \
+  --scope-id <scope> \
+  --stage exploration|implementation|review \
+  --started-at <timestamp> \
+  --last-progress-at <timestamp> \
+  --now <timestamp> \
+  [--writable] [--in-flight] \
+  [--terminal-success] [--terminal-failure] \
+  [--scope-superseded] [--cancel-confirmed] \
+  [--replacement-isolated]
+```
 
-### quorum
+输出包括：
 
-达到 `min_successful_workers` 后可进入下一阶段，但只有没有剩余独特价值的 straggler 才能按策略取消。数字 quorum 本身不等于“所有剩余不同 scope 都无价值”。
+```text
+state
+action
+reason
+replacement_allowed
+fence_required
+idle_seconds
+wall_seconds
+fallback_policy
+```
 
-### required
+这样 StagePolicy 是 deterministic 的，状态跃迁和 timeout/fallback 也不再由 Parent 临场重新发明。
 
-所有尚未被允许 supersede 的 assigned scope 都必须得到覆盖，并满足最小成功 Worker 结果要求。典型用于 implementation 与高价值 independent review。
+## Writable replacement fencing
+
+这是 Runtime hard safety invariant，任何 strategy 都不能关闭。
+
+如果 implementation Worker 已经写入某个 scope，但进入 `stalled` / hard timeout，而 fallback 是 `replan`：
+
+```text
+旧 Worker 仍可能恢复写入
+        ↓
+禁止同 scope replacement
+        ↓
+request_cancel
+        ↓
+cancel/termination confirmed
+        ↓
+replan replacement
+```
+
+如果运行时不能可靠终止旧 Worker，允许另一条安全路径：
+
+```text
+旧 Worker 非终态
+        ↓
+新 replacement 使用全新 isolated worktree
+        ↓
+旧 Worker 输出被 fencing，禁止参与 integration
+        ↓
+replan replacement
+```
+
+只有这两种条件之一成立，evaluator 才会返回 `replacement_allowed=true`：
+
+1. 旧 writable Worker 已明确 terminal/cancelled/failed；
+2. replacement 明确使用新的隔离 worktree，并且旧输出不会被集成。
+
+因此不会出现 stalled Worker A 恢复后与 replacement Worker B 同时修改同一 writable scope 的竞态。
 
 ## Fallback
 
-Fallback 永远基于缺失 delta，而不是从头重复完整阶段：
+Fallback 永远只处理 missing delta：
 
-- `continue_partial`：已有证据足够时继续。
-- `parent_delta`：Parent 只补未覆盖 scope。
-- `replan`：重新 profile/compile，只针对剩余问题生成新计划。
-- `fail`：不自动替代，向上报告失败。
+- `continue_partial`：现有证据已足够时继续。
+- `parent_delta`：Parent 只补缺失 scope。
+- `replan`：只针对剩余 delta 重新 profile/compile。
+- `fail`：报告未解决失败，不静默替换。
 
-Worker timeout/stall 不消耗 `max_repair_cycles`；repair cycle 只用于实现缺陷后的修复。
+Worker lifecycle failure 不消耗 `max_repair_cycles`；repair cycle 只用于实现产物本身的缺陷修复。
 
 ## Built-in strategy defaults
 
-### efficient
+- **efficient**：quorum exploration、积极裁掉冗余只读工作、required implementation、轻量 quorum review。
+- **balanced**：quorum exploration、required implementation、required review，可按等价 scope supersede。
+- **quality**：更长 lease、exploration quorum 目标 2、required implementation、required independent review 目标 2，不允许 Parent 静默替代 required reviewer。
+- **speed**：opportunistic exploration、较短 lease、required implementation、quorum review。
 
-- exploration：quorum=1，快速 supersede/裁剪无价值 straggler。
-- implementation：required；失败或 stall 重新规划。
-- review：quorum=1；普通审查允许 Parent delta fallback。
-
-目标是减少 abandoned work 和 duplicated work。
-
-### balanced
-
-- exploration：quorum=1，中等 progress lease。
-- implementation：required。
-- review：required，但允许在 scope 已有等价覆盖时 supersede。
-
-目标是平衡质量、成本和 wall-clock latency。
-
-### quality
-
-- exploration：quorum 目标为 2（实际 Worker 少时自动归一化），给深 reasoning 更长 lease，不因达到 quorum 自动杀掉仍有独立价值的 Worker。
-- implementation：required。
-- review：required，目标为 2；不能被 Parent 静默 supersede，缺失独立证据时 replan。
-
-目标是避免 premature cancellation，而不是无限等待。
-
-### speed
-
-- exploration：opportunistic，不为 speculative Worker 阻塞主流程。
-- implementation：required，但 hard timeout 更短。
-- review：quorum=1，优先 wall-clock latency。
+这些 strategy preference 都受 Runtime hard ceiling 和 writable fencing 约束。
 
 ## 典型场景
 
-### PR metadata Worker 较慢，但 Parent 已完成同一检查
+### Luna max 持续工作，但多次 wait 没返回
 
-Worker scope 已有等价证据：`superseded → cancelled`。这是正确节省，不属于 Worker 失败。
+只要仍有文件读取、命令、搜索或明确 in-flight 活动，保持 `progressing`。Parent 继续非重叠工作，到 join point 再处理，不因 wait 次数终止。
 
-### Luna max 深度审查持续读文件/跑命令，但两次 wait 没返回最终结果
+### 两路互补 reviewer 都较慢
 
-Worker 保持 `progressing`；wait timeout 不改变其状态。Parent 继续独立工作，到 join point 再根据 StagePolicy 判断。不得仅因为“连续两次 wait 超时”终止。
+一个审 Runtime，一个审安装/跨平台。只要两个都 progressing 且 scope 互补，就继续；不得终止后让 Parent 从头重复两个 review scope。
 
-### 两路 reviewer 分别审 Runtime 和跨平台安装
+### Read-only Worker 已被 Parent 覆盖
 
-两个 scope 互补。Parent 做其他独立工作；进入 join point 后，如果两个 reviewer 都在 progressing 且 policy=required，应让它们完成，而不是终止后由 Parent 从头重复两个 scope。
+scope 有等价证据且 policy 允许 supersession：`superseded → request_cancel`。这是基于边际价值取消，不是基于耗时。
 
-### Worker 长时间无任何可观察活动
+### Writable Worker stall
 
-超过 idle lease 后进入 `stalled`，按 fallback policy 做 parent delta 或 replan。真正 stall 不会无限占资源。
-
-### 三个 Explorer 中一个已经找到根因
-
-如果另外两个 scope 已因该证据失去价值，可 supersede/cancel；如果仍检查独立关键未知项，则继续。达到 numeric quorum 不是自动取消所有剩余 Worker 的理由。
-
-### Implementation Worker 已开始写独立 worktree
-
-默认 required 且 `cancel_if_superseded=false`。除明确失败、stall 或 hard timeout 外不随意终止；失败后 replan，避免半截 patch 与 Parent 重复实现。
+不能直接 `replan → spawn same-scope replacement`。先终止旧 Worker，或者把 replacement 放进新 isolated worktree 并 fence 旧输出。
 
 ## Runtime invariants
 
 1. `wait()` timeout 永远不等价于 Worker timeout。
-2. 可观察进展会续期 idle lease。
-3. 取消 progressing Worker 必须有策略允许的 superseded/straggler 原因，或达到 hard timeout。
-4. Parent fallback 只补未覆盖 delta，不从头复制 Worker 的完整工作。
-5. Implementation failure 和 Worker lifecycle failure 不计入 repair cycle。
-6. Strategy-specific lifecycle 只存在于 StrategySpec；generic Runtime 不按 built-in strategy 名称分支。
+2. 可观察进展续期 idle lease。
+3. hard timeout 是绝对上限。
+4. supersession 必须基于 scope 等价覆盖，而不是耗时。
+5. Parent fallback 只补 missing delta。
+6. writable replacement 必须满足 `old terminal OR new isolated+fenced`。
+7. lifecycle failure 不消耗 implementation repair cycle。
+8. Strategy-specific lifecycle preference 留在 StrategySpec；hard safety invariants 由 deterministic lifecycle evaluator 统一执行。
