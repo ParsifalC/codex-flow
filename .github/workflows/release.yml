@@ -1,0 +1,100 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        default: stable
+        type: choice
+        options: [stable, beta, nightly]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: package-${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            overlay: false
+          - os: macos-14
+            platform: darwin-arm64
+            overlay: true
+          - os: windows-latest
+            platform: windows-x86_64
+            overlay: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native FlowPilot
+        if: matrix.overlay
+        shell: bash
+        run: bash apps/macos-overlay/build.sh
+      - name: Package OTA release
+        shell: bash
+        run: python3 scripts/package-release.py --platform '${{ matrix.platform }}' --output-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ota-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ota-*
+          path: dist
+          merge-multiple: true
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Create or update GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.release.outputs.tag }}'
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA"
+          fi
+          gh release view "$tag" --json body --jq .body > dist/release-notes.md
+      - name: Generate update manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel='${{ inputs.channel || 'stable' }}'
+          python3 scripts/generate-release-manifest.py \
+            --dist dist \
+            --tag '${{ steps.release.outputs.tag }}' \
+            --channel "$channel" \
+            --release-notes-file dist/release-notes.md \
+            --output dist/codex-flow-update.json
+      - name: Publish OTA assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f dist/release-notes.md
+          gh release upload '${{ steps.release.outputs.tag }}' dist/* --clobber
