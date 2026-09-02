@@ -1,6 +1,10 @@
-# macOS Native Floating Widget (FlowPilot Overlay)
+# macOS Native Overlay Widget (FlowPilot Overlay)
 
 <div align="center">
+
+<img src="assets/logo.png" alt="FlowPilot Logo" width="100" height="100" />
+
+<br />
 
 [ 简体中文 ](overlay.md) | [ English ](overlay.en.md)
 

@@ -1,6 +1,10 @@
 <div align="center">
 
-# ✨ codex-flow
+<a href="https://github.com/ParsifalC/codex-flow">
+  <img src="docs/assets/logo.png" alt="FlowPilot Logo" width="130" height="130" />
+</a>
+
+# FlowPilot · codex-flow
 
 **智能、高效、自适应的 Codex 多 Agent 策略编排引擎**
 

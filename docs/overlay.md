@@ -2,9 +2,14 @@
 
 <div align="center">
 
+<img src="assets/logo.png" alt="FlowPilot Logo" width="100" height="100" />
+
+<br />
+
 [ 简体中文 ](overlay.md) | [ English ](overlay.en.md)
 
 </div>
+
 
 **FlowPilot Overlay** 是专为 macOS 设计的 100% 纯原生桌面交互组件（基于 **SwiftUI + AppKit** 构建）。无需打开终端或网页，即可在桌面上实时获取多 Agent 协同编排 Telemetry 遥测指标、账户速率配额感知、历史会话回溯以及聚合效能分析看板。
 

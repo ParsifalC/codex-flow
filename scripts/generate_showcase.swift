@@ -70,16 +70,8 @@ struct PosterPromoView: View {
             VStack(spacing: 20) {
                 // Header Title & Badges
                 VStack(spacing: 6) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 26, weight: .bold))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [.cyan, .indigo],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                    HStack(spacing: 12) {
+                        FlowPilotLogoView(size: 44, showGlow: true, withBolt: true)
                         
                         Text("FlowPilot macOS Native Widget")
                             .font(.system(size: 32, weight: .black, design: .rounded))
@@ -202,16 +194,8 @@ struct BannerPromoView: View {
             HStack(spacing: 48) {
                 // Left Column: Branding, Slogan, Highlights
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 32, weight: .bold))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [.cyan, .indigo],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                    HStack(spacing: 14) {
+                        FlowPilotLogoView(size: 52, showGlow: true, withBolt: true)
                         
                         Text("codex-flow")
                             .font(.system(size: 40, weight: .black, design: .rounded))
@@ -453,6 +437,19 @@ func runGenerator() {
     stateBubble.isTaskRunning = false
     stateBubble.isExpanded = false
     
+    // 0. Render Official Project Logo (1024x1024 Retina & 256x256)
+    renderViewToPNG(
+        view: FlowPilotLogoView(size: 512, showGlow: true, withBolt: true),
+        scale: 2.0,
+        outputPath: "docs/assets/logo.png"
+    )
+
+    renderViewToPNG(
+        view: FlowPilotLogoView(size: 256, showGlow: true, withBolt: true),
+        scale: 1.0,
+        outputPath: "docs/assets/logo_256.png"
+    )
+
     // 1. Render Standalone Unclipped Full-Height Views (2x Retina)
     renderViewToPNG(
         view: SummaryView(state: stateInspector, isFullHeight: true),
@@ -548,6 +545,8 @@ func optimizeAssetsWithCrunch() {
     
     print("🗜️ Optimizing generated PNG images with crunch...")
     let outputFiles = [
+        "docs/assets/logo.png",
+        "docs/assets/logo_256.png",
         "docs/assets/screenshots/inspector_full.png",
         "docs/assets/screenshots/history_full.png",
         "docs/assets/screenshots/analytics_full.png",
