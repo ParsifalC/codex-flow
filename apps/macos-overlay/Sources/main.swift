@@ -108,9 +108,22 @@ func printStatusFailureJSON(_ message: String) {
     }
 }
 
+func writeStandardError(_ message: String) {
+    guard let data = message.data(using: .utf8) else { return }
+    FileHandle.standardError.write(data)
+}
+
 func waitForPreviousInstanceToReleaseSocket(timeout: TimeInterval = 3.0) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while FileManager.default.fileExists(atPath: IPCService.socketPath) {
+        let probe = IPCService.sendCommand("status")
+        if !probe.success || !probe.response.contains("\"running\": true") {
+            // A process can exit before its dispatch-source cancel handler gets
+            // enough runtime to unlink the filesystem socket. At this point no
+            // server answers the endpoint, so removing the stale node is safe.
+            try? FileManager.default.removeItem(atPath: IPCService.socketPath)
+            return !FileManager.default.fileExists(atPath: IPCService.socketPath)
+        }
         if Date() >= deadline {
             return false
         }
@@ -129,10 +142,10 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
     if statusCheck.success {
         _ = IPCService.sendCommand("quit")
         if !waitForPreviousInstanceToReleaseSocket() {
-            fputs(L(
+            writeStandardError(L(
                 "FlowPilot restart timed out waiting for the previous IPC socket to close.\n",
                 "FlowPilot 重启等待旧 IPC socket 关闭超时。\n"
-            ), stderr)
+            ))
             exit(1)
         }
     }
