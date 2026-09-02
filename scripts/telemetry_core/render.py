@@ -211,6 +211,28 @@ def render_summary(run: dict[str, Any]) -> str:
             append_wrapped_line(T(f"• Account Quota:  {' | '.join(pieces)}", f"• 账户额度:       {' | '.join(pieces)}"))
             if reset_pieces:
                 append_wrapped_line(T(f"• Resets:         {' | '.join(reset_pieces)}", f"• 重置时间:       {' | '.join(reset_pieces)}"))
+
+    skills = run.get("skills_used") or []
+    tools = run.get("tools_used") or []
+    summary_info = run.get("summary_info") or {}
+
+    if skills or tools or summary_info.get("conclusion"):
+        lines.append(T(
+            "  ├─ Insights & Trajectory ───────────────────────────────────────────┤",
+            "  ├─ 执行详情与技能洞察 ──────────────────────────────────────────────┤",
+        ))
+        if skills:
+            skills_str = ", ".join(f"{s.get('name')} (×{s.get('count', 1)})" for s in skills)
+            append_wrapped_line(T(f"• Skills Used:    {skills_str}", f"• 调用技能:       {skills_str}"))
+        if tools:
+            tools_str = ", ".join(f"{t.get('name')} (×{t.get('count', 1)})" for t in tools)
+            append_wrapped_line(T(f"• Tools / MCP:    {tools_str}", f"• 工具 / MCP:     {tools_str}"))
+        if summary_info.get("conclusion"):
+            conc = " ".join(summary_info["conclusion"].split())
+            if len(conc) > 100:
+                conc = conc[:97] + "..."
+            append_wrapped_line(T(f"• Conclusion:     {conc}", f"• 交付结论:       {conc}"))
+
     lines.append("  ╰───────────────────────────────────────────────────────────────────╯")
     lines.append(T(
         "  ℹ  Note: Times use the local timezone; quota delta is account-wide; attributed usage is thread-based.",

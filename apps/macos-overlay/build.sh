@@ -15,7 +15,10 @@ while IFS= read -r -d '' file; do
     SWIFT_FILES+=("$file")
 done < <(find "$SCRIPT_DIR/Sources" -name "*.swift" -print0)
 
-CORES="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+CORES="$(sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+if [ "$CORES" -gt 4 ]; then
+    CORES=4
+fi
 
 swiftc \
     -num-threads "$CORES" \

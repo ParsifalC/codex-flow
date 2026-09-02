@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import shlex
 import subprocess
 import threading
@@ -632,6 +633,172 @@ def apply_participant_metadata(
             participant["reasoning_effort"] = next(iter(efforts))
 
 
+def extract_transcript_insights(
+    transcript_path: Any, turn_id: Any = None
+) -> dict[str, Any] | None:
+    """Extract skills used, tools/MCP calls, trajectory steps, logs, and summary from a session transcript."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    path = Path(transcript_path)
+    if not path.is_file():
+        return None
+
+    skills: dict[str, int] = {}
+    tools: dict[str, dict[str, Any]] = {}
+    trajectory: list[dict[str, Any]] = []
+    logs: list[dict[str, Any]] = []
+    goal: str | None = None
+    conclusion: str | None = None
+
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+
+                ts = record.get("timestamp")
+                record_type = record.get("type")
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+
+                if record_type == "response_item":
+                    p_type = payload.get("type")
+                    if p_type == "custom_tool_call":
+                        tool_name = str(payload.get("name") or "unknown")
+                        raw_input = payload.get("input", "")
+                        call_id = payload.get("call_id")
+                        is_mcp = tool_name.startswith("mcp__") or "mcp" in tool_name.lower()
+
+                        input_text = str(raw_input)
+                        for skill in re.findall(r"skills/([a-zA-Z0-9_\-]+)", input_text):
+                            skills[skill] = skills.get(skill, 0) + 1
+
+                        if tool_name not in tools:
+                            tools[tool_name] = {
+                                "name": tool_name,
+                                "count": 0,
+                                "is_mcp": is_mcp,
+                                "category": "mcp" if is_mcp else "system",
+                            }
+                        tools[tool_name]["count"] += 1
+
+                        inp_summary = ""
+                        if isinstance(raw_input, str):
+                            m = re.search(r"\"cmd\"\s*:\s*\"([^\"]+)\"", raw_input)
+                            if m:
+                                inp_summary = m.group(1).strip()
+                            else:
+                                inp_summary = " ".join(raw_input.split()).strip()
+                        elif isinstance(raw_input, dict):
+                            inp_summary = json.dumps(raw_input, ensure_ascii=False)
+                        if len(inp_summary) > 160:
+                            inp_summary = inp_summary[:157] + "..."
+
+                        clean_title = (
+                            "MCP: " + tool_name.replace("mcp__", "")
+                            if is_mcp
+                            else "调用 " + tool_name
+                        )
+                        trajectory.append(
+                            {
+                                "type": "tool_call",
+                                "name": tool_name,
+                                "title": clean_title,
+                                "detail": inp_summary,
+                                "status": "completed",
+                                "is_mcp": is_mcp,
+                                "call_id": call_id,
+                                "timestamp": ts,
+                            }
+                        )
+
+                        logs.append(
+                            {
+                                "timestamp": ts,
+                                "level": "info",
+                                "type": "tool_call",
+                                "message": f"[{tool_name}] {inp_summary}",
+                            }
+                        )
+                    elif p_type == "message":
+                        role = payload.get("role")
+                        content = payload.get("content", [])
+                        text_parts = []
+                        for item in content:
+                            if isinstance(item, dict):
+                                text_parts.append(
+                                    item.get("text") or item.get("output_text") or ""
+                                )
+                        msg_text = "".join(text_parts).strip()
+                        if role == "user" and msg_text:
+                            clean_prompt = msg_text
+                            if "<USER_REQUEST>" in clean_prompt:
+                                m = re.search(
+                                    r"<USER_REQUEST>(.*?)</USER_REQUEST>",
+                                    clean_prompt,
+                                    re.DOTALL,
+                                )
+                                if m:
+                                    clean_prompt = m.group(1).strip()
+                            if not clean_prompt.startswith("<") or not goal:
+                                goal = clean_prompt
+                        elif role == "assistant" and msg_text:
+                            conclusion = msg_text
+                elif (
+                    record_type == "event_msg"
+                    and payload.get("type") == "item_completed"
+                ):
+                    item = payload.get("item", {})
+                    if isinstance(item, dict):
+                        itype = item.get("type")
+                        if itype == "CommandExecution":
+                            exit_code = item.get("exit_code", 0)
+                            stdout = str(item.get("stdout") or "")[:200].strip()
+                            duration = item.get("duration")
+                            dur_ms = None
+                            if isinstance(duration, dict):
+                                dur_ms = int(
+                                    (duration.get("secs") or 0) * 1000
+                                    + (duration.get("nanos") or 0) / 1_000_000
+                                )
+                            if trajectory and trajectory[-1]["type"] == "tool_call":
+                                trajectory[-1]["status"] = (
+                                    "completed" if exit_code == 0 else "error"
+                                )
+                                if dur_ms is not None:
+                                    trajectory[-1]["duration_ms"] = dur_ms
+                            if stdout:
+                                logs.append(
+                                    {
+                                        "timestamp": ts,
+                                        "level": "info" if exit_code == 0 else "error",
+                                        "type": "command_output",
+                                        "message": f"Exit {exit_code}: {stdout[:120]}",
+                                    }
+                                )
+    except (OSError, UnicodeError):
+        return None
+
+    skills_list = [{"name": name, "count": count} for name, count in skills.items()]
+    tools_list = list(tools.values())
+
+    return {
+        "skills_used": skills_list,
+        "tools_used": tools_list,
+        "trajectory": trajectory[-20:],
+        "logs": logs[-30:],
+        "summary_info": {
+            "goal": goal[:300] if goal else None,
+            "conclusion": conclusion[:500] if conclusion else None,
+        },
+    }
+
+
 def enrich_run_metadata(run: dict[str, Any]) -> None:
     thread = merge_thread_metadata(
         session_index_metadata(run.get("session_id")), run.get("thread")
@@ -648,17 +815,26 @@ def enrich_run_metadata(run: dict[str, Any]) -> None:
             usage=parent.get("usage_delta"),
         )
     workers = run.get("workers")
-    if not isinstance(workers, dict):
-        return
-    for worker in workers.values():
-        if not isinstance(worker, dict):
-            continue
-        apply_participant_metadata(
-            worker,
-            transcript_path=worker.get("transcript_path"),
-            turn_id=worker.get("turn_id") or run.get("turn_id"),
-            usage=worker.get("usage"),
+    if isinstance(workers, dict):
+        for worker in workers.values():
+            if not isinstance(worker, dict):
+                continue
+            apply_participant_metadata(
+                worker,
+                transcript_path=worker.get("transcript_path"),
+                turn_id=worker.get("turn_id") or run.get("turn_id"),
+                usage=worker.get("usage"),
+            )
+
+    # Extract skills, tools, trajectory, logs, summary if not already populated
+    if "skills_used" not in run or "trajectory" not in run:
+        insights = extract_transcript_insights(
+            run.get("transcript_path"), run.get("turn_id")
         )
+        if insights:
+            for k, v in insights.items():
+                if v is not None and (k not in run or not run[k]):
+                    run[k] = v
 
 
 def quota_delta(

@@ -28,6 +28,8 @@ public class OverlayState: ObservableObject {
     @Published public var selectedProject: String? = nil
     @Published public var isTodayOnly: Bool = false
     @Published public var searchQuery: String = ""
+    @Published public var recentChats: [ChatSession] = []
+    @Published public var allProjectsList: [String] = []
     
     public weak var windowController: OverlayWindowController?
     
@@ -36,10 +38,23 @@ public class OverlayState: ObservableObject {
             self.latestRun = latest
             self.isTaskRunning = latest.isRunning
         }
+        self.loadMenuData()
+    }
+    
+    public func loadMenuData() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let chats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 15)
+            let projs = TelemetryQueryEngine.shared.allProjects()
+            DispatchQueue.main.async {
+                self.recentChats = chats
+                self.allProjectsList = projs
+            }
+        }
     }
     
     public func expand() {
         guard !isExpanded else { return }
+        self.loadMenuData()
         DispatchQueue.main.async {
             self.isDocked = false
             self.isExpanded = true
@@ -78,10 +93,21 @@ public class OverlayState: ObservableObject {
     }
     
     public func inspect(run: TaskRun) {
+        var r = run
         DispatchQueue.main.async {
-            self.inspectedRun = run
+            self.inspectedRun = r
             self.activeTab = .inspector
             self.windowController?.updateWindowFrame(animated: true)
+        }
+        if r.trajectory == nil || r.skillsUsed == nil {
+            DispatchQueue.global(qos: .userInitiated).async {
+                TelemetryQueryEngine.shared.enrichRunIfNeeded(&r)
+                DispatchQueue.main.async {
+                    if self.inspectedRun?.id == r.id {
+                        self.inspectedRun = r
+                    }
+                }
+            }
         }
     }
     

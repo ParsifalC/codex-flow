@@ -244,6 +244,118 @@ public struct QuotaWindow: Codable, Identifiable {
     }
 }
 
+public struct SkillUsage: Codable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var count: Int?
+    
+    public init(name: String, count: Int? = 1) {
+        self.name = name
+        self.count = count
+    }
+}
+
+public struct ToolCallInfo: Codable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var count: Int?
+    public var isMcp: Bool?
+    public var category: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case name
+        case count
+        case isMcp = "is_mcp"
+        case category
+    }
+    
+    public init(name: String, count: Int? = 1, isMcp: Bool? = false, category: String? = nil) {
+        self.name = name
+        self.count = count
+        self.isMcp = isMcp
+        self.category = category
+    }
+    
+    public var displayName: String {
+        if isMcp == true {
+            return name.replacingOccurrences(of: "mcp__", with: "")
+        }
+        return name
+    }
+}
+
+public struct TrajectoryStep: Codable, Identifiable {
+    public var id: String { callId ?? "\(type ?? "step")_\(timestamp ?? "")_\(title ?? "")" }
+    public var type: String?
+    public var name: String?
+    public var title: String?
+    public var detail: String?
+    public var status: String?
+    public var isMcp: Bool?
+    public var callId: String?
+    public var timestamp: String?
+    public var durationMs: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case type
+        case name
+        case title
+        case detail
+        case status
+        case isMcp = "is_mcp"
+        case callId = "call_id"
+        case timestamp
+        case durationMs = "duration_ms"
+    }
+    
+    public init(
+        type: String? = nil,
+        name: String? = nil,
+        title: String? = nil,
+        detail: String? = nil,
+        status: String? = nil,
+        isMcp: Bool? = false,
+        callId: String? = nil,
+        timestamp: String? = nil,
+        durationMs: Int? = nil
+    ) {
+        self.type = type
+        self.name = name
+        self.title = title
+        self.detail = detail
+        self.status = status
+        self.isMcp = isMcp
+        self.callId = callId
+        self.timestamp = timestamp
+        self.durationMs = durationMs
+    }
+}
+
+public struct TaskLogEntry: Codable, Identifiable {
+    public var id: String { "\(timestamp ?? "")_\(type ?? "")_\(message ?? "")" }
+    public var timestamp: String?
+    public var level: String?
+    public var type: String?
+    public var message: String?
+    
+    public init(timestamp: String? = nil, level: String? = nil, type: String? = nil, message: String? = nil) {
+        self.timestamp = timestamp
+        self.level = level
+        self.type = type
+        self.message = message
+    }
+}
+
+public struct TaskSummaryInfo: Codable {
+    public var goal: String?
+    public var conclusion: String?
+    
+    public init(goal: String? = nil, conclusion: String? = nil) {
+        self.goal = goal
+        self.conclusion = conclusion
+    }
+}
+
 public struct TaskRun: Codable, Identifiable {
     public var id: String {
         if let s = sessionId, let t = turnId {
@@ -265,7 +377,14 @@ public struct TaskRun: Codable, Identifiable {
     public var workersDict: [String: ParticipantInfo]?
     public var workersList: [ParticipantInfo]?
     public var quotaBefore: [QuotaWindow]?
+    public var quotaAfter: [QuotaWindow]?
     public var quotaChangeDuringRun: [QuotaWindow]?
+    public var skillsUsed: [SkillUsage]?
+    public var toolsUsed: [ToolCallInfo]?
+    public var trajectory: [TrajectoryStep]?
+    public var logs: [TaskLogEntry]?
+    public var summaryInfo: TaskSummaryInfo?
+    public var transcriptPath: String?
     
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -279,7 +398,14 @@ public struct TaskRun: Codable, Identifiable {
         case parent
         case workers
         case quotaBefore = "quota_before"
+        case quotaAfter = "quota_after"
         case quotaChangeDuringRun = "quota_change_during_run"
+        case skillsUsed = "skills_used"
+        case toolsUsed = "tools_used"
+        case trajectory
+        case logs
+        case summaryInfo = "summary_info"
+        case transcriptPath = "transcript_path"
     }
     
     public init(from decoder: Decoder) throws {
@@ -305,7 +431,14 @@ public struct TaskRun: Codable, Identifiable {
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         parent = try container.decodeIfPresent(ParticipantInfo.self, forKey: .parent)
         quotaBefore = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaBefore)
+        quotaAfter = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaAfter)
         quotaChangeDuringRun = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaChangeDuringRun)
+        skillsUsed = try container.decodeIfPresent([SkillUsage].self, forKey: .skillsUsed)
+        toolsUsed = try container.decodeIfPresent([ToolCallInfo].self, forKey: .toolsUsed)
+        trajectory = try container.decodeIfPresent([TrajectoryStep].self, forKey: .trajectory)
+        logs = try container.decodeIfPresent([TaskLogEntry].self, forKey: .logs)
+        summaryInfo = try container.decodeIfPresent(TaskSummaryInfo.self, forKey: .summaryInfo)
+        transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         
         if let dict = try? container.decode([String: ParticipantInfo].self, forKey: .workers) {
             workersDict = dict
@@ -328,7 +461,14 @@ public struct TaskRun: Codable, Identifiable {
         try container.encodeIfPresent(parent, forKey: .parent)
         try container.encodeIfPresent(workersDict, forKey: .workers)
         try container.encodeIfPresent(quotaBefore, forKey: .quotaBefore)
+        try container.encodeIfPresent(quotaAfter, forKey: .quotaAfter)
         try container.encodeIfPresent(quotaChangeDuringRun, forKey: .quotaChangeDuringRun)
+        try container.encodeIfPresent(skillsUsed, forKey: .skillsUsed)
+        try container.encodeIfPresent(toolsUsed, forKey: .toolsUsed)
+        try container.encodeIfPresent(trajectory, forKey: .trajectory)
+        try container.encodeIfPresent(logs, forKey: .logs)
+        try container.encodeIfPresent(summaryInfo, forKey: .summaryInfo)
+        try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
     }
     
     public init(
@@ -343,7 +483,14 @@ public struct TaskRun: Codable, Identifiable {
         parent: ParticipantInfo? = nil,
         workers: [ParticipantInfo]? = nil,
         quotaBefore: [QuotaWindow]? = nil,
+        quotaAfter: [QuotaWindow]? = nil,
         quotaChangeDuringRun: [QuotaWindow]? = nil,
+        skillsUsed: [SkillUsage]? = nil,
+        toolsUsed: [ToolCallInfo]? = nil,
+        trajectory: [TrajectoryStep]? = nil,
+        logs: [TaskLogEntry]? = nil,
+        summaryInfo: TaskSummaryInfo? = nil,
+        transcriptPath: String? = nil,
         fileStem: String? = nil
     ) {
         self.sessionId = sessionId
@@ -357,7 +504,14 @@ public struct TaskRun: Codable, Identifiable {
         self.parent = parent
         self.workersList = workers
         self.quotaBefore = quotaBefore
+        self.quotaAfter = quotaAfter
         self.quotaChangeDuringRun = quotaChangeDuringRun
+        self.skillsUsed = skillsUsed
+        self.toolsUsed = toolsUsed
+        self.trajectory = trajectory
+        self.logs = logs
+        self.summaryInfo = summaryInfo
+        self.transcriptPath = transcriptPath
         self.fileStem = fileStem
     }
     
@@ -379,6 +533,26 @@ public struct TaskRun: Codable, Identifiable {
     
     public var sessionTitle: String {
         return thread?.preview ?? thread?.name ?? summary ?? sessionId ?? "FlowPilot Task"
+    }
+    
+    public var effectiveGoal: String? {
+        return summaryInfo?.goal ?? thread?.preview
+    }
+    
+    public var effectiveConclusion: String? {
+        return summaryInfo?.conclusion ?? summary
+    }
+    
+    public var hasSkillsOrTools: Bool {
+        return !(skillsUsed ?? []).isEmpty || !(toolsUsed ?? []).isEmpty
+    }
+    
+    public var hasTrajectory: Bool {
+        return !(trajectory ?? []).isEmpty
+    }
+    
+    public var hasLogs: Bool {
+        return !(logs ?? []).isEmpty
     }
     
     public var isRunning: Bool {
@@ -443,7 +617,18 @@ public struct TaskRun: Codable, Identifiable {
         if let current = quotaChangeDuringRun, !current.isEmpty {
             return current
         }
+        if let after = quotaAfter, !after.isEmpty {
+            return after
+        }
         return quotaBefore ?? []
+    }
+    
+    public var primaryQuotaDelta: Double? {
+        return effectiveQuotaWindows.first?.deltaPercentagePoints
+    }
+    
+    public var primaryQuotaRemaining: Double? {
+        return effectiveQuotaWindows.first?.remainingPercent
     }
     
     public var aggregatedUsage: TokenUsage {
@@ -710,6 +895,18 @@ public struct ChatSession: Identifiable {
         return runs.map { $0.allWorkers.count }.max() ?? 0
     }
     
+    public var totalQuotaDelta: Double? {
+        var total: Double = 0
+        var hasDelta = false
+        for r in runs {
+            if let d = r.primaryQuotaDelta {
+                total += d
+                hasDelta = true
+            }
+        }
+        return hasDelta ? total : nil
+    }
+    
     public var totalWorkersCount: Int {
         return runs.reduce(0) { $0 + $1.allWorkers.count }
     }
@@ -741,12 +938,23 @@ public struct ModelStats: Identifiable {
     public var calls: Int
     public var tokens: Int
     public var roles: [String]
+    public var quotaDelta: Double?
+    public var estimatedCost: Double?
     
-    public init(name: String, calls: Int, tokens: Int, roles: [String]) {
+    public init(
+        name: String,
+        calls: Int,
+        tokens: Int,
+        roles: [String],
+        quotaDelta: Double? = nil,
+        estimatedCost: Double? = nil
+    ) {
         self.name = name
         self.calls = calls
         self.tokens = tokens
         self.roles = roles
+        self.quotaDelta = quotaDelta
+        self.estimatedCost = estimatedCost
     }
 }
 
@@ -757,13 +965,25 @@ public struct ProjectStats: Identifiable {
     public var delegated: Int
     public var tokens: Int
     public var durationMs: Double
+    public var quotaDelta: Double?
+    public var estimatedCost: Double?
     
-    public init(name: String, runs: Int, delegated: Int, tokens: Int, durationMs: Double) {
+    public init(
+        name: String,
+        runs: Int,
+        delegated: Int,
+        tokens: Int,
+        durationMs: Double,
+        quotaDelta: Double? = nil,
+        estimatedCost: Double? = nil
+    ) {
         self.name = name
         self.runs = runs
         self.delegated = delegated
         self.tokens = tokens
         self.durationMs = durationMs
+        self.quotaDelta = quotaDelta
+        self.estimatedCost = estimatedCost
     }
     
     public var formattedDuration: String {

@@ -291,11 +291,11 @@ public struct ModelBreakdownRow: View {
     
     public var body: some View {
         let pct = totalTokens > 0 ? (Double(model.tokens) / Double(totalTokens) * 100.0) : 0
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Text(model.name)
                 .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(.white.opacity(0.9))
-                .frame(width: 90, alignment: .leading)
+                .frame(minWidth: 80, alignment: .leading)
                 .lineLimit(1)
             
             // Roles chips
@@ -313,16 +313,30 @@ public struct ModelBreakdownRow: View {
                 }
             }
             
-            Spacer()
+            Spacer(minLength: 2)
             
             Text(L("\(model.calls) calls", "\(model.calls) 次调用"))
                 .font(.system(size: 8.0, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
             
+            // Quota delta badge
+            if let qd = model.quotaDelta, abs(qd) >= 0.1 {
+                HStack(spacing: 1.5) {
+                    Image(systemName: qd > 0 ? "gauge.with.needle.fill" : "arrow.down.circle.fill")
+                        .font(.system(size: 6))
+                    Text(String(format: "%+.0f%%", qd))
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(qd > 0 ? .orange : Color(red: 0.2, green: 0.85, blue: 0.45))
+                .padding(.horizontal, 3.5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill((qd > 0 ? Color.orange : Color.green).opacity(0.15)))
+            }
+            
             Text(TaskRun.formatTokenCount(model.tokens))
                 .font(.system(size: 9.0, weight: .bold, design: .rounded))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
-                .frame(width: 40, alignment: .trailing)
+                .frame(minWidth: 38, alignment: .trailing)
             
             Text(String(format: "%.0f%%", pct))
                 .font(.system(size: 8.0, weight: .medium, design: .rounded))
@@ -354,11 +368,25 @@ public struct ProjectBreakdownRow: View {
                 .foregroundColor(.white.opacity(0.85))
                 .lineLimit(1)
             
-            Spacer()
+            Spacer(minLength: 2)
             
             Text(L("\(project.runs) runs", "\(project.runs) 次任务"))
                 .font(.system(size: 8.0, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
+            
+            // Quota delta badge
+            if let qd = project.quotaDelta, abs(qd) >= 0.1 {
+                HStack(spacing: 1.5) {
+                    Image(systemName: qd > 0 ? "gauge.with.needle.fill" : "arrow.down.circle.fill")
+                        .font(.system(size: 6))
+                    Text(String(format: "%+.0f%%", qd))
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(qd > 0 ? .orange : Color(red: 0.2, green: 0.85, blue: 0.45))
+                .padding(.horizontal, 3.5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill((qd > 0 ? Color.orange : Color.green).opacity(0.15)))
+            }
             
             Text(TaskRun.formatTokenCount(project.tokens))
                 .font(.system(size: 9.0, weight: .bold, design: .rounded))

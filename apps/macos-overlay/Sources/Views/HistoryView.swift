@@ -351,6 +351,20 @@ public struct ChatAccordionRow: View {
                         
                         Spacer()
                         
+                        // Quota Delta Badge (Chat Session Level)
+                        if let totalDelta = chat.totalQuotaDelta, abs(totalDelta) >= 0.1 {
+                            HStack(spacing: 2) {
+                                Image(systemName: totalDelta > 0 ? "gauge.with.needle.fill" : "arrow.down.circle.fill")
+                                    .font(.system(size: 6.5))
+                                Text(String(format: "%+.0f%%", totalDelta))
+                                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                            }
+                            .foregroundColor(totalDelta > 0 ? .orange : Color(red: 0.2, green: 0.85, blue: 0.45))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule().fill((totalDelta > 0 ? Color.orange : Color.green).opacity(0.15)))
+                        }
+                        
                         // Total Chat Tokens (Aggregated Sum)
                         Text(chat.formattedTotalTokens)
                             .font(.system(size: 9.5, weight: .bold, design: .rounded))
@@ -522,6 +536,46 @@ public struct SessionItemRow: View {
                         
                         // Worker info
                         sessionWorkerBadge
+                        
+                        // Skill & MCP Badges
+                        if let skills = run.skillsUsed, !skills.isEmpty {
+                            HStack(spacing: 2) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 6))
+                                Text("\(skills.count)")
+                                    .font(.system(size: 7.5, weight: .bold))
+                            }
+                            .foregroundColor(.purple)
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.purple.opacity(0.15)))
+                        }
+                        if let tools = run.toolsUsed, tools.contains(where: { $0.isMcp == true }) {
+                            HStack(spacing: 2) {
+                                Image(systemName: "network")
+                                    .font(.system(size: 6))
+                                Text("MCP")
+                                    .font(.system(size: 7.5, weight: .bold))
+                            }
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.orange.opacity(0.15)))
+                        }
+                        
+                        // Quota Delta Badge (Turn Level)
+                        if let delta = run.primaryQuotaDelta, abs(delta) >= 0.1 {
+                            HStack(spacing: 1.5) {
+                                Image(systemName: delta > 0 ? "arrow.up.right" : "arrow.down.right")
+                                    .font(.system(size: 6))
+                                Text(String(format: "%+.0f%%", delta))
+                                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                            }
+                            .foregroundColor(delta > 0 ? .orange : Color(red: 0.2, green: 0.85, blue: 0.45))
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill((delta > 0 ? Color.orange : Color.green).opacity(0.15)))
+                        }
                         
                         // Turn Tokens
                         Text(run.formattedTotalTokens)

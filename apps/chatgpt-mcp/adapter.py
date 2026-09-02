@@ -111,6 +111,10 @@ def unavailable_telemetry() -> Dict[str, Any]:
         "parent_reasoning_effort": None,
         "total_tokens": None,
         "quota": _empty_quota(),
+        "skills_used": [],
+        "tools_used": [],
+        "trajectory": [],
+        "summary": {},
     }
 
 
@@ -323,6 +327,10 @@ def build_telemetry(run: Dict[str, Any], identifier: Optional[str] = None) -> Di
         "parent_reasoning_effort": parent_data["reasoning_effort"],
         "total_tokens": _total_tokens(participants),
         "quota": _quota(run),
+        "skills_used": run.get("skills_used") or [],
+        "tools_used": run.get("tools_used") or [],
+        "trajectory": run.get("trajectory") or [],
+        "summary": run.get("summary_info") or {},
     }
     return result
 

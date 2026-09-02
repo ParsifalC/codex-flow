@@ -144,8 +144,9 @@ public struct QuotaWindowsView: View {
         let used = window.usedPercent ?? 0.0
         let rem = window.remainingPercent
         let color = used > 80 ? Color.orange : (used > 50 ? Color.yellow : Color.cyan)
+        let delta = window.deltaPercentagePoints
         
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(window.label)
                     .font(.system(size: 8.5, weight: .bold, design: .monospaced))
@@ -154,7 +155,17 @@ public struct QuotaWindowsView: View {
                 
                 Spacer(minLength: 4)
                 
-                Text(String(format: L("%.0f%% rem", "剩余 %.0f%%"), rem))
+                if let d = delta, abs(d) >= 0.01 {
+                    Text(String(format: L("本次 %+.1f%%", "本次 %+.1f%%"), d))
+                        .font(.system(size: 8.0, weight: .bold, design: .rounded))
+                        .foregroundColor(d > 0 ? .orange : Color(red: 0.2, green: 0.85, blue: 0.45))
+                } else if delta != nil {
+                    Text(L("本次 0%", "本次 0%"))
+                        .font(.system(size: 7.5, weight: .regular))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+                
+                Text(String(format: L("· 剩余 %.0f%%", "· 剩余 %.0f%%"), rem))
                     .font(.system(size: 8.0, weight: .semibold, design: .rounded))
                     .foregroundColor(color)
                     .lineLimit(1)
@@ -174,13 +185,6 @@ public struct QuotaWindowsView: View {
                 }
             }
             .frame(height: 3)
-            
-            if let delta = window.deltaPercentagePoints, delta != 0 {
-                Text(String(format: L("%+.1f pp", "%+.1f 个百分点"), delta))
-                    .font(.system(size: 7.5, weight: .regular))
-                    .foregroundColor(delta > 0 ? .orange.opacity(0.85) : .green.opacity(0.85))
-                    .lineLimit(1)
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 6)
@@ -372,6 +376,10 @@ public struct SummaryView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
     @State private var copiedSummary: Bool = false
+    @State private var isSummaryExpanded: Bool = true
+    @State private var isSkillsExpanded: Bool = false
+    @State private var isTrajectoryExpanded: Bool = false
+    @State private var isLogsExpanded: Bool = false
     
     public init(state: OverlayState) {
         self.state = state
@@ -554,6 +562,11 @@ public struct SummaryView: View {
                 // Project & Branch + Session Preview
                 projectHeaderRow(run: run)
                 
+                // 1. Task Objective & Delivery Conclusion Card
+                if run.effectiveGoal != nil || run.effectiveConclusion != nil {
+                    TaskSummaryCardView(run: run, isExpanded: $isSummaryExpanded)
+                }
+                
                 // 3 KPI Rings
                 HStack(spacing: 6) {
                     MetricRingView(
@@ -581,23 +594,38 @@ public struct SummaryView: View {
                     )
                 }
                 
+                // 2. Execution Trajectory Timeline Section
+                if run.hasTrajectory {
+                    TrajectoryTimelineSectionView(run: run, isExpanded: $isTrajectoryExpanded)
+                }
+                
+                // 3. Execution Logs Drawer Section
+                if run.hasLogs {
+                    LogsSectionView(run: run, isExpanded: $isLogsExpanded)
+                }
+                
                 // Quota & Rate Limit Windows Meter
                 if !run.effectiveQuotaWindows.isEmpty {
                     QuotaWindowsView(windows: run.effectiveQuotaWindows)
                 }
                 
+                // Participants (Parent + Workers)
+                participantsSection(run: run)
+                
                 // Token Distribution Bar
                 TokenDistributionBar(usage: run.aggregatedUsage)
                 
-                // Participants (Parent + Workers)
-                participantsSection(run: run)
+                // 4. Skills & MCP Tools Badges Section (Bottom)
+                if run.hasSkillsOrTools {
+                    SkillsAndToolsSectionView(run: run, isExpanded: $isSkillsExpanded)
+                }
                 
                 // Action Footer
                 actionFooter(run: run)
             }
             .padding(.vertical, 2)
         }
-        .frame(maxHeight: 395)
+        .frame(maxHeight: 440)
     }
     
     // MARK: - Idle / Ready Inspector Content (Clean Zero/Cleared State)
@@ -863,7 +891,7 @@ public struct SummaryView: View {
             }
             
             // 2. Recent Chats & Tasks
-            let historyChats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 15)
+            let historyChats = state.recentChats
             if !historyChats.isEmpty {
                 Section(L("Recent Chats & Tasks", "最近对话任务")) {
                     ForEach(Array(historyChats.enumerated()), id: \.element.id) { index, hChat in
@@ -892,7 +920,7 @@ public struct SummaryView: View {
             }
             
             // 3. Project Quick Filter
-            let projects = TelemetryQueryEngine.shared.allProjects()
+            let projects = state.allProjectsList
             if projects.count > 1 {
                 Section(L("Filter History by Project", "按项目筛选历史")) {
                     ForEach(projects, id: \.self) { proj in
@@ -1194,6 +1222,462 @@ public struct SummaryView: View {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
         }
+    }
+}
+
+// MARK: - Task Objective & Delivery Conclusion Card View
+public struct TaskSummaryCardView: View {
+    @ObservedObject private var localization = AppLocalization.shared
+    public var run: TaskRun
+    @Binding public var isExpanded: Bool
+    
+    public init(run: TaskRun, isExpanded: Binding<Bool>) {
+        self.run = run
+        self._isExpanded = isExpanded
+    }
+    
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            headerButton
+            if isExpanded {
+                expandedContent
+            }
+        }
+        .padding(8)
+        .background(cardBackground)
+    }
+    
+    private var headerButton: some View {
+        Button(action: toggleExpanded) {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles.rectangle.stack.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(.cyan)
+                Text(L("Task Objective & Summary", "任务目标与概要说明"))
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.85))
+                Spacer(minLength: 0)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func toggleExpanded() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isExpanded.toggle()
+        }
+    }
+    
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let g = run.effectiveGoal, !g.isEmpty {
+                objectiveBox(goal: g)
+            }
+            if let c = run.effectiveConclusion, !c.isEmpty {
+                conclusionBox(conclusion: c)
+            }
+        }
+    }
+    
+    private func objectiveBox(goal: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: "target")
+                    .font(.system(size: 8))
+                    .foregroundColor(.cyan.opacity(0.9))
+                Text(L("Objective", "目标"))
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(.cyan.opacity(0.9))
+            }
+            Text(goal)
+                .font(.system(size: 9.5, weight: .regular))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(3)
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.cyan.opacity(0.08))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.cyan.opacity(0.2), lineWidth: 0.5))
+        )
+    }
+    
+    private func conclusionBox(conclusion: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(Color(red: 0.2, green: 0.85, blue: 0.45))
+                Text(L("Outcome / Conclusion", "交付结论"))
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(Color(red: 0.2, green: 0.85, blue: 0.45))
+            }
+            Text(conclusion)
+                .font(.system(size: 9.5, weight: .regular))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(4)
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.green.opacity(0.08))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.green.opacity(0.2), lineWidth: 0.5))
+        )
+    }
+    
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(Color.white.opacity(0.04))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
+    }
+}
+
+// MARK: - Skills & Tools Section View
+public struct SkillsAndToolsSectionView: View {
+    @ObservedObject private var localization = AppLocalization.shared
+    public var run: TaskRun
+    @Binding public var isExpanded: Bool
+    
+    public init(run: TaskRun, isExpanded: Binding<Bool>) {
+        self.run = run
+        self._isExpanded = isExpanded
+    }
+    
+    private var skills: [SkillUsage] { run.skillsUsed ?? [] }
+    private var tools: [ToolCallInfo] { run.toolsUsed ?? [] }
+    
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            headerButton
+            if isExpanded {
+                if !skills.isEmpty {
+                    skillsScrollView
+                }
+                if !tools.isEmpty {
+                    toolsScrollView
+                }
+            }
+        }
+        .padding(8)
+        .background(cardBackground)
+    }
+    
+    private var headerButton: some View {
+        Button(action: toggleExpanded) {
+            HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.grid.2x2.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.purple)
+                    Text(L("Skills & Tool Invocations", "技能与工具调用"))
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.85))
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 4) {
+                    Text("\(skills.count) skills · \(tools.count) tools")
+                        .font(.system(size: 8.0, weight: .regular))
+                        .foregroundColor(.white.opacity(0.45))
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func toggleExpanded() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isExpanded.toggle()
+        }
+    }
+    
+    private var skillsScrollView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(skills) { skill in
+                    skillPill(skill: skill)
+                }
+            }
+        }
+    }
+    
+    private func skillPill(skill: SkillUsage) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 7.5))
+                .foregroundColor(.purple)
+            Text(skill.name)
+                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.9))
+            if let c = skill.count, c > 1 {
+                Text("×\(c)")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(.purple.opacity(0.9))
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(Color.purple.opacity(0.15))
+                .overlay(Capsule().stroke(Color.purple.opacity(0.35), lineWidth: 0.6))
+        )
+    }
+    
+    private var toolsScrollView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(tools) { tool in
+                    toolPill(tool: tool)
+                }
+            }
+        }
+    }
+    
+    private func toolPill(tool: ToolCallInfo) -> some View {
+        let isMcp = tool.isMcp == true
+        let tintColor: Color = isMcp ? .orange : .cyan
+        return HStack(spacing: 3) {
+            Image(systemName: isMcp ? "network" : "wrench.and.screwdriver.fill")
+                .font(.system(size: 7.5))
+                .foregroundColor(tintColor)
+            Text(tool.displayName)
+                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.9))
+            if let c = tool.count {
+                Text("×\(c)")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(tintColor.opacity(0.9))
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(tintColor.opacity(0.12))
+                .overlay(Capsule().stroke(tintColor.opacity(0.3), lineWidth: 0.6))
+        )
+    }
+    
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(Color.white.opacity(0.04))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
+    }
+}
+
+// MARK: - Trajectory Timeline Section View
+public struct TrajectoryTimelineSectionView: View {
+    @ObservedObject private var localization = AppLocalization.shared
+    public var run: TaskRun
+    @Binding public var isExpanded: Bool
+    
+    public init(run: TaskRun, isExpanded: Binding<Bool>) {
+        self.run = run
+        self._isExpanded = isExpanded
+    }
+    
+    private var steps: [TrajectoryStep] { run.trajectory ?? [] }
+    
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            headerButton
+            if isExpanded {
+                stepsListView
+            }
+        }
+        .padding(8)
+        .background(cardBackground)
+    }
+    
+    private var headerButton: some View {
+        Button(action: toggleExpanded) {
+            HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "point.filled.topleft.down.curvedto.point.bottomright.up")
+                        .font(.system(size: 9))
+                        .foregroundColor(.indigo)
+                    Text(L("Execution Trajectory (\(steps.count) steps)", "执行步骤轨迹（\(steps.count) 步）"))
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.85))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func toggleExpanded() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isExpanded.toggle()
+        }
+    }
+    
+    private var stepsListView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(steps.prefix(8).enumerated()), id: \.element.id) { idx, step in
+                stepRow(step: step, isLast: idx >= min(steps.count - 1, 7))
+            }
+            if steps.count > 8 {
+                Text(L("+\(steps.count - 8) earlier steps", "还有 \(steps.count - 8) 个早期执行步骤"))
+                    .font(.system(size: 8, weight: .regular))
+                    .foregroundColor(.white.opacity(0.4))
+                    .padding(.leading, 14)
+            }
+        }
+        .padding(.top, 2)
+    }
+    
+    private func stepRow(step: TrajectoryStep, isLast: Bool) -> some View {
+        let dotColor: Color = step.status == "error" ? .orange : (step.isMcp == true ? .orange : .cyan)
+        return HStack(alignment: .top, spacing: 6) {
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 5, height: 5)
+                    .padding(.top, 4)
+                if !isLast {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.1))
+                        .frame(width: 1, height: 16)
+                }
+            }
+            .frame(width: 8)
+            
+            VStack(alignment: .leading, spacing: 1.5) {
+                HStack(spacing: 4) {
+                    Text(step.title ?? step.name ?? "Step")
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.9))
+                    Spacer(minLength: 4)
+                    if let dur = step.durationMs, dur > 0 {
+                        Text("\(dur)ms")
+                            .font(.system(size: 7.5, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.4))
+                    }
+                }
+                if let detail = step.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 8.5, weight: .regular, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+    }
+    
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(Color.white.opacity(0.04))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
+    }
+}
+
+// MARK: - Logs Section View
+public struct LogsSectionView: View {
+    @ObservedObject private var localization = AppLocalization.shared
+    public var run: TaskRun
+    @Binding public var isExpanded: Bool
+    
+    public init(run: TaskRun, isExpanded: Binding<Bool>) {
+        self.run = run
+        self._isExpanded = isExpanded
+    }
+    
+    private var logs: [TaskLogEntry] { run.logs ?? [] }
+    
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            headerButton
+            if isExpanded {
+                logsConsoleBox
+            }
+        }
+        .padding(8)
+        .background(cardBackground)
+    }
+    
+    private var headerButton: some View {
+        Button(action: toggleExpanded) {
+            HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 9))
+                        .foregroundColor(.teal)
+                    Text(L("Execution Logs (\(logs.count))", "执行日志流（\(logs.count)）"))
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.85))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func toggleExpanded() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isExpanded.toggle()
+        }
+    }
+    
+    private var logsConsoleBox: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(logs.suffix(6))) { entry in
+                logEntryRow(entry: entry)
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.black.opacity(0.4))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+        )
+    }
+    
+    private func logEntryRow(entry: TaskLogEntry) -> some View {
+        let isErr = entry.level == "error"
+        let dotColor: Color = isErr ? .orange : Color(red: 0.2, green: 0.85, blue: 0.45)
+        let textColor: Color = isErr ? .orange.opacity(0.9) : .white.opacity(0.75)
+        return HStack(alignment: .top, spacing: 4) {
+            Circle()
+                .fill(dotColor)
+                .frame(width: 4, height: 4)
+                .padding(.top, 4)
+            Text(entry.message ?? "")
+                .font(.system(size: 8.0, weight: .regular, design: .monospaced))
+                .foregroundColor(textColor)
+                .lineLimit(2)
+        }
+    }
+    
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(Color.white.opacity(0.04))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
     }
 }
 

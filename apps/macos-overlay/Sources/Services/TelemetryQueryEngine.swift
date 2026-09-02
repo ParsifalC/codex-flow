@@ -79,6 +79,196 @@ public class TelemetryQueryEngine {
         return runs.first
     }
     
+    // MARK: - Transcript Insights Extraction
+    
+    public func enrichRunIfNeeded(_ run: inout TaskRun) {
+        if (run.trajectory == nil || run.skillsUsed == nil || run.summaryInfo == nil),
+           let transcript = run.transcriptPath,
+           let insights = parseTranscriptInsights(from: transcript) {
+            if run.skillsUsed == nil || run.skillsUsed!.isEmpty {
+                run.skillsUsed = insights.skills
+            }
+            if run.toolsUsed == nil || run.toolsUsed!.isEmpty {
+                run.toolsUsed = insights.tools
+            }
+            if run.trajectory == nil || run.trajectory!.isEmpty {
+                run.trajectory = insights.trajectory
+            }
+            if run.logs == nil || run.logs!.isEmpty {
+                run.logs = insights.logs
+            }
+            if run.summaryInfo == nil {
+                run.summaryInfo = insights.summary
+            }
+        }
+    }
+    
+    public func parseTranscriptInsights(from pathString: String) -> (skills: [SkillUsage], tools: [ToolCallInfo], trajectory: [TrajectoryStep], logs: [TaskLogEntry], summary: TaskSummaryInfo)? {
+        guard FileManager.default.fileExists(atPath: pathString),
+              let fileHandle = FileHandle(forReadingAtPath: pathString) else {
+            return nil
+        }
+        defer { try? fileHandle.close() }
+        
+        // Read at most last 256KB of transcript to keep memory & parsing instant (< 2ms)
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: pathString)[.size] as? UInt64) ?? 0
+        let maxReadBytes: UInt64 = 256 * 1024
+        if fileSize > maxReadBytes {
+            try? fileHandle.seek(toOffset: fileSize - maxReadBytes)
+        }
+        let data = fileHandle.readDataToEndOfFile()
+        guard let content = String(data: data, encoding: .utf8) else { return nil }
+        
+        var skillsDict: [String: Int] = [:]
+        var toolsDict: [String: ToolCallInfo] = [:]
+        var trajectory: [TrajectoryStep] = []
+        var logs: [TaskLogEntry] = []
+        var goal: String? = nil
+        var conclusion: String? = nil
+        
+        let lines = content.components(separatedBy: .newlines)
+        for line in lines where !line.isEmpty {
+            guard let data = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+            let ts = obj["timestamp"] as? String
+            let recType = obj["type"] as? String
+            guard let payload = obj["payload"] as? [String: Any] else { continue }
+            
+            if recType == "response_item" {
+                let pType = payload["type"] as? String
+                if pType == "custom_tool_call" {
+                    let toolName = payload["name"] as? String ?? "unknown"
+                    let rawInput = payload["input"]
+                    let callId = payload["call_id"] as? String
+                    let isMcp = toolName.starts(with: "mcp__") || toolName.lowercased().contains("mcp")
+                    
+                    let inputString: String
+                    if let s = rawInput as? String {
+                        inputString = s
+                    } else if let dict = rawInput as? [String: Any],
+                              let d = try? JSONSerialization.data(withJSONObject: dict),
+                              let s = String(data: d, encoding: .utf8) {
+                        inputString = s
+                    } else {
+                        inputString = ""
+                    }
+                    
+                    if let regex = try? NSRegularExpression(pattern: "skills/([a-zA-Z0-9_\\-]+)") {
+                        let matches = regex.matches(in: inputString, range: NSRange(inputString.startIndex..., in: inputString))
+                        for match in matches {
+                            if let range = Range(match.range(at: 1), in: inputString) {
+                                let sName = String(inputString[range])
+                                skillsDict[sName, default: 0] += 1
+                            }
+                        }
+                    }
+                    
+                    if var existing = toolsDict[toolName] {
+                        existing.count = (existing.count ?? 0) + 1
+                        toolsDict[toolName] = existing
+                    } else {
+                        toolsDict[toolName] = ToolCallInfo(
+                            name: toolName,
+                            count: 1,
+                            isMcp: isMcp,
+                            category: isMcp ? "mcp" : "system"
+                        )
+                    }
+                    
+                    var inpSummary = ""
+                    if let cmdRegex = try? NSRegularExpression(pattern: "\"cmd\"\\s*:\\s*\"([^\"]+)\""),
+                       let match = cmdRegex.firstMatch(in: inputString, range: NSRange(inputString.startIndex..., in: inputString)),
+                       let range = Range(match.range(at: 1), in: inputString) {
+                        inpSummary = String(inputString[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else {
+                        inpSummary = inputString.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+                    }
+                    if inpSummary.count > 160 {
+                        inpSummary = String(inpSummary.prefix(157)) + "..."
+                    }
+                    
+                    let cleanTitle = isMcp ? "MCP: \(toolName.replacingOccurrences(of: "mcp__", with: ""))" : "调用 \(toolName)"
+                    trajectory.append(TrajectoryStep(
+                        type: "tool_call",
+                        name: toolName,
+                        title: cleanTitle,
+                        detail: inpSummary,
+                        status: "completed",
+                        isMcp: isMcp,
+                        callId: callId,
+                        timestamp: ts
+                    ))
+                    
+                    logs.append(TaskLogEntry(
+                        timestamp: ts,
+                        level: "info",
+                        type: "tool_call",
+                        message: "[\(toolName)] \(inpSummary)"
+                    ))
+                } else if pType == "message" {
+                    let role = payload["role"] as? String
+                    var msgText = ""
+                    if let contentList = payload["content"] as? [[String: Any]] {
+                        for item in contentList {
+                            if let t = item["text"] as? String {
+                                msgText += t
+                            } else if let ot = item["output_text"] as? String {
+                                msgText += ot
+                            }
+                        }
+                    }
+                    msgText = msgText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if role == "user" && !msgText.isEmpty {
+                        var cleanPrompt = msgText
+                        if let r = cleanPrompt.range(of: "<USER_REQUEST>"),
+                           let endR = cleanPrompt.range(of: "</USER_REQUEST>") {
+                            cleanPrompt = String(cleanPrompt[r.upperBound..<endR.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                        if !cleanPrompt.starts(with: "<") || goal == nil {
+                            goal = cleanPrompt
+                        }
+                    } else if role == "assistant" && !msgText.isEmpty {
+                        conclusion = msgText
+                    }
+                }
+            } else if recType == "event_msg" && payload["type"] as? String == "item_completed" {
+                if let item = payload["item"] as? [String: Any],
+                   item["type"] as? String == "CommandExecution" {
+                    let exitCode = item["exit_code"] as? Int ?? 0
+                    let stdout = (item["stdout"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let lastIndex = trajectory.indices.last, trajectory[lastIndex].type == "tool_call" {
+                        trajectory[lastIndex].status = exitCode == 0 ? "completed" : "error"
+                    }
+                    if !stdout.isEmpty {
+                        logs.append(TaskLogEntry(
+                            timestamp: ts,
+                            level: exitCode == 0 ? "info" : "error",
+                            type: "command_output",
+                            message: "Exit \(exitCode): \(stdout.prefix(120))"
+                        ))
+                    }
+                }
+            }
+        }
+        
+        let skillsList = skillsDict.map { SkillUsage(name: $0.key, count: $0.value) }
+        let toolsList = Array(toolsDict.values)
+        let summaryInfo = TaskSummaryInfo(
+            goal: goal != nil ? String(goal!.prefix(300)) : nil,
+            conclusion: conclusion != nil ? String(conclusion!.prefix(500)) : nil
+        )
+        
+        return (
+            skills: skillsList,
+            tools: toolsList,
+            trajectory: Array(trajectory.suffix(20)),
+            logs: Array(logs.suffix(30)),
+            summary: summaryInfo
+        )
+    }
+    
     // MARK: - Query & Filter History (Session / Run Level)
     
     public func fetchHistory(
@@ -325,8 +515,8 @@ public class TelemetryQueryEngine {
         var totalCreditsMicros: Double = 0
         var hasCredits = false
         
-        var modelsDict: [String: (calls: Int, tokens: Int, roles: Set<String>)] = [:]
-        var projectsDict: [String: (runs: Int, delegated: Int, tokens: Int, durationMs: Double)] = [:]
+        var modelsDict: [String: (calls: Int, tokens: Int, roles: Set<String>, quotaDelta: Double)] = [:]
+        var projectsDict: [String: (runs: Int, delegated: Int, tokens: Int, durationMs: Double, quotaDelta: Double)] = [:]
         
         let pFilter = (project != nil && !project!.isEmpty && project!.lowercased() != "all") ? project!.lowercased() : nil
         
@@ -354,6 +544,7 @@ public class TelemetryQueryEngine {
             
             let dur = run.durationSeconds * 1000.0
             totalDurationMs += dur
+            let runDelta = run.primaryQuotaDelta ?? 0
             
             // Parent usage
             let parent = run.parent
@@ -378,7 +569,7 @@ public class TelemetryQueryEngine {
             }
             
             if modelsDict[pModel] == nil {
-                modelsDict[pModel] = (0, 0, [])
+                modelsDict[pModel] = (0, 0, [], 0)
             }
             modelsDict[pModel]!.calls += 1
             modelsDict[pModel]!.tokens += pTot
@@ -408,7 +599,7 @@ public class TelemetryQueryEngine {
                 }
                 
                 if modelsDict[wModel] == nil {
-                    modelsDict[wModel] = (0, 0, [])
+                    modelsDict[wModel] = (0, 0, [], 0)
                 }
                 modelsDict[wModel]!.calls += 1
                 modelsDict[wModel]!.tokens += wTot
@@ -418,8 +609,19 @@ public class TelemetryQueryEngine {
             let runTot = pTot + wTotSum
             totalTokens += runTot
             
+            if runTot > 0 && runDelta != 0 {
+                let pRatio = Double(pTot) / Double(runTot)
+                modelsDict[pModel]!.quotaDelta += runDelta * pRatio
+                for w in workers {
+                    let wUsage = w.effectiveUsage
+                    let wTot = wUsage?.totalTokens ?? ((wUsage?.effectivePromptTokens ?? 0) + (wUsage?.effectiveOutputTokens ?? 0))
+                    let wRatio = Double(wTot) / Double(runTot)
+                    modelsDict[w.displayModel]!.quotaDelta += runDelta * wRatio
+                }
+            }
+            
             if projectsDict[projName] == nil {
-                projectsDict[projName] = (0, 0, 0, 0)
+                projectsDict[projName] = (0, 0, 0, 0, 0)
             }
             projectsDict[projName]!.runs += 1
             if !workers.isEmpty {
@@ -427,17 +629,31 @@ public class TelemetryQueryEngine {
             }
             projectsDict[projName]!.tokens += runTot
             projectsDict[projName]!.durationMs += dur
+            projectsDict[projName]!.quotaDelta += runDelta
         }
         
         let cacheRatio = inputTokens > 0 ? (Double(cachedInputTokens) / Double(inputTokens) * 100.0) : 0.0
         let workerOffload = totalTokens > 0 ? (Double(workerTokens) / Double(totalTokens) * 100.0) : 0.0
         
         let sortedModels = modelsDict.map { k, v in
-            ModelStats(name: k, calls: v.calls, tokens: v.tokens, roles: Array(v.roles).sorted())
+            ModelStats(
+                name: k,
+                calls: v.calls,
+                tokens: v.tokens,
+                roles: Array(v.roles).sorted(),
+                quotaDelta: abs(v.quotaDelta) >= 0.01 ? v.quotaDelta : nil
+            )
         }.sorted { $0.tokens > $1.tokens }
         
         let sortedProjects = projectsDict.map { k, v in
-            ProjectStats(name: k, runs: v.runs, delegated: v.delegated, tokens: v.tokens, durationMs: v.durationMs)
+            ProjectStats(
+                name: k,
+                runs: v.runs,
+                delegated: v.delegated,
+                tokens: v.tokens,
+                durationMs: v.durationMs,
+                quotaDelta: abs(v.quotaDelta) >= 0.01 ? v.quotaDelta : nil
+            )
         }.sorted { $0.tokens > $1.tokens }
         
         return TelemetryStats(
