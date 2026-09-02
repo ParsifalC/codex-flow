@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'apps/macos-overlay/**'
+      - 'bin/codex-flow'
       - '.github/workflows/macos-overlay.yml'
   pull_request:
     paths:
       - 'apps/macos-overlay/**'
+      - 'bin/codex-flow'
       - '.github/workflows/macos-overlay.yml'
 
 jobs:
@@ -22,8 +24,10 @@ jobs:
         run: |
           set -euo pipefail
           export CODEX_HOME="$RUNNER_TEMP/flowpilot-smoke-codex-home"
-          mkdir -p "$CODEX_HOME"
+          mkdir -p "$CODEX_HOME/codex-flow"
+          printf '%s\n' "$GITHUB_WORKSPACE" >"$CODEX_HOME/codex-flow/source"
           BIN="$GITHUB_WORKSPACE/apps/macos-overlay/bin/FlowPilot"
+          CLI="$GITHUB_WORKSPACE/bin/codex-flow"
           LOG1="$RUNNER_TEMP/flowpilot-smoke-1.log"
           LOG2="$RUNNER_TEMP/flowpilot-smoke-2.log"
 
@@ -85,11 +89,22 @@ jobs:
           "$BIN" stop >/dev/null 2>&1 || true
           for _ in {1..30}; do
             if ! kill -0 "$START2_PID" 2>/dev/null; then
-              exit 0
+              break
             fi
             sleep 0.1
           done
+          if kill -0 "$START2_PID" 2>/dev/null; then
+            echo "FlowPilot replacement did not terminate after stop" >&2
+            kill "$START2_PID" 2>/dev/null || true
+            exit 1
+          fi
 
-          echo "FlowPilot replacement did not terminate after stop" >&2
-          kill "$START2_PID" 2>/dev/null || true
-          exit 1
+          # Exercise the user-facing wrapper too. It must wait for the exact new
+          # PID on both start and restart before printing success.
+          bash "$CLI" overlay start
+          WRAPPER_PID1="$(status_pid)"
+          [[ -n "$WRAPPER_PID1" ]]
+          bash "$CLI" overlay restart
+          WRAPPER_PID2="$(status_pid)"
+          [[ -n "$WRAPPER_PID2" && "$WRAPPER_PID2" != "$WRAPPER_PID1" ]]
+          "$BIN" stop >/dev/null 2>&1 || true
