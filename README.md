@@ -417,16 +417,23 @@ CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME
 
 - Shell / Python / PowerShell 语法
 - 模型推荐 fixture
-- quality-first Benchmark 分析
-- 报告生成
-- runner 隔离、repair、token 聚合与基础设施 fail-fast
-- 确定性 corpus 生成
-- FlowPilot 的 `direct` / `delegate` / `adaptive` 显式路由规则是否正确安装
-- telemetry hook 安装/去重/卸载，以及 deterministic app-server fixture 汇总
-- Unix / Windows 安装与更新流程
+## macOS 原生悬浮窗 (Native Floating Widget)
+
+`1.2.0` 引入了基于 SwiftUI + AppKit 原生构建的 macOS 实时悬浮窗与 Summary 统计仪表盘：
+
+- **极简边缘迷你胶囊（Dock Tab）**：闲置时自动收拢为 44px 侧边胶囊，常驻呈现实时状态灯与完整 Token 消耗；
+- **流光圆形气泡（Floating Bubble）**：光标划过 0.14s 弹出为 58px 彩虹流光气泡，支持智能边缘磁吸吸附；
+- **Summary 仪表盘卡片（0.4s 悬停展开）**：耗时 / Tokens / Cost 环形仪表盘、Prompt/Output/Cache 动态比例分布条、多 Agent 架构列表与一键复制；
+- **内核事件驱动（0% 闲置开销）**：通过 Unix Socket 与 XNU Vnode 事件毫秒级被动监听，零轮询、零耗电，完全支持系统 AppNap 深度休眠。
+
+管理入口：
+```bash
+codex-flow overlay [start|stop|toggle|expand|collapse|update|status]
+```
+或直接在控制台菜单中选择 `[8] 🪟 macOS 原生悬浮窗`。
 
 ## 当前状态
 
-Private preview，版本 `1.1.0`。
+Private preview，版本 `1.2.0`。
 
 FlowPilot 是默认编排 Skill；本地认证 Benchmark 是默认真实数据采集路径；`direct`、`delegate`、`adaptive` 是显式且非持久的当前任务覆盖；正常任务 telemetry 默认开启且不额外调用模型；模型推荐变更需要 review；Benchmark routing 保持 advisory；真实 Benchmark 必须由用户明确触发；用户明确 pin 的配置始终拥有最高持久配置优先级。
