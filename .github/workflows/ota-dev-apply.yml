@@ -4,7 +4,7 @@ on:
   push:
     branches: [feat/ota-update-system]
     paths:
-      - '.github/ota-dev/ota.patch'
+      - '.github/ota-dev/apply.py'
 
 permissions:
   contents: write
@@ -16,12 +16,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply integration patch
+      - name: Apply OTA integration
         run: |
           set -euo pipefail
-          git apply --check .github/ota-dev/ota.patch
-          git apply .github/ota-dev/ota.patch
-          rm -f .github/ota-dev/ota.patch .github/workflows/ota-dev-apply.yml
+          python3 .github/ota-dev/apply.py
+          rm -f .github/ota-dev/apply.py .github/ota-dev/ota.patch .github/workflows/ota-dev-apply.yml
       - name: Python and shell validation
         run: |
           set -euo pipefail
