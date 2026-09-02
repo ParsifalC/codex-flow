@@ -78,12 +78,16 @@ public final class FlowPilotUpdateService: ObservableObject {
     public var hasUpdateBadge: Bool {
         (snapshot.notifyApp ?? true) && (
             (snapshot.updateAvailable ?? false)
-            || (snapshot.restartRequired ?? false)
-            || (snapshot.flowPilotRestartRequired ?? false)
+            || isRestartRequired
         )
     }
 
+    // Generic UI badges/icons care whether any process still needs a restart.
     public var isRestartRequired: Bool {
+        isCodexRestartRequired || isFlowPilotRestartRequired
+    }
+
+    public var isCodexRestartRequired: Bool {
         snapshot.restartRequired ?? false
     }
 
@@ -105,13 +109,13 @@ public final class FlowPilotUpdateService: ObservableObject {
         if isChecking {
             return L("Checking for updates…", "正在检查更新…")
         }
-        if snapshot.flowPilotRestartRequired == true && snapshot.restartRequired == true {
+        if isFlowPilotRestartRequired && isCodexRestartRequired {
             return L("Update installed · restart FlowPilot and Codex", "更新已安装 · 请重启 FlowPilot 和 Codex")
         }
-        if snapshot.flowPilotRestartRequired == true {
+        if isFlowPilotRestartRequired {
             return L("Update installed · restart FlowPilot", "更新已安装 · 请重启 FlowPilot")
         }
-        if snapshot.restartRequired == true {
+        if isCodexRestartRequired {
             return L("Update installed · restart Codex", "更新已安装 · 请重启 Codex")
         }
         if snapshot.updateAvailable == true, let latest = snapshot.latestVersion {
@@ -275,8 +279,7 @@ public final class FlowPilotUpdateService: ObservableObject {
 
     private var hasPendingUpdateAction: Bool {
         (snapshot.updateAvailable ?? false)
-            || (snapshot.restartRequired ?? false)
-            || (snapshot.flowPilotRestartRequired ?? false)
+            || isRestartRequired
     }
 
     private var mostRecentCheckDate: Date? {
