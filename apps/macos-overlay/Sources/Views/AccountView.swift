@@ -170,10 +170,11 @@ public struct AccountView: View {
     }
 
     private func quotaRow(_ window: AccountQuotaWindow) -> some View {
-        let used = max(0, min(100, window.usedPercent ?? 0))
+        let used = window.usedPercent.map { max(0, min(100, $0)) }
         let remaining = window.remainingPercent
         let remainingFraction = max(0, min(1, (remaining ?? 0) / 100.0))
-        let accent: Color = used >= 85 ? .orange : (used >= 60 ? .yellow : .cyan)
+        let pressure = used ?? 0
+        let accent: Color = pressure >= 85 ? .orange : (pressure >= 60 ? .yellow : .cyan)
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 5) {
@@ -190,23 +191,33 @@ public struct AccountView: View {
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(accent)
                 } else {
-                    Text("—").foregroundColor(.white.opacity(0.35))
+                    Text(L("Not reported", "未返回"))
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(.white.opacity(0.35))
                 }
             }
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.08))
-                    Capsule().fill(accent)
-                        .frame(width: proxy.size.width * CGFloat(remainingFraction))
+                    if remaining != nil {
+                        Capsule().fill(accent)
+                            .frame(width: proxy.size.width * CGFloat(remainingFraction))
+                    }
                 }
             }
             .frame(height: 4)
 
             HStack {
-                Text(String(format: L("Used %.0f%%", "已用 %.0f%%"), used))
-                    .font(.system(size: 7.8))
-                    .foregroundColor(.white.opacity(0.4))
+                if let used {
+                    Text(String(format: L("Used %.0f%%", "已用 %.0f%%"), used))
+                        .font(.system(size: 7.8))
+                        .foregroundColor(.white.opacity(0.4))
+                } else {
+                    Text(L("Usage not reported", "用量未返回"))
+                        .font(.system(size: 7.8))
+                        .foregroundColor(.white.opacity(0.4))
+                }
                 Spacer()
                 Text(window.resetsAt.map { L("Resets \(formatAccountDate($0))", "\(formatAccountDate($0)) 重置") } ?? L("Reset time unavailable", "重置时间未返回"))
                     .font(.system(size: 7.8, weight: .medium, design: .monospaced))
