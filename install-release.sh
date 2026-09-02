@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="${CODEX_FLOW_REPO:-ParsifalC/codex-flow}"
 CHANNEL="${CODEX_FLOW_UPDATE_CHANNEL:-stable}"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+STATE_DIR="$CODEX_HOME/codex-flow"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex-flow-install.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -94,19 +95,30 @@ case "$archive_format" in
     ;;
 esac
 
-install_script="$(find "$package_dir" -maxdepth 2 -type f -name install.sh -print -quit)"
+install_script="$(find "$package_dir" -type f -name install.sh -print | head -n 1)"
 [[ -n "$install_script" ]] || fail "release package does not contain install.sh"
-package_root="$(cd "$(dirname "$install_script")" && pwd)"
+extracted_root="$(cd "$(dirname "$install_script")" && pwd)"
+
+versions_dir="$STATE_DIR/versions"
+version_dir="$versions_dir/$version"
+staged_version_dir="$versions_dir/.${version}.installing.$$"
+mkdir -p "$versions_dir"
+rm -rf "$staged_version_dir"
+mkdir -p "$staged_version_dir"
+cp -R "$extracted_root"/. "$staged_version_dir"/
+[[ -f "$staged_version_dir/install.sh" ]] || fail "staged release package is incomplete"
+rm -rf "$version_dir"
+mv "$staged_version_dir" "$version_dir"
 
 say "→ Installing codex-flow v$version"
 (
-  cd "$package_root"
+  cd "$version_dir"
   bash ./install.sh
 )
 
 if [[ "$os" == "darwin" ]]; then
-  flowpilot="$CODEX_HOME/codex-flow/bin/FlowPilot"
-  legacy_overlay="$CODEX_HOME/codex-flow/bin/codex-flow-overlay"
+  flowpilot="$STATE_DIR/bin/FlowPilot"
+  legacy_overlay="$STATE_DIR/bin/codex-flow-overlay"
   if [[ -s "$flowpilot" && -x "$flowpilot" ]]; then
     overlay_bin="$flowpilot"
   elif [[ -s "$legacy_overlay" && -x "$legacy_overlay" ]]; then
