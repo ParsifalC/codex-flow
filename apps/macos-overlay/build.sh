@@ -5,6 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$SCRIPT_DIR/bin"
 OUTPUT="$BIN_DIR/codex-flow-overlay"
 FLOWPILOT_OUTPUT="$BIN_DIR/FlowPilot"
+TMP_OUTPUT="$BIN_DIR/.codex-flow-overlay.$$"
+TMP_FLOWPILOT="$BIN_DIR/.FlowPilot.$$"
+
+cleanup() {
+    rm -f "$TMP_OUTPUT" "$TMP_FLOWPILOT"
+}
+trap cleanup EXIT
 
 mkdir -p "$BIN_DIR"
 
@@ -20,6 +27,10 @@ if [ "$CORES" -gt 4 ]; then
     CORES=4
 fi
 
+# Build to a fresh inode first. Replacing a currently executing macOS binary in
+# place can invalidate mapped executable pages and SIGKILL the running process.
+# Atomic rename keeps the old inode alive for the current process while new
+# launches immediately see the freshly built binary.
 swiftc \
     -num-threads "$CORES" \
     -j "$CORES" \
@@ -27,19 +38,26 @@ swiftc \
     -framework SwiftUI \
     -framework Combine \
     "${SWIFT_FILES[@]}" \
-    -o "$OUTPUT"
+    -o "$TMP_OUTPUT"
 
-chmod +x "$OUTPUT"
-cp -f "$OUTPUT" "$FLOWPILOT_OUTPUT"
-chmod +x "$FLOWPILOT_OUTPUT"
+chmod +x "$TMP_OUTPUT"
+mv -f "$TMP_OUTPUT" "$OUTPUT"
+cp "$OUTPUT" "$TMP_FLOWPILOT"
+chmod +x "$TMP_FLOWPILOT"
+mv -f "$TMP_FLOWPILOT" "$FLOWPILOT_OUTPUT"
 ln -sf "codex-flow-overlay" "$BIN_DIR/flow-pilot"
 
-# Sync to installed state dir if it exists
+# Sync to installed state dir if it exists. Use the same atomic replacement so
+# rebuilding from the console never corrupts a currently running installed copy.
 STATE_BIN="$HOME/.codex/codex-flow/bin"
 if [[ -d "$STATE_BIN" ]]; then
-    cp -f "$FLOWPILOT_OUTPUT" "$STATE_BIN/FlowPilot"
-    cp -f "$OUTPUT" "$STATE_BIN/codex-flow-overlay"
-    chmod +x "$STATE_BIN/FlowPilot" "$STATE_BIN/codex-flow-overlay"
+    state_tmp_flowpilot="$STATE_BIN/.FlowPilot.$$"
+    state_tmp_overlay="$STATE_BIN/.codex-flow-overlay.$$"
+    cp "$FLOWPILOT_OUTPUT" "$state_tmp_flowpilot"
+    cp "$OUTPUT" "$state_tmp_overlay"
+    chmod +x "$state_tmp_flowpilot" "$state_tmp_overlay"
+    mv -f "$state_tmp_flowpilot" "$STATE_BIN/FlowPilot"
+    mv -f "$state_tmp_overlay" "$STATE_BIN/codex-flow-overlay"
 fi
 
 echo "✨ Build succeeded: $FLOWPILOT_OUTPUT"
