@@ -31,4 +31,5 @@ jobs:
           git add -A
           git diff --cached --check
           git commit -m 'fix(update): never steal a live updater lock'
+          git pull --rebase origin feat/ota-update-system
           git push origin HEAD:feat/ota-update-system
