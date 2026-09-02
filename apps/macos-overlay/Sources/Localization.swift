@@ -127,25 +127,24 @@ public extension OverlayTab {
 }
 
 public extension QuotaWindow {
+    /// User-facing reset time deliberately includes a calendar date. A bare
+    /// clock time is ambiguous for weekly windows and was especially confusing
+    /// around midnight/year boundaries.
     var localizedFormattedResetsAt: String? {
         guard let r = resetsAt, r > 0 else { return nil }
         let date = Date(timeIntervalSince1970: r > 1_000_000_000_000 ? r / 1000.0 : r)
-        let interval = date.timeIntervalSince(Date())
-        if interval <= 0 {
+        if date <= Date() {
             return L("resets now", "立即重置")
-        } else if interval < 86400 {
-            let mins = Int(interval) / 60
-            if mins < 60 {
-                let displayMins = max(1, mins)
-                return L("resets in \(displayMins)m", "\(displayMins) 分钟后重置")
-            }
-            let hours = mins / 60
-            let remMins = mins % 60
-            return L("resets in \(hours)h \(remMins)m", "\(hours) 小时 \(remMins) 分钟后重置")
         }
+
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return L("resets at \(formatter.string(from: date))", "\(formatter.string(from: date)) 重置")
+        formatter.locale = Locale.current
+        formatter.timeZone = TimeZone.current
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let resetYear = Calendar.current.component(.year, from: date)
+        formatter.dateFormat = currentYear == resetYear ? "MM-dd HH:mm" : "yyyy-MM-dd HH:mm"
+        let value = formatter.string(from: date)
+        return L("resets \(value)", "\(value) 重置")
     }
 }
 
@@ -169,4 +168,3 @@ public extension ChatSession {
         return count == 1 ? L("1 session", "1 次会话") : L("\(count) sessions", "\(count) 轮会话")
     }
 }
-
