@@ -89,18 +89,19 @@ routing = adaptive
 
 ### 一键安装
 
-macOS / Linux 首次安装直接使用 GitHub Release 中与你的系统和 CPU 架构匹配的正式 artifact，不需要 clone 仓库，也不会在本机编译 FlowPilot：
+首次安装统一使用 GitHub Release 中与你的系统和 CPU 架构匹配的正式 artifact，不需要 clone 仓库。
 
 ```bash
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/ParsifalC/codex-flow/main/install-release.sh | bash
 ```
 
-安装器会自动识别 OS / CPU、解析 Latest Stable Release、下载对应 artifact、校验 SHA-256 并安装到持久版本目录。**macOS 会直接启动 Release 中已经预编译好的 FlowPilot 悬浮按钮**，无需再执行 `build.sh` 或手动运行 `codex-flow overlay start`。
-
 ```powershell
-# Windows PowerShell（当前仍使用仓库安装入口）
-git clone https://github.com/ParsifalC/codex-flow.git; cd codex-flow; .\install.ps1
+# Windows PowerShell
+irm https://raw.githubusercontent.com/ParsifalC/codex-flow/main/install-release.ps1 | iex
 ```
+
+安装器会自动识别 OS / CPU、解析 Latest Stable Release、下载对应 artifact、校验 SHA-256、安装到 `~/.codex/codex-flow/versions/<version>`，并运行健康检查。Windows 自动选择 x86_64 / ARM64 ZIP；macOS 直接使用 Release 中已经预编译好的 FlowPilot，**安装完成后悬浮按钮会自动启动**，不会在本机执行 `build.sh`。
 
 > ⚠️ **最后一步**：安装完成后请**完整重启 Codex**（完全退出后重新打开）。FlowPilot 在 macOS 上已经自动运行；重启 Codex 用于激活新的 Agent / Skill / Hook / policy snapshot。
 
