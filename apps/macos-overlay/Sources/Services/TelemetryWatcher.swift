@@ -120,7 +120,8 @@ public class TelemetryWatcher {
         do {
             let data = try Data(contentsOf: telemetryURL)
             let decoder = JSONDecoder()
-            let run = try decoder.decode(TaskRun.self, from: data)
+            var run = try decoder.decode(TaskRun.self, from: data)
+            TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
             state.update(run: run)
         } catch {
             // If decode fails, retain existing state

@@ -91,6 +91,11 @@ from .render import (
     render_summary,
     run_context,
 )
+from .repair import (
+    format_repair_summary,
+    repair_history,
+    repair_run,
+)
 
 __all__ = [
     "CODEX_HOME",
@@ -164,4 +169,7 @@ __all__ = [
     "show_list",
     "show_run",
     "show_stats",
+    "format_repair_summary",
+    "repair_run",
+    "repair_history",
 ]

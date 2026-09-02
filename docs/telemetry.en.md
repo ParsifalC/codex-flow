@@ -110,6 +110,23 @@ codex-flow usage stats -d 30
 codex-flow usage stats -p my-project -d 7
 ```
 
+### 5. Historical Telemetry Repair & Backfill
+Scan and backfill recoverable fields (skills, tools, trajectories, command logs, task summaries, and metadata enrichment) for historical runs in `~/.codex/codex-flow/telemetry/runs/*.json`:
+
+```bash
+# Preview changes (scan & report without modifying files)
+codex-flow telemetry repair --dry-run
+
+# Perform backfill repair (idempotent, atomic JSON writes)
+codex-flow telemetry repair
+```
+
+**Backfill Principles**:
+- **Preserve Existing Data**: Only fills in missing fields; never overwrites valid existing data.
+- **No Guesswork**: Quota deltas are only calculated when both `quota_before` and `quota_after` snapshots exist. Missing quota snapshots are marked as impossible rather than estimated.
+- **Idempotent**: Repeated execution safely reports `repaired: 0`.
+- **Authoritative Sync**: Safely updates `last.json` if the repaired run matches the latest session and turn ID.
+
 ---
 
 ## Log Storage & Retention

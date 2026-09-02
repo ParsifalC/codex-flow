@@ -6,6 +6,7 @@ trap 'rm -rf "$TMP"' EXIT
 export CODEX_HOME="$TMP/.codex"
 export FAKE_COUNTER="$TMP/counter"
 export CODEX_FLOW_TELEMETRY_NOTIFICATIONS=false
+export CODEX_FLOW_LANGUAGE=en
 
 cat > "$TMP/fake-app-server.py" <<'PY'
 #!/usr/bin/env python3
@@ -437,4 +438,212 @@ stats_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats)"
 stats_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats --project work --json)"
 python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["project_filter"] == "work" and s["total_runs"] >= 1' <<<"$stats_json"
 printf 'telemetry CLI query and project stats tests passed\n'
+
+# -------------------------------------------------------------
+# Telemetry repair and backfill test suite (cases 1-5 + idempotency)
+# -------------------------------------------------------------
+python3 - "$ROOT_DIR" "$TMP" <<'PY'
+import json, os, sys
+from pathlib import Path
+root_dir, tmp = sys.argv[1:3]
+sys.path.insert(0, os.path.join(root_dir, "scripts"))
+from telemetry_core import repair_run, repair_history
+
+transcript_path = os.path.join(tmp, "sample_transcript.jsonl")
+with open(transcript_path, "w", encoding="utf-8") as f:
+    f.write(json.dumps({
+        "timestamp": 1000,
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call",
+            "name": "mcp__github_search",
+            "input": "skills/my-skill cmd: search",
+            "call_id": "c1",
+        }
+    }) + "\n")
+    f.write(json.dumps({
+        "timestamp": 1050,
+        "type": "event_msg",
+        "payload": {
+            "type": "item_completed",
+            "item": {
+                "type": "CommandExecution",
+                "exit_code": 0,
+                "stdout": "success",
+            }
+        }
+    }) + "\n")
+    f.write(json.dumps({
+        "timestamp": 1100,
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"text": "<USER_REQUEST>Fix bug</USER_REQUEST>"}]
+        }
+    }) + "\n")
+    f.write(json.dumps({
+        "timestamp": 1200,
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"text": "Bug fixed successfully."}]
+        }
+    }) + "\n")
+
+# Case 1: Old run missing tools/trajectory/logs + transcript exists -> backfilled
+run1 = {
+    "session_id": "sess-1",
+    "turn_id": "turn-1",
+    "transcript_path": transcript_path,
+}
+rep1 = {}
+repaired1 = repair_run(run1, report=rep1)
+assert run1["skills_used"] == [{"name": "my-skill", "count": 1}], run1.get("skills_used")
+assert len(run1["tools_used"]) == 1 and run1["tools_used"][0]["name"] == "mcp__github_search"
+assert len(run1["trajectory"]) == 1 and run1["trajectory"][0]["name"] == "mcp__github_search"
+assert len(run1["logs"]) >= 1
+assert run1["summary_info"]["goal"] == "Fix bug"
+assert run1["summary_info"]["conclusion"] == "Bug fixed successfully."
+assert rep1["task_summaries_restored"] is True
+assert rep1["skills_tools_restored"] is True
+assert rep1["trajectories_restored"] is True
+assert rep1["logs_restored"] is True
+
+# Case 2: Old run already has these fields -> does not overwrite
+run2 = {
+    "session_id": "sess-2",
+    "turn_id": "turn-2",
+    "transcript_path": transcript_path,
+    "skills_used": [{"name": "existing-skill", "count": 5}],
+    "tools_used": [{"name": "existing-tool", "count": 3}],
+    "trajectory": [{"type": "existing_step"}],
+    "logs": [{"message": "existing log"}],
+    "summary_info": {"goal": "existing goal", "conclusion": "existing conclusion"},
+}
+rep2 = {}
+repair_run(run2, report=rep2)
+assert run2["skills_used"] == [{"name": "existing-skill", "count": 5}]
+assert run2["tools_used"] == [{"name": "existing-tool", "count": 3}]
+assert run2["trajectory"] == [{"type": "existing_step"}]
+assert run2["logs"] == [{"message": "existing log"}]
+assert run2["summary_info"]["goal"] == "existing goal"
+assert run2["summary_info"]["conclusion"] == "existing conclusion"
+assert rep2["task_summaries_restored"] is False
+assert rep2["skills_tools_restored"] is False
+assert rep2["trajectories_restored"] is False
+assert rep2["logs_restored"] is False
+
+# Case 3: transcript_path does not exist -> safely skip transcript insights
+run3 = {
+    "session_id": "sess-3",
+    "turn_id": "turn-3",
+    "transcript_path": os.path.join(tmp, "nonexistent.jsonl"),
+}
+rep3 = {}
+repair_run(run3, report=rep3)
+assert "skills_used" not in run3
+assert "tools_used" not in run3
+assert "trajectory" not in run3
+assert rep3["transcript_missing"] is True
+
+# Case 4: quota_before + quota_after exist but delta missing -> backfill quota_change_during_run
+run4 = {
+    "quota_before": [{"window_duration_mins": 300, "used_percent": 10}],
+    "quota_after": [{"window_duration_mins": 300, "used_percent": 15}],
+}
+rep4 = {}
+repair_run(run4, report=rep4)
+assert run4.get("quota_change_during_run") is not None
+assert run4["quota_change_during_run"][0]["delta_percentage_points"] == 5
+assert rep4["quota_deltas_restored"] is True
+assert rep4["quota_deltas_impossible"] is False
+
+# Case 5: Only quota_after -> do not generate delta
+run5 = {
+    "quota_after": [{"window_duration_mins": 300, "used_percent": 15}],
+}
+rep5 = {}
+repair_run(run5, report=rep5)
+assert "quota_change_during_run" not in run5
+assert rep5["quota_deltas_restored"] is False
+assert rep5["quota_deltas_impossible"] is True
+PY
+printf 'telemetry repair unit cases 1-5 passed\n'
+
+# Set up test runs in isolated CODEX_HOME
+REPAIR_TMP="$(mktemp -d)"
+export CODEX_HOME="$REPAIR_TMP/.codex"
+mkdir -p "$CODEX_HOME/codex-flow/telemetry/runs"
+TRANSCRIPT="$REPAIR_TMP/test_transcript.jsonl"
+cat > "$TRANSCRIPT" <<'EOF'
+{"timestamp":1,"type":"response_item","payload":{"type":"custom_tool_call","name":"tool_a","input":"skills/test_skill","call_id":"c1"}}
+{"timestamp":2,"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"<USER_REQUEST>Test prompt</USER_REQUEST>"}]}}
+{"timestamp":3,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"Test conclusion."}]}}
+EOF
+
+# Run A: needs transcript insights and quota delta
+cat > "$CODEX_HOME/codex-flow/telemetry/runs/sess-a--turn-1.json" <<EOF
+{
+  "schema_version": 1,
+  "session_id": "sess-a",
+  "turn_id": "turn-1",
+  "transcript_path": "$TRANSCRIPT",
+  "quota_before": [{"window_duration_mins": 300, "used_percent": 20}],
+  "quota_after": [{"window_duration_mins": 300, "used_percent": 25}]
+}
+EOF
+
+# Run B: matches last.json, only quota_after (delta impossible)
+cat > "$CODEX_HOME/codex-flow/telemetry/runs/sess-b--turn-1.json" <<EOF
+{
+  "schema_version": 1,
+  "session_id": "sess-b",
+  "turn_id": "turn-1",
+  "transcript_path": "$TRANSCRIPT",
+  "quota_after": [{"window_duration_mins": 300, "used_percent": 40}]
+}
+EOF
+cat > "$CODEX_HOME/codex-flow/telemetry/last.json" <<EOF
+{
+  "schema_version": 1,
+  "session_id": "sess-b",
+  "turn_id": "turn-1",
+  "transcript_path": "$TRANSCRIPT",
+  "quota_after": [{"window_duration_mins": 300, "used_percent": 40}]
+}
+EOF
+
+# 1. Test dry-run: prints stats, does NOT write to disk
+dry_run_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" repair --dry-run)"
+[[ "$dry_run_out" == *"Telemetry repair complete"* ]]
+[[ "$dry_run_out" == *"repaired:                2"* ]]
+python3 -c "import json, sys; d=json.load(open('$CODEX_HOME/codex-flow/telemetry/runs/sess-a--turn-1.json')); assert 'skills_used' not in d"
+
+# 2. Test repair: writes to disk and updates last.json for matching session/turn
+repair_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" repair)"
+[[ "$repair_out" == *"Telemetry repair complete"* ]]
+[[ "$repair_out" == *"repaired:                2"* ]]
+[[ "$repair_out" == *"quota deltas restored:    1"* ]]
+[[ "$repair_out" == *"quota deltas impossible: 1"* ]]
+python3 -c "import json, sys; d=json.load(open('$CODEX_HOME/codex-flow/telemetry/runs/sess-a--turn-1.json')); assert d['skills_used'] == [{'name': 'test_skill', 'count': 1}]; assert d['quota_change_during_run'][0]['delta_percentage_points'] == 5"
+python3 -c "import json, sys; last=json.load(open('$CODEX_HOME/codex-flow/telemetry/last.json')); assert last['skills_used'] == [{'name': 'test_skill', 'count': 1}]"
+
+# 3. Test idempotency: repeat repair --dry-run must report repaired: 0
+repeat_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" repair --dry-run)"
+[[ "$repeat_out" == *"repaired:                0"* ]]
+[[ "$repeat_out" == *"unchanged:               2"* ]]
+
+# 4. Test JSON output
+repair_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" repair --json)"
+python3 -c "import json, sys; d=json.load(sys.stdin); assert d['repaired'] == 0; assert d['scanned'] == 2; assert d['unchanged'] == 2" <<<"$repair_json"
+
+# 5. Test CLI command via bin/codex-flow
+cli_out="$(bash "$ROOT_DIR/bin/codex-flow" telemetry repair --dry-run)"
+[[ "$cli_out" == *"Telemetry repair complete"* ]]
+[[ "$cli_out" == *"repaired:                0"* ]]
+
+rm -rf "$REPAIR_TMP"
+printf 'telemetry repair CLI and idempotency tests passed\n'
 

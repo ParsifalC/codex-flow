@@ -10,6 +10,7 @@ _codex_flow() {
         'doctor:Verify installation, strategy runtime, and telemetry'
         'overlay:Manage the native macOS floating widget'
         'usage:Show deterministic FlowPilot usage summaries and history'
+        'telemetry:Telemetry collection, inspection, and historical repair'
         'benchmark-local:Run the built-in benchmark through the local Codex login'
         'benchmark-corpus:Materialize the built-in corpus'
         'benchmark:Run a reproducible benchmark manifest'
@@ -31,13 +32,14 @@ _codex_flow() {
         _describe 'language' '(auto zh en)'
     elif (( CURRENT == 3 )) && [[ "${words[2]}" == benchmark-local || "${words[2]}" == benchmark-corpus ]]; then
         _describe 'profile' '(quick full)'
-    elif (( CURRENT == 3 )) && [[ "${words[2]}" == usage ]]; then
-        _describe 'usage command' '(last list show stats summary)'
-    elif (( CURRENT >= 4 )) && [[ "${words[2]}" == usage ]]; then
+    elif (( CURRENT == 3 )) && [[ "${words[2]}" == usage || "${words[2]}" == telemetry ]]; then
+        _describe 'usage command' '(last list show stats summary repair)'
+    elif (( CURRENT >= 4 )) && [[ "${words[2]}" == usage || "${words[2]}" == telemetry ]]; then
         case "${words[3]}" in
             last|show) _describe 'usage option' '(--json)' ;;
             list) _describe 'list option' '(--json --today -n --limit -p --project)' ;;
             stats|summary) _describe 'stats option' '(--json -d --days -p --project)' ;;
+            repair) _describe 'repair option' '(--dry-run --json)' ;;
         esac
     fi
 }

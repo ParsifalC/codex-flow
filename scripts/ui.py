@@ -171,6 +171,7 @@ def help_text(lang: str) -> int:
     usage list [选项]           浏览任务历史（-n N、--project P、--today、--json）
     usage show <#|id> [选项]    查看指定任务遥测摘要
     usage stats [选项]          查看聚合遥测统计（--project P、--days N）
+    telemetry repair [--dry-run] 扫描并回填历史遥测可恢复字段（支持 --json）
 
   Benchmark 命令
     benchmark-local             使用本地 Codex 会话运行内置 Benchmark
@@ -207,6 +208,7 @@ Usage: codex-flow <command> [options]
     usage list [options]        List task history (-n N, --project P, --today, --json)
     usage show <#|id> [opt]     Show specific task telemetry summary
     usage stats [options]       Show aggregated telemetry stats (--project P, --days N)
+    telemetry repair [--dry-run] Backfill recoverable fields in history (supports --json)
 
   Benchmark Commands
     benchmark-local             Run built-in benchmark via local Codex session
