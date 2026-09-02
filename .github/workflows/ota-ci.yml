@@ -50,6 +50,21 @@ jobs:
             scripts/package-release.py \
             scripts/generate-release-manifest.py \
             scripts/migrations/0001_update_settings.py
+      - name: Guard Windows PowerShell 5 installer encoding
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $path = Join-Path (Get-Location) 'install.ps1'
+          $bytes = [System.IO.File]::ReadAllBytes($path)
+          if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xef -or $bytes[1] -ne 0xbb -or $bytes[2] -ne 0xbf) {
+            throw 'install.ps1 must retain its UTF-8 BOM for Windows PowerShell 5 localized parsing'
+          }
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error "install.ps1:$($_.Extent.StartLineNumber): $($_.Message)" }
+            exit 1
+          }
       - name: OTA updater tests
         shell: bash
         run: python3 -m unittest tests.test_updater
