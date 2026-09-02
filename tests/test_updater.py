@@ -93,6 +93,22 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual(cached["current_version"], "1.7.0")
         self.assertEqual(cached["latest_version"], "1.8.0")
 
+    def test_pre_ota_older_release_is_treated_as_latest(self) -> None:
+        release = {
+            "tag_name": "v1.6.0",
+            "draft": False,
+            "prerelease": False,
+            "html_url": "https://example.invalid/releases/v1.6.0",
+            "assets": [],
+        }
+        with patch.object(updater, "_request_json", return_value=[release]):
+            state = updater.check_for_updates(force=True)
+        self.assertEqual(state.status, "latest")
+        self.assertEqual(state.current_version, "1.7.0")
+        self.assertEqual(state.latest_version, "1.7.0")
+        self.assertFalse(state.update_available)
+        self.assertIsNone(state.last_error)
+
     def test_safe_extract_rejects_zip_path_traversal(self) -> None:
         archive = self.root / "bad.zip"
         with zipfile.ZipFile(archive, "w") as zf:

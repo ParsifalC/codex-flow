@@ -328,17 +328,41 @@ def _manifest_from_release_api(config: UpdateConfig) -> tuple[dict[str, Any], di
     candidates = [r for r in releases if isinstance(r, dict) and _release_matches_channel(r, config.channel)]
     if not candidates:
         raise RuntimeError(f"no {config.channel} release found")
-    release = candidates[0]
-    assets = release.get("assets") or []
-    manifest_asset = next(
-        (item for item in assets if isinstance(item, dict) and item.get("name") == MANIFEST_ASSET), None
-    )
-    if not manifest_asset or not manifest_asset.get("browser_download_url"):
-        raise RuntimeError(f"release {release.get('tag_name', '')} does not provide {MANIFEST_ASSET}")
-    manifest = _request_json(str(manifest_asset["browser_download_url"]))
-    if not isinstance(manifest, dict):
-        raise RuntimeError("update manifest is not an object")
-    return manifest, release
+    # Prefer the newest release that actually participates in the OTA protocol.
+    # During rollout there may be older, pre-OTA GitHub releases without a
+    # manifest. If the newest public release is not newer than the installed
+    # version, treat the installed version as current instead of surfacing a
+    # spurious update-check error in the CLI/App.
+    for release in candidates:
+        assets = release.get("assets") or []
+        manifest_asset = next(
+            (item for item in assets if isinstance(item, dict) and item.get("name") == MANIFEST_ASSET), None
+        )
+        if not manifest_asset or not manifest_asset.get("browser_download_url"):
+            continue
+        manifest = _request_json(str(manifest_asset["browser_download_url"]))
+        if not isinstance(manifest, dict):
+            raise RuntimeError("update manifest is not an object")
+        return manifest, release
+
+    newest_release = candidates[0]
+    newest_tag = _strip_v(str(newest_release.get("tag_name") or "0.0.0"))
+    installed = current_version()
+    if not is_newer(newest_tag, installed):
+        return (
+            {
+                "schema": MANIFEST_SCHEMA,
+                "version": installed,
+                "channel": config.channel,
+                "restart_required": False,
+                "mandatory": False,
+                "release_url": newest_release.get("html_url"),
+                "release_notes": "",
+                "artifacts": {},
+            },
+            newest_release,
+        )
+    raise RuntimeError(f"release {newest_release.get('tag_name', '')} does not provide {MANIFEST_ASSET}")
 
 
 def fetch_manifest(config: UpdateConfig) -> tuple[dict[str, Any], dict[str, Any]]:
