@@ -1,8 +1,8 @@
 import SwiftUI
 import AppKit
 
-/// Main expanded FlowPilot surface. Account is kept as a UI-only fourth tab so
-/// the existing Inspector/History/Analytics IPC tab contract remains backward compatible.
+/// Main expanded FlowPilot surface. Account remains a UI-only fourth tab so
+/// existing Inspector/History/Analytics IPC commands stay backward compatible.
 public struct SummaryView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
@@ -53,12 +53,13 @@ public struct SummaryView: View {
         }
     }
 
-    // MARK: Chrome
+    // MARK: - Chrome
 
     private var topBar: some View {
         HStack(spacing: 7) {
             FlowPilotLogoView(size: 29, showGlow: true, withBolt: false, text: "FP")
                 .frame(width: 29, height: 29)
+
             VStack(alignment: .leading, spacing: 0) {
                 Text("FlowPilot")
                     .font(.system(size: 11.5, weight: .heavy, design: .rounded))
@@ -67,13 +68,21 @@ public struct SummaryView: View {
                     .font(.system(size: 7.8, weight: .medium, design: .rounded))
                     .foregroundColor(statusColor.opacity(0.85))
             }
+
             Spacer()
-            chromeButton(state.isPrivacyMode ? "eye.slash.fill" : "eye.fill", state.isPrivacyMode ? .orange : .white.opacity(0.55), L("Privacy mode", "隐私模式")) {
-                state.isPrivacyMode.toggle()
-            }
-            chromeButton(state.isPinned ? "pin.fill" : "pin", state.isPinned ? .cyan : .white.opacity(0.55), L("Pin window", "置顶窗口")) {
-                state.isPinned.toggle()
-            }
+
+            chromeButton(
+                state.isPrivacyMode ? "eye.slash.fill" : "eye.fill",
+                state.isPrivacyMode ? .orange : .white.opacity(0.55),
+                L("Privacy mode", "隐私模式")
+            ) { state.isPrivacyMode.toggle() }
+
+            chromeButton(
+                state.isPinned ? "pin.fill" : "pin",
+                state.isPinned ? .cyan : .white.opacity(0.55),
+                L("Pin window", "置顶窗口")
+            ) { state.isPinned.toggle() }
+
             chromeButton("chevron.down", .white.opacity(0.55), L("Collapse", "收起")) {
                 state.collapse()
             }
@@ -102,6 +111,7 @@ public struct SummaryView: View {
                     state.selectTab(tab)
                 }
             }
+
             tabButton(L("Account", "账户"), "person.crop.circle.fill", showingAccount) {
                 showingAccount = true
             }
@@ -113,7 +123,8 @@ public struct SummaryView: View {
     private func tabButton(_ title: String, _ icon: String, _ selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 3) {
-                Image(systemName: icon).font(.system(size: 7.8, weight: .semibold))
+                Image(systemName: icon)
+                    .font(.system(size: 7.8, weight: .semibold))
                 Text(title)
                     .font(.system(size: 8.4, weight: selected ? .bold : .medium, design: .rounded))
                     .lineLimit(1)
@@ -124,7 +135,10 @@ public struct SummaryView: View {
             .background(
                 RoundedRectangle(cornerRadius: 7)
                     .fill(selected ? Color.cyan.opacity(0.22) : Color.clear)
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(selected ? Color.cyan.opacity(0.32) : Color.clear, lineWidth: 0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(selected ? Color.cyan.opacity(0.32) : Color.clear, lineWidth: 0.6)
+                    )
             )
         }
         .buttonStyle(.plain)
@@ -134,7 +148,10 @@ public struct SummaryView: View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
             .fill(
                 LinearGradient(
-                    colors: [Color(red: 0.055, green: 0.062, blue: 0.085).opacity(0.98), Color(red: 0.035, green: 0.041, blue: 0.058).opacity(0.98)],
+                    colors: [
+                        Color(red: 0.055, green: 0.062, blue: 0.085).opacity(0.98),
+                        Color(red: 0.035, green: 0.041, blue: 0.058).opacity(0.98)
+                    ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -142,7 +159,7 @@ public struct SummaryView: View {
             .shadow(color: .black.opacity(0.48), radius: 18, y: 8)
     }
 
-    // MARK: Inspector
+    // MARK: - Inspector
 
     @ViewBuilder
     private var inspectorSurface: some View {
@@ -165,14 +182,27 @@ public struct SummaryView: View {
             if state.inspectedRun != nil { historicalBanner }
             projectHeader(run)
             metricsGrid(run)
+
             if !run.effectiveQuotaWindows.isEmpty {
                 QuotaWindowsView(windows: run.effectiveQuotaWindows)
             }
+
             taskNarrativeCard(run)
             participantsCard(run)
             TokenUsageBreakdownView(usage: run.aggregatedUsage)
-            if !run.allWorkers.isEmpty { workerOutcomesCard(run) }
-            if run.hasTrajectory || run.hasLogs { executionDetailCard(run) }
+
+            if run.hasSkillsOrTools {
+                InspectorSkillsToolsView(run: run)
+            }
+
+            if !run.allWorkers.isEmpty {
+                workerOutcomesCard(run)
+            }
+
+            if run.hasTrajectory || run.hasLogs {
+                executionDetailCard(run)
+            }
+
             actionFooter(run)
         }
         .padding(.top, 8)
@@ -180,15 +210,20 @@ public struct SummaryView: View {
 
     private var historicalBanner: some View {
         HStack(spacing: 5) {
-            Image(systemName: "clock.arrow.circlepath").font(.system(size: 8.5)).foregroundColor(.cyan)
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 8.5))
+                .foregroundColor(.cyan)
             Text(L("Viewing historical task", "正在查看历史任务"))
-                .font(.system(size: 8.8, weight: .semibold)).foregroundColor(.cyan)
+                .font(.system(size: 8.8, weight: .semibold))
+                .foregroundColor(.cyan)
             Spacer()
+            recentTaskMenu
             Button(L("Live", "当前任务")) { state.jumpToLive() }
                 .buttonStyle(.plain)
                 .font(.system(size: 8, weight: .bold))
                 .foregroundColor(.white)
-                .padding(.horizontal, 6).padding(.vertical, 2)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
                 .background(Capsule().fill(Color.cyan.opacity(0.3)))
         }
         .padding(7)
@@ -198,29 +233,137 @@ public struct SummaryView: View {
     private func projectHeader(_ run: TaskRun) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 5) {
-                Image(systemName: "folder.fill").font(.system(size: 8)).foregroundColor(.white.opacity(0.48))
-                HoverRevealText(run.projectName, font: .system(size: 10, weight: .bold, design: .rounded), foregroundColor: .white.opacity(0.94), lineLimit: 1, privacyBlur: state.isPrivacyMode, popoverWidth: 300)
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(.white.opacity(0.48))
+
+                HoverRevealText(
+                    run.projectName,
+                    font: .system(size: 10, weight: .bold, design: .rounded),
+                    foregroundColor: .white.opacity(0.94),
+                    lineLimit: 1,
+                    privacyBlur: state.isPrivacyMode,
+                    popoverWidth: 300
+                )
+
                 if let branch = run.gitBranch, !branch.isEmpty {
                     Text("·").foregroundColor(.white.opacity(0.25))
-                    HoverRevealText(branch, font: .system(size: 8.8, weight: .medium, design: .monospaced), foregroundColor: .cyan.opacity(0.88), lineLimit: 1, privacyBlur: state.isPrivacyMode, popoverWidth: 320)
+                    HoverRevealText(
+                        branch,
+                        font: .system(size: 8.8, weight: .medium, design: .monospaced),
+                        foregroundColor: .cyan.opacity(0.88),
+                        lineLimit: 1,
+                        privacyBlur: state.isPrivacyMode,
+                        popoverWidth: 320
+                    )
                 }
+
+                if !state.isPrivacyMode && !isFullHeight {
+                    recentTaskMenu
+                }
+
                 Spacer(minLength: 2)
                 statusBadge(run)
             }
-            HoverRevealText(run.thread?.preview ?? run.summary ?? run.sessionTitle, font: .system(size: 9.4), foregroundColor: .white.opacity(0.63), lineLimit: 1, privacyBlur: state.isPrivacyMode, popoverWidth: 390)
-                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HoverRevealText(
+                run.thread?.preview ?? run.summary ?? run.sessionTitle,
+                font: .system(size: 9.4),
+                foregroundColor: .white.opacity(0.63),
+                lineLimit: 1,
+                privacyBlur: state.isPrivacyMode,
+                popoverWidth: 390
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(8)
         .background(cardBackground())
     }
 
+    private var recentTaskMenu: some View {
+        Menu {
+            if let latest = state.latestRun {
+                Section(L("Live Session", "当前会话")) {
+                    Button {
+                        state.jumpToLive()
+                    } label: {
+                        Text(L("⚡ Live · \(latest.projectName) · \(latest.localizedFormattedDate)", "⚡ 当前 · \(latest.projectName) · \(latest.localizedFormattedDate)"))
+                    }
+                }
+            }
+
+            if !state.recentChats.isEmpty {
+                Section(L("Recent Chats & Tasks", "最近对话任务")) {
+                    ForEach(Array(state.recentChats.prefix(10).enumerated()), id: \.element.id) { index, chat in
+                        if let latest = chat.latestRun {
+                            Button {
+                                if latest.id == state.latestRun?.id {
+                                    state.jumpToLive()
+                                } else {
+                                    state.inspect(run: latest)
+                                }
+                            } label: {
+                                Text("#\(index + 1) \(chat.projectName) · \(chat.localizedFormattedDate) · \(shortMenuText(chat.title))")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                state.selectTab(.history)
+            } label: {
+                Label(L("Browse All History", "浏览全部历史"), systemImage: "clock.arrow.circlepath")
+            }
+        } label: {
+            Image(systemName: "chevron.down.circle.fill")
+                .font(.system(size: 9))
+                .foregroundColor(.white.opacity(0.42))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(L("Switch task", "切换任务"))
+    }
+
+    private func shortMenuText(_ text: String) -> String {
+        let cleaned = text.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.count > 34 ? String(cleaned.prefix(34)) + "…" : cleaned
+    }
+
     private func metricsGrid(_ run: TaskRun) -> some View {
         let usage = run.aggregatedUsage
         return HStack(spacing: 6) {
-            InspectorMetricView(title: L("Time", "耗时"), value: run.formattedDuration, detail: L("wall time", "任务时长"), icon: "timer", accent: .cyan, progress: min(1, run.durationSeconds / 600.0))
-            InspectorMetricView(title: L("Tokens", "Token"), value: run.formattedCompactTokens, detail: L("total", "总用量"), icon: "circle.grid.cross.fill", accent: Color(red: 0.95, green: 0.35, blue: 0.8), progress: min(1, Double(usage.totalTokens ?? 0) / 100_000.0))
-            // Replaces the ambiguous old Cost ring. Optional credits are not USD.
-            InspectorMetricView(title: L("Output", "输出"), value: TaskRun.formatTokenCount(usage.effectiveOutputTokens), detail: L("tokens", "Token"), icon: "arrow.up.circle.fill", accent: Color(red: 0.25, green: 0.88, blue: 0.58), progress: outputShare(usage))
+            InspectorMetricView(
+                title: L("Time", "耗时"),
+                value: run.formattedDuration,
+                detail: L("wall time", "任务时长"),
+                icon: "timer",
+                accent: .cyan,
+                progress: min(1, run.durationSeconds / 600.0)
+            )
+
+            InspectorMetricView(
+                title: L("Tokens", "Token"),
+                value: run.formattedCompactTokens,
+                detail: L("total", "总用量"),
+                icon: "circle.grid.cross.fill",
+                accent: Color(red: 0.95, green: 0.35, blue: 0.8),
+                progress: min(1, Double(usage.totalTokens ?? 0) / 100_000.0)
+            )
+
+            // The old Cost ring treated optional credit telemetry like USD and was
+            // frequently empty. Output tokens are deterministic and unambiguous.
+            InspectorMetricView(
+                title: L("Output", "输出"),
+                value: TaskRun.formatTokenCount(usage.effectiveOutputTokens),
+                detail: L("tokens", "Token"),
+                icon: "arrow.up.circle.fill",
+                accent: Color(red: 0.25, green: 0.88, blue: 0.58),
+                progress: outputShare(usage)
+            )
         }
     }
 
@@ -231,9 +374,11 @@ public struct SummaryView: View {
     private func taskNarrativeCard(_ run: TaskRun) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             sectionHeader("sparkles.rectangle.stack.fill", L("Task Objective & Summary", "任务目标与概要说明"), .cyan)
+
             if let goal = run.effectiveGoal, !goal.isEmpty {
                 narrativeBlock(L("Objective", "目标"), "target", goal, .cyan, 3)
             }
+
             if let conclusion = run.effectiveConclusion, !conclusion.isEmpty {
                 narrativeBlock(L("Outcome / Conclusion", "交付结论"), "checkmark.seal.fill", conclusion, .green, 4)
             }
@@ -245,9 +390,18 @@ public struct SummaryView: View {
     private func narrativeBlock(_ label: String, _ icon: String, _ text: String, _ tint: Color, _ lines: Int) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Label(label, systemImage: icon)
-                .font(.system(size: 8.2, weight: .bold)).foregroundColor(tint.opacity(0.9))
-            HoverRevealText(text, font: .system(size: 9.3), foregroundColor: .white.opacity(0.88), lineLimit: lines, privacyBlur: state.isPrivacyMode, popoverWidth: 390)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .font(.system(size: 8.2, weight: .bold))
+                .foregroundColor(tint.opacity(0.9))
+
+            HoverRevealText(
+                text,
+                font: .system(size: 9.3),
+                foregroundColor: .white.opacity(0.88),
+                lineLimit: lines,
+                privacyBlur: state.isPrivacyMode,
+                popoverWidth: 390
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 7).fill(tint.opacity(0.07)))
@@ -255,8 +409,21 @@ public struct SummaryView: View {
 
     private func participantsCard(_ run: TaskRun) -> some View {
         HStack(spacing: 6) {
-            participantBlock("brain.head.profile", L("Parent", "父 Agent"), run.parent?.displayModel ?? L("Direct CLI", "直接 CLI"), participantSubtitle(run.parent), .indigo)
-            participantBlock("person.2.fill", L("Workers", "Worker"), workerSummaryText(run), L("\(run.allWorkers.count) subagents", "\(run.allWorkers.count) 个子 Agent"), .teal)
+            participantBlock(
+                "brain.head.profile",
+                L("Parent", "父 Agent"),
+                run.parent?.displayModel ?? L("Direct CLI", "直接 CLI"),
+                participantSubtitle(run.parent),
+                .indigo
+            )
+
+            participantBlock(
+                "person.2.fill",
+                L("Workers", "Worker"),
+                workerSummaryText(run),
+                L("\(run.allWorkers.count) subagents", "\(run.allWorkers.count) 个子 Agent"),
+                .teal
+            )
         }
     }
 
@@ -269,9 +436,21 @@ public struct SummaryView: View {
     private func participantBlock(_ icon: String, _ title: String, _ name: String, _ subtitle: String, _ tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Label(title, systemImage: icon)
-                .font(.system(size: 8.5, weight: .semibold)).foregroundColor(tint.opacity(0.9))
-            HoverRevealText(name, font: .system(size: 9.8, weight: .bold, design: .rounded), foregroundColor: .white.opacity(0.9), lineLimit: 1, popoverWidth: 280)
-            Text(subtitle).font(.system(size: 7.8)).foregroundColor(.white.opacity(0.4)).lineLimit(1)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundColor(tint.opacity(0.9))
+
+            HoverRevealText(
+                name,
+                font: .system(size: 9.8, weight: .bold, design: .rounded),
+                foregroundColor: .white.opacity(0.9),
+                lineLimit: 1,
+                popoverWidth: 280
+            )
+
+            Text(subtitle)
+                .font(.system(size: 7.8))
+                .foregroundColor(.white.opacity(0.4))
+                .lineLimit(1)
         }
         .padding(7)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -281,23 +460,46 @@ public struct SummaryView: View {
     private func participantSubtitle(_ participant: ParticipantInfo?) -> String {
         guard let participant else { return L("No usage data", "暂无用量数据") }
         let tokens = participant.effectiveUsage?.totalTokens ?? 0
-        if let effort = participant.displayEffort { return "\(effort) · \(TaskRun.formatTokenCount(tokens)) tokens" }
+        if let effort = participant.displayEffort {
+            return "\(effort) · \(TaskRun.formatTokenCount(tokens)) tokens"
+        }
         return "\(TaskRun.formatTokenCount(tokens)) tokens"
     }
 
     private func workerOutcomesCard(_ run: TaskRun) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             sectionHeader("checkmark.bubble.fill", L("Worker Outcomes", "Worker 执行结果"), .teal)
+
             ForEach(run.allWorkers) { worker in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        HoverRevealText(worker.agentType ?? worker.name ?? L("Worker", "Worker"), font: .system(size: 8.7, weight: .semibold, design: .rounded), foregroundColor: .white.opacity(0.88), lineLimit: 1, popoverWidth: 300)
+                        HoverRevealText(
+                            worker.agentType ?? worker.name ?? L("Worker", "Worker"),
+                            font: .system(size: 8.7, weight: .semibold, design: .rounded),
+                            foregroundColor: .white.opacity(0.88),
+                            lineLimit: 1,
+                            popoverWidth: 300
+                        )
                         Spacer(minLength: 4)
-                        HoverRevealText(worker.displayModel, font: .system(size: 7.7, weight: .medium, design: .monospaced), foregroundColor: .teal.opacity(0.78), lineLimit: 1, popoverWidth: 280)
+                        HoverRevealText(
+                            worker.displayModel,
+                            font: .system(size: 7.7, weight: .medium, design: .monospaced),
+                            foregroundColor: .teal.opacity(0.78),
+                            lineLimit: 1,
+                            popoverWidth: 280
+                        )
                     }
+
                     if let conclusion = worker.conclusion, !conclusion.isEmpty {
-                        HoverRevealText(conclusion, font: .system(size: 8.8), foregroundColor: .white.opacity(0.64), lineLimit: 3, privacyBlur: state.isPrivacyMode, popoverWidth: 390)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HoverRevealText(
+                            conclusion,
+                            font: .system(size: 8.8),
+                            foregroundColor: .white.opacity(0.64),
+                            lineLimit: 3,
+                            privacyBlur: state.isPrivacyMode,
+                            popoverWidth: 390
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(6)
@@ -311,22 +513,53 @@ public struct SummaryView: View {
     private func executionDetailCard(_ run: TaskRun) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             sectionHeader("point.filled.topleft.down.curvedto.point.bottomright.up", L("Execution Details", "执行详情"), .indigo)
+
             ForEach(Array((run.trajectory ?? []).prefix(6))) { step in
                 HStack(alignment: .top, spacing: 5) {
-                    Circle().fill(step.status == "error" ? Color.orange : Color.cyan).frame(width: 4.5, height: 4.5).padding(.top, 4)
+                    Circle()
+                        .fill(step.status == "error" ? Color.orange : Color.cyan)
+                        .frame(width: 4.5, height: 4.5)
+                        .padding(.top, 4)
+
                     VStack(alignment: .leading, spacing: 1) {
-                        HoverRevealText(step.title ?? step.name ?? "Step", font: .system(size: 8.6, weight: .semibold), foregroundColor: .white.opacity(0.82), lineLimit: 1, popoverWidth: 360)
+                        HoverRevealText(
+                            step.title ?? step.name ?? "Step",
+                            font: .system(size: 8.6, weight: .semibold),
+                            foregroundColor: .white.opacity(0.82),
+                            lineLimit: 1,
+                            popoverWidth: 360
+                        )
+
                         if let detail = step.detail, !detail.isEmpty {
-                            HoverRevealText(detail, font: .system(size: 7.8, design: .monospaced), foregroundColor: .white.opacity(0.5), lineLimit: 1, privacyBlur: state.isPrivacyMode, popoverWidth: 410)
+                            HoverRevealText(
+                                detail,
+                                font: .system(size: 7.8, design: .monospaced),
+                                foregroundColor: .white.opacity(0.5),
+                                lineLimit: 1,
+                                privacyBlur: state.isPrivacyMode,
+                                popoverWidth: 410
+                            )
                         }
                     }
                 }
             }
+
             ForEach(Array((run.logs ?? []).suffix(4))) { entry in
                 HStack(alignment: .top, spacing: 5) {
-                    Circle().fill(entry.level == "error" ? Color.orange : Color.green).frame(width: 4, height: 4).padding(.top, 4)
-                    HoverRevealText(entry.message ?? "", font: .system(size: 7.7, design: .monospaced), foregroundColor: entry.level == "error" ? .orange.opacity(0.85) : .white.opacity(0.58), lineLimit: 2, privacyBlur: state.isPrivacyMode, popoverWidth: 420)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Circle()
+                        .fill(entry.level == "error" ? Color.orange : Color.green)
+                        .frame(width: 4, height: 4)
+                        .padding(.top, 4)
+
+                    HoverRevealText(
+                        entry.message ?? "",
+                        font: .system(size: 7.7, design: .monospaced),
+                        foregroundColor: entry.level == "error" ? .orange.opacity(0.85) : .white.opacity(0.58),
+                        lineLimit: 2,
+                        privacyBlur: state.isPrivacyMode,
+                        popoverWidth: 420
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -339,46 +572,89 @@ public struct SummaryView: View {
             Button {
                 copySummary(run)
             } label: {
-                Label(copiedSummary ? L("Copied", "已复制") : L("Copy summary", "复制摘要"), systemImage: copiedSummary ? "checkmark" : "doc.on.doc")
+                Label(
+                    copiedSummary ? L("Copied", "已复制") : L("Copy summary", "复制摘要"),
+                    systemImage: copiedSummary ? "checkmark" : "doc.on.doc"
+                )
+                .font(.system(size: 8.6, weight: .semibold))
+                .foregroundColor(copiedSummary ? .green : .white.opacity(0.75))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                openConsole()
+            } label: {
+                Label(L("Console", "控制台"), systemImage: "terminal.fill")
                     .font(.system(size: 8.6, weight: .semibold))
-                    .foregroundColor(copiedSummary ? .green : .white.opacity(0.75))
-                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .foregroundColor(.white.opacity(0.75))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
             }
             .buttonStyle(.plain)
+
             Spacer()
-            Text(run.localizedFormattedDate).font(.system(size: 7.8)).foregroundColor(.white.opacity(0.35))
+            Text(run.localizedFormattedDate)
+                .font(.system(size: 7.8))
+                .foregroundColor(.white.opacity(0.35))
         }
     }
 
     private var idleInspector: some View {
         VStack(spacing: 10) {
             FlowPilotLogoView(size: 58, showGlow: true, withBolt: true, text: "FlowPilot")
-                .frame(width: 58, height: 58).padding(.top, 20)
+                .frame(width: 58, height: 58)
+                .padding(.top, 20)
+
             Text(L("FlowPilot is Ready", "FlowPilot 已就绪"))
-                .font(.system(size: 13, weight: .bold, design: .rounded)).foregroundColor(.white)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+
             Text(L("Listening for live task and usage telemetry", "正在监听任务与用量遥测"))
-                .font(.system(size: 9.5)).foregroundColor(.white.opacity(0.48))
-            Button { showingAccount = true } label: {
-                Label(L("View Account Limits", "查看账户额度"), systemImage: "person.crop.circle")
-                    .font(.system(size: 9, weight: .semibold)).foregroundColor(.cyan)
-                    .padding(.horizontal, 9).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.cyan.opacity(0.12)))
-            }.buttonStyle(.plain)
+                .font(.system(size: 9.5))
+                .foregroundColor(.white.opacity(0.48))
+
+            HStack(spacing: 7) {
+                Button { showingAccount = true } label: {
+                    Label(L("Account Limits", "账户额度"), systemImage: "person.crop.circle")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.cyan.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+
+                Button { openConsole() } label: {
+                    Label(L("Console", "控制台"), systemImage: "terminal.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.72))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.white.opacity(0.06)))
+                }
+                .buttonStyle(.plain)
+            }
+
             Spacer(minLength: 12)
         }
         .frame(maxWidth: .infinity, minHeight: 300)
     }
 
-    // MARK: Helpers
+    // MARK: - Helpers
 
     private func statusBadge(_ run: TaskRun) -> some View {
         HStack(spacing: 3) {
             Circle().fill(runStatusColor(run)).frame(width: 4.5, height: 4.5)
-            Text(runStatusText(run)).font(.system(size: 7.4, weight: .bold, design: .rounded))
+            Text(runStatusText(run))
+                .font(.system(size: 7.4, weight: .bold, design: .rounded))
         }
         .foregroundColor(runStatusColor(run))
-        .padding(.horizontal, 5).padding(.vertical, 2)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
         .background(Capsule().fill(runStatusColor(run).opacity(0.12)))
     }
 
@@ -387,7 +663,9 @@ public struct SummaryView: View {
     }
 
     private func runStatusText(_ run: TaskRun) -> String {
-        run.isRunning ? L("RUNNING", "运行中") : (run.isError ? L("FAILED", "失败") : L("COMPLETED", "已完成"))
+        run.isRunning
+            ? L("RUNNING", "运行中")
+            : (run.isError ? L("FAILED", "失败") : L("COMPLETED", "已完成"))
     }
 
     private var statusText: String { currentRun.map(runStatusText) ?? L("READY", "就绪") }
@@ -395,8 +673,12 @@ public struct SummaryView: View {
 
     private func sectionHeader(_ icon: String, _ title: String, _ tint: Color) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 8)).foregroundColor(tint)
-            Text(title).font(.system(size: 8.8, weight: .bold, design: .rounded)).foregroundColor(.white.opacity(0.7))
+            Image(systemName: icon)
+                .font(.system(size: 8))
+                .foregroundColor(tint)
+            Text(title)
+                .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                .foregroundColor(.white.opacity(0.7))
             Spacer()
         }
     }
@@ -405,7 +687,10 @@ public struct SummaryView: View {
         let base = tint ?? Color.white
         return RoundedRectangle(cornerRadius: 9)
             .fill(base.opacity(tint == nil ? 0.04 : 0.07))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(base.opacity(tint == nil ? 0.075 : 0.18), lineWidth: 0.7))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(base.opacity(tint == nil ? 0.075 : 0.18), lineWidth: 0.7)
+            )
     }
 
     private func copySummary(_ run: TaskRun) {
@@ -417,7 +702,22 @@ public struct SummaryView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         copiedSummary = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copiedSummary = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            copiedSummary = false
+        }
+    }
+
+    private func openConsole() {
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "codex-flow"
+        end tell
+        """
+        if let appleScript = NSAppleScript(source: script) {
+            var error: NSDictionary?
+            appleScript.executeAndReturnError(&error)
+        }
     }
 }
 
@@ -439,16 +739,32 @@ public struct InspectorMetricView: View {
                     .trim(from: 0, to: CGFloat(max(0.015, min(1, progress))))
                     .stroke(accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Image(systemName: icon).font(.system(size: 8.5, weight: .semibold)).foregroundColor(accent)
+                Image(systemName: icon)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(accent)
             }
             .frame(width: 29, height: 29)
-            Text(title).font(.system(size: 7.6, weight: .semibold, design: .rounded)).foregroundColor(.white.opacity(0.48)).textCase(.uppercase)
-            Text(value).font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundColor(.white).lineLimit(1)
-            Text(detail).font(.system(size: 6.9)).foregroundColor(.white.opacity(0.32)).lineLimit(1)
+
+            Text(title)
+                .font(.system(size: 7.6, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.48))
+                .textCase(.uppercase)
+            Text(value)
+                .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            Text(detail)
+                .font(.system(size: 6.9))
+                .foregroundColor(.white.opacity(0.32))
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.035)).overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.07), lineWidth: 0.7)))
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.white.opacity(0.035))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.07), lineWidth: 0.7))
+        )
     }
 }
 
@@ -456,7 +772,10 @@ public struct InspectorMetricView: View {
 
 public struct QuotaWindowsView: View {
     public let windows: [QuotaWindow]
-    public init(windows: [QuotaWindow]) { self.windows = windows }
+
+    public init(windows: [QuotaWindow]) {
+        self.windows = windows
+    }
 
     private var ordered: [QuotaWindow] {
         windows.sorted { ($0.windowDurationMins ?? Int.max) < ($1.windowDurationMins ?? Int.max) }
@@ -466,37 +785,60 @@ public struct QuotaWindowsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label(L("Quota remaining", "额度剩余"), systemImage: "gauge.with.needle.fill")
-                    .font(.system(size: 8.8, weight: .bold, design: .rounded)).foregroundColor(.white.opacity(0.7))
+                    .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.7))
                 Spacer()
                 if let reset = ordered.first?.localizedFormattedResetsAt {
-                    Text(reset).font(.system(size: 7.4, weight: .medium, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+                    Text(reset)
+                        .font(.system(size: 7.4, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.4))
                 }
             }
+
             ForEach(ordered) { quotaRow($0) }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.035)).overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.07), lineWidth: 0.7)))
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.white.opacity(0.035))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.07), lineWidth: 0.7))
+        )
     }
 
     private func quotaRow(_ window: QuotaWindow) -> some View {
         let used = max(0, min(100, window.usedPercent ?? 0))
         let remaining = window.remainingPercent
         let tint: Color = used >= 85 ? .orange : (used >= 60 ? .yellow : .cyan)
+
         return VStack(spacing: 3) {
             HStack {
-                Text(window.label).font(.system(size: 8, weight: .heavy, design: .monospaced)).foregroundColor(tint).frame(width: 34, alignment: .leading)
-                Text(String(format: L("%.0f%% left", "剩余 %.0f%%"), remaining)).font(.system(size: 8, weight: .bold, design: .rounded)).foregroundColor(.white.opacity(0.72))
+                Text(window.label)
+                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                    .foregroundColor(tint)
+                    .frame(width: 34, alignment: .leading)
+
+                Text(String(format: L("%.0f%% left", "剩余 %.0f%%"), remaining))
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.72))
+
                 Spacer()
+
                 if let reset = window.localizedFormattedResetsAt {
-                    Text(reset).font(.system(size: 7.3, weight: .medium, design: .monospaced)).foregroundColor(.white.opacity(0.42))
+                    Text(reset)
+                        .font(.system(size: 7.3, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.42))
                 }
             }
+
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.075))
-                    Capsule().fill(tint).frame(width: proxy.size.width * CGFloat(max(0, min(1, remaining / 100.0))))
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: proxy.size.width * CGFloat(max(0, min(1, remaining / 100.0))))
                 }
-            }.frame(height: 4)
+            }
+            .frame(height: 4)
         }
     }
 }
@@ -505,7 +847,10 @@ public struct QuotaWindowsView: View {
 
 public struct TokenUsageBreakdownView: View {
     public let usage: TokenUsage
-    public init(usage: TokenUsage) { self.usage = usage }
+
+    public init(usage: TokenUsage) {
+        self.usage = usage
+    }
 
     public var body: some View {
         let input = usage.effectivePromptTokens
@@ -516,10 +861,15 @@ public struct TokenUsageBreakdownView: View {
 
         return VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(L("Token usage", "Token 用量")).font(.system(size: 8.8, weight: .bold, design: .rounded)).foregroundColor(.white.opacity(0.7))
+                Text(L("Token usage", "Token 用量"))
+                    .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.7))
                 Spacer()
-                Text(TaskRun.formatTokenCount(usage.totalTokens ?? 0)).font(.system(size: 8.5, weight: .bold, design: .rounded)).foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+                Text(TaskRun.formatTokenCount(usage.totalTokens ?? 0))
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
             }
+
             GeometryReader { proxy in
                 HStack(spacing: 1) {
                     segment(proxy.size.width, input, total, .cyan)
@@ -530,15 +880,22 @@ public struct TokenUsageBreakdownView: View {
             }
             .frame(height: 5)
             .clipShape(Capsule())
+
             HStack(spacing: 8) {
                 legend(L("Input", "输入"), input, .cyan)
                 legend(L("Output", "输出"), output, .green)
                 legend(L("Cached", "缓存"), cached, .indigo)
-                if reasoning > 0 { legend(L("Reasoning", "推理"), reasoning, .purple) }
+                if reasoning > 0 {
+                    legend(L("Reasoning", "推理"), reasoning, .purple)
+                }
             }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.035)).overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.07), lineWidth: 0.7)))
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.white.opacity(0.035))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.07), lineWidth: 0.7))
+        )
     }
 
     private func segment(_ width: CGFloat, _ value: Int, _ total: Int, _ color: Color) -> some View {
@@ -548,7 +905,9 @@ public struct TokenUsageBreakdownView: View {
     private func legend(_ title: String, _ value: Int, _ color: Color) -> some View {
         HStack(spacing: 2.5) {
             Circle().fill(color).frame(width: 4, height: 4)
-            Text("\(title) \(TaskRun.formatTokenCount(value))").font(.system(size: 7.1, weight: .medium, design: .rounded)).foregroundColor(.white.opacity(0.45))
+            Text("\(title) \(TaskRun.formatTokenCount(value))")
+                .font(.system(size: 7.1, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.45))
         }
     }
 }
