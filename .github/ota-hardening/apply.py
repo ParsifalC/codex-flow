@@ -6,7 +6,6 @@ def replace_once(path: Path, old: str, new: str) -> None:
     if old not in text:
         raise SystemExit(f"expected block not found in {path}")
     updated = text.replace(old, new, 1)
-    # updater/tests are UTF-8 without BOM; preserve install.ps1 separately.
     encoding = "utf-8-sig" if path.name == "install.ps1" else "utf-8"
     path.write_text(updated, encoding=encoding)
 
@@ -16,7 +15,7 @@ updater = Path("scripts/updater.py")
 replace_once(
     updater,
     '''def _migration_state_path() -> Path:\n    return _update_dir() / "migrations.json"\n\n\ndef _bin_dir() -> Path:\n''',
-    '''def _migration_state_path() -> Path:\n    return _update_dir() / "migrations.json"\n\n\ndef _install_lock_path() -> Path:\n    return _update_dir() / "install.lock"\n\n\n@contextlib.contextmanager\ndef update_lock(stale_after_seconds: int = 2 * 60 * 60):\n    """Serialize update/rollback writers across the CLI and FlowPilot app."""\n\n    lock = _install_lock_path()\n    lock.parent.mkdir(parents=True, exist_ok=True)\n    acquired = False\n    for attempt in range(2):\n        try:\n            lock.mkdir()\n            acquired = True\n            atomic_write_text(lock / "owner", f"pid={os.getpid()}\\nstarted_at={utc_now()}\\n")\n            break\n        except FileExistsError:\n            try:\n                stale = time.time() - lock.stat().st_mtime > stale_after_seconds\n            except OSError:\n                stale = False\n            if stale and attempt == 0:\n                shutil.rmtree(lock, ignore_errors=True)\n                continue\n            raise RuntimeError("another codex-flow update or rollback is already running")\n    if not acquired:\n        raise RuntimeError("unable to acquire codex-flow update lock")\n    try:\n        yield\n    finally:\n        shutil.rmtree(lock, ignore_errors=True)\n\n\ndef _bin_dir() -> Path:\n''',
+    '''def _migration_state_path() -> Path:\n    return _update_dir() / "migrations.json"\n\n\ndef _install_lock_path() -> Path:\n    return _update_dir() / "install.lock"\n\n\n@contextlib.contextmanager\ndef update_lock(stale_after_seconds: int = 2 * 60 * 60):\n    """Serialize update/rollback writers across CLI and FlowPilot processes."""\n\n    lock = _install_lock_path()\n    lock.parent.mkdir(parents=True, exist_ok=True)\n    fd = None\n    for attempt in range(2):\n        try:\n            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)\n            os.write(fd, f"pid={os.getpid()}\\nstarted_at={utc_now()}\\n".encode("utf-8"))\n            os.close(fd)\n            fd = None\n            break\n        except FileExistsError:\n            try:\n                stale = time.time() - lock.stat().st_mtime > stale_after_seconds\n            except OSError:\n                stale = False\n            if stale and attempt == 0:\n                with contextlib.suppress(FileNotFoundError):\n                    lock.unlink()\n                continue\n            raise RuntimeError("another codex-flow update or rollback is already running")\n    else:\n        raise RuntimeError("unable to acquire codex-flow update lock")\n    try:\n        yield\n    finally:\n        if fd is not None:\n            os.close(fd)\n        with contextlib.suppress(FileNotFoundError):\n            lock.unlink()\n\n\ndef _bin_dir() -> Path:\n''',
 )
 
 replace_once(
@@ -45,6 +44,14 @@ replace_once(
     updater,
     '''    except Exception:\n        _restore_snapshot(backup)\n        raise\n\n\ndef _legacy_git_update() -> int:\n''',
     '''    except Exception:\n        _restore_snapshot(backup)\n        raise\n\n\ndef rollback() -> UpdateState:\n    with update_lock():\n        return _rollback_unlocked()\n\n\ndef _legacy_git_update() -> int:\n''',
+)
+
+# Avoid UnicodeEncodeError on legacy Windows consoles (e.g. cp1252). Keep the
+# user's encoding and replace only glyphs that cannot be represented.
+replace_once(
+    updater,
+    '''def main(argv: list[str] | None = None) -> int:\n''',
+    '''def _configure_stdio() -> None:\n    for stream in (sys.stdout, sys.stderr):\n        reconfigure = getattr(stream, "reconfigure", None)\n        if reconfigure is None:\n            continue\n        try:\n            reconfigure(errors="replace")\n        except (OSError, ValueError):\n            pass\n\n\ndef main(argv: list[str] | None = None) -> int:\n    _configure_stdio()\n''',
 )
 
 # Add focused transaction regressions.
