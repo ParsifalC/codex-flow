@@ -2,11 +2,19 @@ import Cocoa
 import SwiftUI
 import Combine
 
+public enum DockEdge: String, Codable {
+    case none
+    case left
+    case right
+}
+
 // MARK: - Shared Observable State
 public class OverlayState: ObservableObject {
     @Published public var isExpanded: Bool = false
     @Published public var isPinned: Bool = false
     @Published public var isTaskRunning: Bool = false
+    @Published public var isDocked: Bool = false
+    @Published public var dockEdge: DockEdge = .right
     @Published public var latestRun: TaskRun? = nil
     
     public weak var windowController: OverlayWindowController?
@@ -16,6 +24,7 @@ public class OverlayState: ObservableObject {
     public func expand() {
         guard !isExpanded else { return }
         DispatchQueue.main.async {
+            self.isDocked = false
             self.isExpanded = true
             self.windowController?.updateWindowFrame(animated: true)
         }
@@ -27,6 +36,7 @@ public class OverlayState: ObservableObject {
             self.isExpanded = false
             self.isPinned = false
             self.windowController?.updateWindowFrame(animated: true)
+            self.windowController?.scheduleTuck()
         }
     }
     
@@ -82,7 +92,7 @@ public struct OverlayRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .background(Color.clear)
-        .animation(.spring(response: 0.26, dampingFraction: 0.85), value: state.isExpanded)
+        .animation(.spring(response: 0.16, dampingFraction: 0.82), value: state.isExpanded)
     }
 }
 
@@ -137,11 +147,17 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         windowController?.handleMouseExited()
     }
     
-    // Dragging support
+    // MARK: - Dragging & Magnetic Edge Snapping
     private var initialLocation: NSPoint = .zero
+    private var isDragging: Bool = false
+    private let snapMargin: CGFloat = 8.0
+    private let snapThreshold: CGFloat = 36.0
     
     override func mouseDown(with event: NSEvent) {
         initialLocation = event.locationInWindow
+        isDragging = false
+        windowController?.cancelDwellTimer()
+        windowController?.isInteractingOrDragging = true
     }
     
     override func mouseDragged(with event: NSEvent) {
@@ -150,11 +166,17 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         let deltaX = currentLocation.x - initialLocation.x
         let deltaY = currentLocation.y - initialLocation.y
         
+        if abs(deltaX) > 2 || abs(deltaY) > 2 {
+            isDragging = true
+            windowController?.cancelDwellTimer()
+            windowController?.isInteractingOrDragging = true
+        }
+        
         var newOrigin = window.frame.origin
         newOrigin.x += deltaX
         newOrigin.y += deltaY
         
-        // Clamp to screen bounds
+        // Clamp to screen bounds during live drag
         if let screen = window.screen ?? NSScreen.main {
             let visible = screen.visibleFrame
             newOrigin.x = max(visible.minX, min(newOrigin.x, visible.maxX - window.frame.width))
@@ -162,7 +184,85 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         }
         
         window.setFrameOrigin(newOrigin)
-        windowController?.saveWindowPosition(newOrigin)
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        guard let window = self.window else { return }
+        
+        if isDragging {
+            performMagneticSnap(for: window)
+            // Suppress hover-expand briefly after dropping
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.windowController?.isInteractingOrDragging = false
+            }
+        } else {
+            windowController?.isInteractingOrDragging = false
+            // Click to toggle expand / collapse
+            if let state = windowController?.state {
+                state.toggle()
+            }
+        }
+        isDragging = false
+    }
+    
+    private func performMagneticSnap(for window: NSWindow) {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        let frame = window.frame
+        var targetOrigin = frame.origin
+        
+        let distLeft = abs(frame.minX - visible.minX)
+        let distRight = abs(visible.maxX - frame.maxX)
+        let distTop = abs(visible.maxY - frame.maxY)
+        let distBottom = abs(frame.minY - visible.minY)
+        
+        let isExpanded = windowController?.state.isExpanded ?? false
+        
+        if isExpanded {
+            // Summary Card: Snap to closest edge if within threshold
+            if distLeft < snapThreshold {
+                targetOrigin.x = visible.minX + snapMargin
+            } else if distRight < snapThreshold {
+                targetOrigin.x = visible.maxX - frame.width - snapMargin
+            }
+            if distTop < snapThreshold {
+                targetOrigin.y = visible.maxY - frame.height - snapMargin
+            } else if distBottom < snapThreshold {
+                targetOrigin.y = visible.minY + snapMargin
+            }
+        } else {
+            // Circular Bubble: Auto snap to the nearest horizontal screen edge (Left or Right)
+            if distLeft < distRight {
+                targetOrigin.x = visible.minX + snapMargin
+                windowController?.state.dockEdge = .left
+            } else {
+                targetOrigin.x = visible.maxX - frame.width - snapMargin
+                windowController?.state.dockEdge = .right
+            }
+            
+            // Keep within vertical bounds with margin
+            if distTop < snapThreshold {
+                targetOrigin.y = visible.maxY - frame.height - snapMargin
+            } else if distBottom < snapThreshold {
+                targetOrigin.y = visible.minY + snapMargin
+            } else {
+                targetOrigin.y = max(visible.minY + snapMargin, min(targetOrigin.y, visible.maxY - frame.height - snapMargin))
+            }
+        }
+        
+        // Smooth magnetic spring snap animation
+        let targetFrame = NSRect(origin: targetOrigin, size: frame.size)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            window.animator().setFrame(targetFrame, display: true)
+        }, completionHandler: { [weak self] in
+            guard let self = self else { return }
+            self.windowController?.saveWindowPosition(targetOrigin)
+            // Auto-schedule half tuck when idling at edge
+            self.windowController?.scheduleTuck()
+        })
     }
     
     override func rightMouseDown(with event: NSEvent) {
@@ -265,9 +365,11 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
 public class OverlayWindowController: NSObject, NSWindowDelegate {
     public let state: OverlayState
     public var window: NSPanel!
+    public var isInteractingOrDragging: Bool = false
     
     private var hoverDwellTimer: Timer?
     private var collapseTimer: Timer?
+    private var tuckTimer: Timer?
     private let bubbleSize = NSSize(width: 76, height: 76)
     private let summarySize = NSSize(width: 376, height: 420)
     
@@ -303,42 +405,139 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         window.contentView = hostingView
         
         window.orderFront(nil)
+        
+        // Initial tuck after launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.scheduleTuck()
+        }
+    }
+    
+    // MARK: - Edge Half-Tuck Support
+    public func cancelTuckTimer() {
+        tuckTimer?.invalidate()
+        tuckTimer = nil
+    }
+    
+    public func scheduleTuck() {
+        cancelTuckTimer()
+        guard !state.isExpanded, !state.isPinned, !isInteractingOrDragging, state.dockEdge != .none, !state.isDocked else { return }
+        tuckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
+            self?.tuckBubble(animated: true)
+        }
+    }
+    
+    public func tuckBubble(animated: Bool = true) {
+        guard let window = self.window else { return }
+        guard !state.isExpanded, !state.isPinned, !isInteractingOrDragging, state.dockEdge != .none, !state.isDocked else { return }
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        
+        var targetX = window.frame.origin.x
+        if state.dockEdge == .right {
+            // Place window flush with right screen edge (pill is right-aligned)
+            targetX = visible.maxX - bubbleSize.width
+        } else if state.dockEdge == .left {
+            // Place window flush with left screen edge (pill is left-aligned)
+            targetX = visible.minX
+        }
+        
+        let targetFrame = NSRect(origin: NSPoint(x: targetX, y: window.frame.origin.y), size: bubbleSize)
+        state.isDocked = true
+        
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.allowsImplicitAnimation = true
+                window.animator().setFrame(targetFrame, display: true)
+            }
+        } else {
+            window.setFrame(targetFrame, display: true)
+        }
+    }
+    
+    public func unTuckBubble(animated: Bool = true) {
+        cancelTuckTimer()
+        guard let window = self.window else { return }
+        guard state.isDocked else { return }
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        
+        var targetX = window.frame.origin.x
+        if state.dockEdge == .right {
+            targetX = visible.maxX - bubbleSize.width - 8.0
+        } else if state.dockEdge == .left {
+            targetX = visible.minX + 8.0
+        }
+        
+        let targetFrame = NSRect(origin: NSPoint(x: targetX, y: window.frame.origin.y), size: bubbleSize)
+        state.isDocked = false
+        
+        if animated {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.14
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                context.allowsImplicitAnimation = true
+                window.animator().setFrame(targetFrame, display: true)
+            }, completionHandler: { [weak self] in
+                self?.saveWindowPosition(NSPoint(x: targetX, y: window.frame.origin.y))
+            })
+        } else {
+            window.setFrame(targetFrame, display: true)
+            saveWindowPosition(NSPoint(x: targetX, y: window.frame.origin.y))
+        }
     }
     
     // MARK: - Hover-Dwell 0.4s Detection
+    public func cancelDwellTimer() {
+        hoverDwellTimer?.invalidate()
+        hoverDwellTimer = nil
+    }
+    
     public func handleMouseEntered() {
+        cancelTuckTimer()
         collapseTimer?.invalidate()
         collapseTimer = nil
         
-        guard !state.isExpanded else { return }
+        if state.isDocked {
+            unTuckBubble(animated: true)
+        }
+        
+        guard !state.isExpanded, !isInteractingOrDragging else { return }
         resetDwellTimer()
     }
     
     public func handleMouseMoved() {
-        guard !state.isExpanded else { return }
+        if state.isDocked {
+            unTuckBubble(animated: true)
+        }
+        
+        guard !state.isExpanded, !isInteractingOrDragging else { return }
         resetDwellTimer()
     }
     
     private func resetDwellTimer() {
-        hoverDwellTimer?.invalidate()
+        cancelDwellTimer()
+        guard !isInteractingOrDragging else { return }
         // Dwell requirement: cursor stops moving for 0.4 second on the bubble
         hoverDwellTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
-            guard let self = self, !self.state.isExpanded else { return }
+            guard let self = self, !self.state.isExpanded, !self.isInteractingOrDragging else { return }
             self.state.expand()
         }
     }
     
     public func handleMouseExited() {
-        hoverDwellTimer?.invalidate()
-        hoverDwellTimer = nil
+        cancelDwellTimer()
         
         // Auto-collapse after grace period if expanded and not pinned
-        if state.isExpanded && !state.isPinned {
+        if state.isExpanded && !state.isPinned && !isInteractingOrDragging {
             collapseTimer?.invalidate()
             collapseTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in
-                guard let self = self, self.state.isExpanded, !self.state.isPinned else { return }
+                guard let self = self, self.state.isExpanded, !self.state.isPinned, !self.isInteractingOrDragging else { return }
                 self.state.collapse()
             }
+        } else if !state.isExpanded && !state.isDocked && state.dockEdge != .none && !isInteractingOrDragging {
+            scheduleTuck()
         }
     }
     
@@ -365,7 +564,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         
         if animated {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.26
+                context.duration = 0.16
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 context.allowsImplicitAnimation = true
                 window.animator().setFrame(newFrame, display: true)
