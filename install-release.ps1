@@ -33,11 +33,18 @@ try {
     $ManifestPath = Join-Path $TempRoot 'codex-flow-update.json'
     $ManifestUrl = "https://github.com/$Repo/releases/latest/download/codex-flow-update.json"
     Say "-> Resolving latest codex-flow release for $Platform"
-    Invoke-WebRequest -UseBasicParsing -Uri $ManifestUrl -OutFile $ManifestPath
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $ManifestUrl -OutFile $ManifestPath
+    } catch {
+        Fail 'no OTA-enabled stable release is available yet; publish a stable release containing codex-flow-update.json before using the release bootstrap'
+    }
 
     $Manifest = Get-Content -Raw -Encoding UTF8 $ManifestPath | ConvertFrom-Json
     if ($Manifest.channel -ne 'stable') { Fail 'latest release manifest is not stable' }
-    $Artifact = $Manifest.artifacts.$Platform
+    $Artifacts = $Manifest.artifacts
+    if (-not $Artifacts) { Fail 'release manifest does not contain artifacts' }
+    $ArtifactProperty = $Artifacts.PSObject.Properties[$Platform]
+    $Artifact = if ($ArtifactProperty) { $ArtifactProperty.Value } else { $null }
     if (-not $Artifact) { Fail "release does not contain artifact for $Platform" }
     if (-not $Artifact.url -or -not $Artifact.sha256 -or -not $Artifact.format) { Fail 'release manifest contains an incomplete artifact entry' }
     if ($Artifact.format -ne 'zip') { Fail "unsupported Windows release archive format: $($Artifact.format)" }
