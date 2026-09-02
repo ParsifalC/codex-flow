@@ -152,7 +152,9 @@ def _fallback_decision(
         replacement_allowed = False
     else:
         action = fallback
-        replacement_allowed = fallback == "replan" and (terminal or observation.replacement_isolated)
+        replacement_allowed = fallback == "replan" and (
+            not fence_required or terminal or observation.replacement_isolated
+        )
         if fence_required and observation.replacement_isolated and not terminal:
             reason += "; replacement is explicitly isolated and old output is fenced from integration"
     if cancel_required:
@@ -167,6 +169,27 @@ def _fallback_decision(
         idle_seconds=max(0.0, observation.now - observation.last_progress_at),
         wall_seconds=max(0.0, observation.now - observation.started_at),
         fallback_policy=policy.fallback_policy,
+    )
+
+
+def _superseded_decision(observation: WorkerObservation) -> LifecycleDecision:
+    idle = max(0.0, observation.now - observation.last_progress_at)
+    wall = max(0.0, observation.now - observation.started_at)
+    terminal = observation.terminal_failure or observation.cancel_confirmed
+    return LifecycleDecision(
+        state="superseded",
+        action="continue" if terminal else "request_cancel",
+        reason=(
+            "bounded scope is already covered with equivalent evidence; no fallback work is required"
+            if terminal
+            else "bounded scope is already covered with equivalent evidence; non-terminal Worker cancellation is required"
+        ),
+        cancel_required=not terminal,
+        replacement_allowed=False,
+        fence_required=False,
+        idle_seconds=idle,
+        wall_seconds=wall,
+        fallback_policy=None,
     )
 
 
@@ -191,6 +214,9 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
             fallback_policy=None,
         )
 
+    if observation.scope_superseded and policy.cancel_if_superseded:
+        return _superseded_decision(observation)
+
     if observation.terminal_failure:
         return _fallback_decision(
             policy,
@@ -207,19 +233,6 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
             state="cancelled",
             reason="worker cancellation/termination confirmed",
             terminal=True,
-        )
-
-    if observation.scope_superseded and policy.cancel_if_superseded:
-        return LifecycleDecision(
-            state="superseded",
-            action="request_cancel",
-            reason="bounded scope is already covered with equivalent evidence; non-terminal Worker cancellation is required",
-            cancel_required=True,
-            replacement_allowed=False,
-            fence_required=observation.stage == "implementation" and observation.writable,
-            idle_seconds=idle,
-            wall_seconds=wall,
-            fallback_policy=policy.fallback_policy,
         )
 
     if wall >= policy.hard_timeout_seconds:
