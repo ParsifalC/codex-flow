@@ -59,7 +59,8 @@ public struct HoverRevealText: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
                 }
-                .frame(width: popoverWidth, maxHeight: 240)
+                .frame(width: popoverWidth)
+                .frame(maxHeight: 240)
             }
     }
 
