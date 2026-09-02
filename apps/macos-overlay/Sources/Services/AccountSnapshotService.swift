@@ -66,13 +66,15 @@ public struct AccountSnapshot {
     public var orderedWindows: [AccountQuotaWindow] {
         var result: [AccountQuotaWindow] = []
         if let fiveHourWindow { result.append(fiveHourWindow) }
-        if let weeklyWindow { result.append(weeklyWindow) }
+        if let weeklyWindow { result.append(weeklyHourWindow) }
         let knownIds = Set(result.map(\.id))
         result.append(contentsOf: quotaWindows.filter { !knownIds.contains($0.id) }.sorted {
             ($0.durationMinutes ?? Int.max) < ($1.durationMinutes ?? Int.max)
         })
         return result
     }
+
+    private var weeklyHourWindow: AccountQuotaWindow? { weeklyWindow }
 
     public var nearestResetCreditExpiry: Date? {
         resetCredits.compactMap(\.expiresAt).filter { $0 > Date() }.min()
@@ -172,7 +174,9 @@ private final class AccountAppServerRPC {
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty {
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-lc", override]
+            // Avoid a login shell here: startup files can print to stdout and
+            // corrupt the JSONL app-server stream before the first RPC reply.
+            process.arguments = ["-c", override]
             return
         }
 
