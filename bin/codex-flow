@@ -16,7 +16,9 @@ source_dir() {
 }
 
 script_path() {
-  local name="$1" state_candidate="$STATE_DIR/$name" repo_candidate="$REPO_ROOT/scripts/$name"
+  local name="$1"
+  local state_candidate="$STATE_DIR/$name"
+  local repo_candidate="$REPO_ROOT/scripts/$name"
   if [[ -f "$state_candidate" ]]; then printf '%s\n' "$state_candidate"; return; fi
   if [[ -f "$repo_candidate" ]]; then printf '%s\n' "$repo_candidate"; return; fi
   local src=""; src="$(source_dir 2>/dev/null || true)"

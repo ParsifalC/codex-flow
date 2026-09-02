@@ -14,6 +14,21 @@ from pathlib import Path
 SUPPORTED_LANGUAGES = {"auto", "zh", "en"}
 
 
+def configure_stdio() -> None:
+    """Use UTF-8 for user-facing output on legacy Windows consoles/pipes."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
+configure_stdio()
+
+
 def normalize_language(value: str | None, *, allow_auto: bool = True) -> str:
     raw = (value or "").strip().lower().replace("_", "-")
     if allow_auto and raw in ("", "auto", "system", "default"):
