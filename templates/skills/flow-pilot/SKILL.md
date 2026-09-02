@@ -19,13 +19,7 @@ Supported current-task modes:
 - `delegate` — use subagent delegation for execution when the runtime supports it and the task can be safely scoped.
 - `adaptive` — use normal FlowPilot classification and routing for this task.
 
-Treat unambiguous natural-language equivalents as the same current-task override. Examples include:
-
-- direct: `direct`, `不要使用子 agent，直接完成`, `这次直接做`, `跳过 worker`, `不用 delegation`
-- delegate: `delegate`, `使用子 agent`, `这次交给 worker 实现`
-- adaptive: `adaptive`, `按默认策略`, `自动决定是否使用子 agent`
-
-Do not infer an override from incidental mentions of these words. Only honor an explicit instruction about how the current task should be executed. If multiple routing instructions conflict, follow the latest unambiguous instruction in the current user task.
+Treat an unambiguous natural-language instruction to use direct, delegated, or adaptive execution as equivalent to the corresponding mode, regardless of language. Do not infer an override from incidental mentions of these modes. Only honor an explicit instruction about how the current task should be executed. If multiple routing instructions conflict, follow the latest unambiguous instruction in the current user task.
 
 Routing override scope is the current task only. Do not persist or rewrite user configuration because of a prompt-level override.
 
