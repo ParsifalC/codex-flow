@@ -5,15 +5,33 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 STATE_DIR="$CODEX_HOME/codex-flow"
 SOURCE_FILE="$STATE_DIR/source"
 POLICY="$CODEX_HOME/codex-flow.toml"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 
-fail() { printf 'codex-flow: %s\n' "$*" >&2; exit 1; }
 source_dir() {
-  [[ -f "$SOURCE_FILE" ]] || fail "missing source metadata; reinstall codex-flow"
-  local dir
-  dir="$(cat "$SOURCE_FILE")"
-  [[ -d "$dir" ]] || fail "source checkout no longer exists: $dir"
+  [[ -f "$SOURCE_FILE" ]] || { printf 'codex-flow: missing source metadata; reinstall codex-flow\n' >&2; exit 1; }
+  local dir; dir="$(cat "$SOURCE_FILE")"
+  [[ -d "$dir" ]] || { printf 'codex-flow: source checkout no longer exists: %s\n' "$dir" >&2; exit 1; }
   printf '%s\n' "$dir"
 }
+
+script_path() {
+  local name="$1" state_candidate="$STATE_DIR/$name" repo_candidate="$REPO_ROOT/scripts/$name"
+  if [[ -f "$state_candidate" ]]; then printf '%s\n' "$state_candidate"; return; fi
+  if [[ -f "$repo_candidate" ]]; then printf '%s\n' "$repo_candidate"; return; fi
+  local src=""; src="$(source_dir 2>/dev/null || true)"
+  [[ -n "$src" && -f "$src/scripts/$name" ]] && { printf '%s\n' "$src/scripts/$name"; return; }
+  return 1
+}
+
+LOCALIZATION="$(script_path localization.py 2>/dev/null || true)"
+UI_LANG="en"
+if [[ -n "$LOCALIZATION" ]] && command -v python3 >/dev/null 2>&1; then
+  UI_LANG="$(python3 "$LOCALIZATION" --policy "$POLICY" --resolved 2>/dev/null || echo en)"
+fi
+cf_t() { if [[ "$UI_LANG" == "zh" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
+fail() { printf 'codex-flow: %s\n' "$*" >&2; exit 1; }
+
 read_policy_value() {
   local section="$1" key="$2" file="$3"
   awk -v section="[$section]" -v key="$key" '
@@ -30,99 +48,31 @@ read_policy_value() {
 
 if [[ $# -eq 0 ]]; then
   if [[ -t 0 && -t 1 && "${TERM:-}" != "dumb" ]]; then
-    menu_script="$STATE_DIR/menu.py"
-    [[ -f "$menu_script" ]] || menu_script="$(source_dir 2>/dev/null || true)/scripts/menu.py"
-    if [[ -f "$menu_script" ]]; then
-      exec python3 "$menu_script"
-    fi
+    menu_script="$(script_path menu.py 2>/dev/null || true)"
+    [[ -f "$menu_script" ]] && exec python3 "$menu_script"
   fi
   set -- help
 fi
 
 cmd="${1:-help}"
 case "$cmd" in
-  status)
-    src="$(source_dir)"
-    installed="$(cat "$STATE_DIR/version" 2>/dev/null || echo unknown)"
-    available="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
-
-    if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
-      C_BOLD=$'\033[1m'
-      C_DIM=$'\033[2m'
-      C_GREEN=$'\033[32m'
-      C_CYAN=$'\033[36m'
-      C_RESET=$'\033[0m'
-    else
-      C_BOLD=""
-      C_DIM=""
-      C_GREEN=""
-      C_CYAN=""
-      C_RESET=""
-    fi
-
-    display_path() {
-      local p="$1"
-      if [[ -n "${HOME:-}" && "$p" == "$HOME"* ]]; then
-        printf '~%s' "${p#$HOME}"
-      else
-        printf '%s' "$p"
-      fi
-    }
-
-    disp_src="$(display_path "$src")"
-
-    box_line() {
-      local content="$1"
-      local width=68
-      local plain
-      plain="$(printf '%s' "$content" | sed -E 's/\x1b\[[0-9;]*m//g')"
-      local len=${#plain}
-      local pad=$((width - len))
-      if (( pad < 0 )); then pad=0; fi
-      printf '  %s│%s  %s%*s %s│%s\n' "$C_DIM" "$C_RESET" "$content" "$pad" "" "$C_DIM" "$C_RESET"
-    }
-
-    printf '\n%s📦 codex-flow status%s\n\n' "$C_BOLD" "$C_RESET"
-    printf '  %s╭─ Version & Paths ─────────────────────────────────────────────────╮%s\n' "$C_DIM" "$C_RESET"
-    box_line "${C_BOLD}• Installed:${C_RESET}   v${installed}"
-    box_line "${C_BOLD}• Checkout:${C_RESET}    ${disp_src} ${C_DIM}(v${available})${C_RESET}"
-    box_line "${C_BOLD}• Skill:${C_RESET}       FlowPilot ${C_DIM}(flow-pilot)${C_RESET}"
-    if [[ -f "$POLICY" ]]; then
-      p_policy="$(read_policy_value parent model_policy "$POLICY")"
-      p_effort="$(read_policy_value parent min_reasoning_effort "$POLICY")"
-      w_model="$(read_policy_value worker resolved_model "$POLICY")"
-      w_effort="$(read_policy_value worker min_reasoning_effort "$POLICY")"
-      t_enabled="$(read_policy_value telemetry enabled "$POLICY")"
-      t_notifications="$(read_policy_value telemetry notifications "$POLICY")"
-      t_retention="$(read_policy_value telemetry retention_days "$POLICY")"
-      [[ -n "$t_notifications" ]] || t_notifications=true
-      [[ -n "$t_retention" ]] || t_retention=30
-
-      printf '  %s├─ Model Routing ───────────────────────────────────────────────────┤%s\n' "$C_DIM" "$C_RESET"
-      box_line "${C_BOLD}• Parent:${C_RESET}      ${p_policy} ${C_DIM}(min effort: ${p_effort})${C_RESET}"
-      box_line "${C_BOLD}• Worker:${C_RESET}      ${w_model} ${C_DIM}(min effort: ${w_effort})${C_RESET}"
-      if [[ "$t_enabled" == "true" ]]; then
-        box_line "${C_BOLD}• Telemetry:${C_RESET}   ${C_GREEN}● enabled${C_RESET}"
-      else
-        box_line "${C_BOLD}• Telemetry:${C_RESET}   ${C_DIM}○ disabled${C_RESET}"
-      fi
-      if [[ "$t_notifications" == "true" ]]; then
-        box_line "${C_BOLD}• Notify:${C_RESET}      ${C_GREEN}● system notification${C_RESET} ${C_DIM}(macOS)${C_RESET}"
-      else
-        box_line "${C_BOLD}• Notify:${C_RESET}      ${C_DIM}○ disabled${C_RESET}"
-      fi
-      box_line "${C_BOLD}• Retention:${C_RESET}   ${t_retention} days per-run data"
-    fi
-    printf '  %s╰───────────────────────────────────────────────────────────────────╯%s\n\n' "$C_DIM" "$C_RESET"
+  status|help|-h|--help)
+    ui_script="$(script_path ui.py 2>/dev/null || true)"
+    [[ -f "$ui_script" ]] || fail "$(cf_t 'localized UI helper is missing; reinstall codex-flow' '本地化 UI 组件缺失，请重新安装 codex-flow')"
+    [[ "$cmd" == "status" ]] && exec python3 "$ui_script" status
+    exec python3 "$ui_script" help
+    ;;
+  language)
+    shift
+    ui_script="$(script_path ui.py 2>/dev/null || true)"
+    [[ -f "$ui_script" ]] || fail "$(cf_t 'localized UI helper is missing; reinstall codex-flow' '本地化 UI 组件缺失，请重新安装 codex-flow')"
+    exec python3 "$ui_script" language "$@"
     ;;
   usage)
     shift
-    telemetry_script="$STATE_DIR/telemetry.py"
-    [[ -f "$telemetry_script" ]] || telemetry_script="$(source_dir 2>/dev/null || true)/scripts/telemetry.py"
-    [[ -f "$telemetry_script" ]] || fail "telemetry collector not installed; reinstall codex-flow"
-    if [[ $# -eq 0 ]]; then
-      set -- last
-    fi
+    telemetry_script="$(script_path telemetry.py 2>/dev/null || true)"
+    [[ -f "$telemetry_script" ]] || fail "$(cf_t 'telemetry collector not installed; reinstall codex-flow' '遥测组件未安装，请重新安装 codex-flow')"
+    [[ $# -eq 0 ]] && set -- last
     exec python3 "$telemetry_script" "$@"
     ;;
   benchmark-local)
@@ -140,14 +90,17 @@ case "$cmd" in
   benchmark-analyze)
     shift; exec python3 "$(source_dir)/scripts/analyze-benchmark.py" "$@" ;;
   doctor)
-    exec bash "$(source_dir)/scripts/doctor" ;;
+    doctor_script="$(script_path doctor.py 2>/dev/null || true)"
+    [[ -f "$doctor_script" ]] || fail "$(cf_t 'doctor helper is missing; reinstall codex-flow' '诊断组件缺失，请重新安装 codex-flow')"
+    exec python3 "$doctor_script"
+    ;;
   uninstall)
     exec bash "$(source_dir)/scripts/uninstall" ;;
   update)
     src="$(source_dir)"
-    [[ -d "$src/.git" ]] || fail "update requires the original git checkout"
-    command -v git >/dev/null 2>&1 || fail "git is required for update"
-    [[ -f "$POLICY" ]] || fail "missing policy; reinstall codex-flow"
+    [[ -d "$src/.git" ]] || fail "$(cf_t 'update requires the original git checkout' '更新需要原始 Git checkout')"
+    command -v git >/dev/null 2>&1 || fail "$(cf_t 'git is required for update' '更新需要 git')"
+    [[ -f "$POLICY" ]] || fail "$(cf_t 'missing policy; reinstall codex-flow' '策略文件缺失，请重新安装 codex-flow')"
 
     parent_policy="$(read_policy_value parent model_policy "$POLICY")"
     parent_model="$(read_policy_value parent min_model "$POLICY")"
@@ -157,12 +110,9 @@ case "$cmd" in
     worker_effort="$(read_policy_value worker min_reasoning_effort "$POLICY")"
     max_threads="$(read_policy_value runtime max_concurrent_threads "$POLICY")"
     repair_cycles="$(read_policy_value runtime max_repair_cycles "$POLICY")"
-    telemetry_enabled="$(read_policy_value telemetry enabled "$POLICY")"
-    [[ -n "$telemetry_enabled" ]] || telemetry_enabled=true
-    telemetry_notifications="$(read_policy_value telemetry notifications "$POLICY")"
-    [[ -n "$telemetry_notifications" ]] || telemetry_notifications=true
-    telemetry_retention_days="$(read_policy_value telemetry retention_days "$POLICY")"
-    [[ -n "$telemetry_retention_days" ]] || telemetry_retention_days=30
+    telemetry_enabled="$(read_policy_value telemetry enabled "$POLICY")"; [[ -n "$telemetry_enabled" ]] || telemetry_enabled=true
+    telemetry_notifications="$(read_policy_value telemetry notifications "$POLICY")"; [[ -n "$telemetry_notifications" ]] || telemetry_notifications=true
+    telemetry_retention_days="$(read_policy_value telemetry retention_days "$POLICY")"; [[ -n "$telemetry_retention_days" ]] || telemetry_retention_days=30
 
     before="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
     curr_branch="$(git -C "$src" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
@@ -179,8 +129,8 @@ case "$cmd" in
     CODEX_FLOW_MAX_THREADS="$max_threads" CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" CODEX_FLOW_TELEMETRY_ENABLED="$telemetry_enabled" CODEX_FLOW_TELEMETRY_NOTIFICATIONS="$telemetry_notifications" CODEX_FLOW_TELEMETRY_RETENTION_DAYS="$telemetry_retention_days" \
       bash "$src/install.sh"
 
-    printf '\n✨ Updated codex-flow %s -> %s\n' "$before" "$after"
-    bash "$src/scripts/doctor"
+    printf '\n✨ %s\n' "$(cf_t "Updated codex-flow $before -> $after" "codex-flow 已更新 $before -> $after")"
+    exec python3 "$src/scripts/doctor.py"
     ;;
   overlay)
     shift
@@ -189,9 +139,7 @@ case "$cmd" in
     [[ -x "$overlay_bin" ]] || overlay_bin="$STATE_DIR/bin/codex-flow-overlay"
     [[ -x "$overlay_bin" ]] || overlay_bin="$src/apps/macos-overlay/bin/FlowPilot"
     [[ -x "$overlay_bin" ]] || overlay_bin="$src/apps/macos-overlay/bin/codex-flow-overlay"
-    if [[ ! -x "$overlay_bin" ]]; then
-      fail "FlowPilot 原生悬浮窗尚未编译。\n  💡 如需使用，请先在终端执行:\n     bash $src/apps/macos-overlay/build.sh"
-    fi
+    [[ -x "$overlay_bin" ]] || fail "$(cf_t 'FlowPilot native overlay is not built. Run: bash apps/macos-overlay/build.sh' 'FlowPilot 原生悬浮窗尚未编译。请执行：bash apps/macos-overlay/build.sh')"
     sub="${1:-toggle}"
     case "$sub" in
       start|restart)
@@ -199,50 +147,10 @@ case "$cmd" in
         pkill -f "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot" 2>/dev/null || true
         sleep 0.2
         nohup "$overlay_bin" start >/dev/null 2>&1 &
-        printf '🚀 Launched FlowPilot in background (restarted cleanly).\n'
+        printf '%s\n' "$(cf_t '🚀 Launched FlowPilot in background.' '🚀 FlowPilot 已在后台启动。')"
         ;;
-      *)
-        exec "$overlay_bin" "$@"
-        ;;
+      *) exec "$overlay_bin" "$@" ;;
     esac
     ;;
-  help|-h|--help)
-    if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
-      C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_CYAN=$'\033[36m'; C_RESET=$'\033[0m'
-    else
-      C_BOLD=""; C_DIM=""; C_CYAN=""; C_RESET=""
-    fi
-    cat <<EOF
-
-${C_BOLD}Usage:${C_RESET} codex-flow <command> [options]
-
-  ${C_BOLD}Interactive Console${C_RESET}
-    ${C_CYAN}codex-flow${C_RESET}              Launch the interactive management console (no args in TTY)
-
-  ${C_BOLD}Core Commands${C_RESET}
-    ${C_CYAN}status${C_RESET}                  Show installed version and effective FlowPilot policy
-    ${C_CYAN}update${C_RESET}                  Pull checkout, preserve policy, refresh recommendations
-    ${C_CYAN}doctor${C_RESET}                  Verify installation, routing, and telemetry wiring
-    ${C_CYAN}overlay [start|stop|toggle]${C_RESET} Native macOS floating widget (bubble / summary card)
-    ${C_CYAN}usage last [--json]${C_RESET}     Show the last task telemetry summary
-    ${C_CYAN}usage list [options]${C_RESET}    List task history (-n N, --project P, --today, --json)
-    ${C_CYAN}usage show <#|id> [opt]${C_RESET} Show specific task telemetry summary
-    ${C_CYAN}usage stats [options]${C_RESET}   Show aggregated telemetry stats (--project P, --days N)
-
-  ${C_BOLD}Benchmark Commands${C_RESET}
-    ${C_CYAN}benchmark-local${C_RESET}         Run built-in benchmark via local Codex session
-    ${C_CYAN}benchmark-corpus${C_RESET}        Materialize corpus without calling any model
-    ${C_CYAN}benchmark${C_RESET}               Run a reproducible Codex benchmark manifest
-    ${C_CYAN}benchmark-analyze${C_RESET}       Analyze benchmark JSONL with quality-first routing
-
-  ${C_BOLD}Maintenance${C_RESET}
-    ${C_CYAN}uninstall${C_RESET}               Remove codex-flow-managed files and hooks
-
-  ${C_DIM}💡 Quick Start:${C_RESET}
-    Run ${C_CYAN}codex-flow${C_RESET} to enter the interactive console, or ${C_CYAN}codex-flow benchmark-local quick${C_RESET} for validation.
-
-EOF
-    ;;
-  *) fail "unknown command: $cmd" ;;
+  *) fail "$(cf_t "unknown command: $cmd" "未知命令：$cmd")" ;;
 esac
-

@@ -14,11 +14,9 @@ SHELL_NAME="${SHELL_VALUE##*/}"
 SHELL_CONFIG_DIR="${CODEX_FLOW_SHELL_CONFIG_DIR:-$HOME}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 VERSION="$(cat "$ROOT_DIR/VERSION" 2>/dev/null || echo dev)"
+LOCALIZATION="$ROOT_DIR/scripts/localization.py"
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required" >&2
-  exit 1
-fi
+command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
 
 read_toml_value() {
   local section="$1" key="$2" file="$3"
@@ -26,24 +24,18 @@ read_toml_value() {
     $0 == section { in_section=1; next }
     /^\[/ { in_section=0 }
     in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-      value=$0
-      sub(/^[^=]*=[[:space:]]*/, "", value)
-      sub(/[[:space:]]+#.*$/, "", value)
+      value=$0; sub(/^[^=]*=[[:space:]]*/, "", value); sub(/[[:space:]]+#.*$/, "", value)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
       if (value ~ /^".*"$/) { sub(/^"/, "", value); sub(/"$/, "", value) }
-      print value
-      found=1
-      exit
+      print value; found=1; exit
     }
     END { if (!found) exit 1 }
   ' "$file"
 }
-
 read_default() {
   local section="$1" key="$2" value
   if ! value="$(read_toml_value "$section" "$key" "$DEFAULTS")" || [[ -z "$value" ]]; then
-    printf 'missing [%s].%s in %s\n' "$section" "$key" "$DEFAULTS" >&2
-    exit 1
+    printf 'missing [%s].%s in %s\n' "$section" "$key" "$DEFAULTS" >&2; exit 1
   fi
   printf '%s\n' "$value"
 }
@@ -59,14 +51,16 @@ PARENT_MIN_MODEL="${CODEX_FLOW_PARENT_MIN_MODEL:-$DEFAULT_PARENT_MIN_MODEL}"
 PARENT_MIN_EFFORT="${CODEX_FLOW_PARENT_MIN_EFFORT:-high}"
 WORKER_MODEL_POLICY="${CODEX_FLOW_WORKER_MODEL_POLICY:-latest-efficient}"
 WORKER_MODEL_REQUESTED="${CODEX_FLOW_WORKER_MODEL:-auto}"
-WORKER_MODEL="$WORKER_MODEL_REQUESTED"
-[[ "$WORKER_MODEL" == "auto" ]] && WORKER_MODEL="$DEFAULT_WORKER_MODEL"
+WORKER_MODEL="$WORKER_MODEL_REQUESTED"; [[ "$WORKER_MODEL" == "auto" ]] && WORKER_MODEL="$DEFAULT_WORKER_MODEL"
 WORKER_MIN_EFFORT="${CODEX_FLOW_WORKER_MIN_EFFORT:-high}"
 MAX_THREADS="${CODEX_FLOW_MAX_THREADS:-$DEFAULT_MAX_THREADS}"
 MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$DEFAULT_MAX_REPAIRS}"
 TELEMETRY_ENABLED="${CODEX_FLOW_TELEMETRY_ENABLED:-true}"
 TELEMETRY_NOTIFICATIONS="${CODEX_FLOW_TELEMETRY_NOTIFICATIONS:-true}"
 TELEMETRY_RETENTION_DAYS="${CODEX_FLOW_TELEMETRY_RETENTION_DAYS:-30}"
+UI_LANGUAGE="auto"
+if [[ -f "$POLICY" ]]; then UI_LANGUAGE="$(python3 "$LOCALIZATION" --policy "$POLICY" --configured 2>/dev/null || echo auto)"; fi
+UI_LANGUAGE="$(python3 "$LOCALIZATION" --normalize "$UI_LANGUAGE")"
 
 case "$PARENT_MIN_EFFORT" in high|xhigh|max) ;; *) echo "parent minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
 case "$WORKER_MIN_EFFORT" in high|xhigh|max) ;; *) echo "worker minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
@@ -75,46 +69,37 @@ case "$TELEMETRY_NOTIFICATIONS" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_
 [[ "$TELEMETRY_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_TELEMETRY_RETENTION_DAYS must be a positive integer" >&2; exit 2; }
 
 mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$BIN_DIR"
-
-if [[ -f "$CONFIG" ]]; then
-  cp "$CONFIG" "$CONFIG.codex-flow.$STAMP.bak"
-else
-  touch "$CONFIG"
-fi
+if [[ -f "$CONFIG" ]]; then cp "$CONFIG" "$CONFIG.codex-flow.$STAMP.bak"; else touch "$CONFIG"; fi
 
 python3 - "$CONFIG" "$WORKER_MODEL" "$WORKER_MIN_EFFORT" "$MAX_THREADS" <<'PY'
 from pathlib import Path
 import re, sys
-path = Path(sys.argv[1])
-worker_model, worker_effort, max_threads = sys.argv[2:5]
+path = Path(sys.argv[1]); worker_model, worker_effort, max_threads = sys.argv[2:5]
 text = path.read_text() if path.exists() else ""
-managed = {
-    "enabled": "true",
-    "max_concurrent_threads_per_session": max_threads,
-    "default_subagent_model": f'"{worker_model}"',
-    "default_subagent_reasoning_effort": f'"{worker_effort}"',
-}
+managed = {"enabled":"true","max_concurrent_threads_per_session":max_threads,"default_subagent_model":f'"{worker_model}"',"default_subagent_reasoning_effort":f'"{worker_effort}"'}
 section_re = re.compile(r"(?ms)^\[agents\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)")
 m = section_re.search(text)
 if m:
-    body = m.group(1)
-    for key, value in managed.items():
-        rx = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$")
-        line = f"{key} = {value}"
-        if rx.search(body): body = rx.sub(line, body)
+    body=m.group(1)
+    for key,value in managed.items():
+        rx=re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$"); line=f"{key} = {value}"
+        if rx.search(body): body=rx.sub(line,body)
         else:
             if body and not body.endswith("\n"): body += "\n"
             body += line + "\n"
-    text = text[:m.start(1)] + body + text[m.end(1):]
+    text=text[:m.start(1)] + body + text[m.end(1):]
 else:
     if text and not text.endswith("\n"): text += "\n"
     if text and not text.endswith("\n\n"): text += "\n"
-    text += "[agents]\n" + "".join(f"{k} = {v}\n" for k, v in managed.items())
+    text += "[agents]\n" + "".join(f"{k} = {v}\n" for k,v in managed.items())
 path.write_text(text)
 PY
 
 cat > "$POLICY" <<EOF
 schema_version = 3
+
+[ui]
+language = "$UI_LANGUAGE"
 
 [parent]
 model_policy = "$PARENT_MODEL_POLICY"
@@ -154,19 +139,13 @@ rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implement
 
 printf '%s\n' "$ROOT_DIR" > "$STATE_DIR/source"
 printf '%s\n' "$VERSION" > "$STATE_DIR/version"
-cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"
-chmod +x "$BIN_DIR/codex-flow"
-cp "$ROOT_DIR/scripts/telemetry.py" "$STATE_DIR/telemetry.py"
+cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"; chmod +x "$BIN_DIR/codex-flow"
+for file in telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
+rm -rf "$STATE_DIR/telemetry_core"
 cp -r "$ROOT_DIR/scripts/telemetry_core" "$STATE_DIR/telemetry_core"
-cp "$ROOT_DIR/scripts/manage-hooks.py" "$STATE_DIR/manage-hooks.py"
-cp "$ROOT_DIR/scripts/menu.py" "$STATE_DIR/menu.py"
-chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py"
+chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/doctor.py"
 
-if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
-  python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"
-else
-  python3 "$STATE_DIR/manage-hooks.py" uninstall --hooks "$HOOKS"
-fi
+if [[ "$TELEMETRY_ENABLED" == "true" ]]; then python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"; else python3 "$STATE_DIR/manage-hooks.py" uninstall --hooks "$HOOKS"; fi
 
 if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
   mkdir -p "$STATE_DIR/shell"
@@ -177,121 +156,57 @@ fi
 
 if [[ "$(uname -s)" == "Darwin" && -d "$ROOT_DIR/apps/macos-overlay" ]]; then
   mkdir -p "$STATE_DIR/bin"
-  if [[ -f "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" ]]; then
-    cp "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" "$STATE_DIR/bin/FlowPilot"
-    chmod +x "$STATE_DIR/bin/FlowPilot"
-  fi
-  if [[ -f "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" ]]; then
-    cp "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" "$STATE_DIR/bin/codex-flow-overlay"
-    chmod +x "$STATE_DIR/bin/codex-flow-overlay"
-  fi
+  [[ -f "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" ]] && { cp "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" "$STATE_DIR/bin/FlowPilot"; chmod +x "$STATE_DIR/bin/FlowPilot"; }
+  [[ -f "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" ]] && { cp "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" "$STATE_DIR/bin/codex-flow-overlay"; chmod +x "$STATE_DIR/bin/codex-flow-overlay"; }
 fi
 
-if [[ -t 1 && "${NO_COLOR:-}" != "1" && "${TERM:-}" != "dumb" ]]; then
-  C_BOLD=$'\033[1m'
-  C_DIM=$'\033[2m'
-  C_GREEN=$'\033[32m'
-  C_CYAN=$'\033[36m'
-  C_YELLOW=$'\033[33m'
-  C_RESET=$'\033[0m'
-else
-  C_BOLD=""
-  C_DIM=""
-  C_GREEN=""
-  C_CYAN=""
-  C_YELLOW=""
-  C_RESET=""
-fi
+UI_LANG="$(python3 "$LOCALIZATION" --policy "$POLICY" --resolved 2>/dev/null || echo en)"
+cf_t() { if [[ "$UI_LANG" == "zh" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
+display_path() { local p="$1"; if [[ -n "${HOME:-}" && "$p" == "$HOME"* ]]; then printf '~%s' "${p#$HOME}"; else printf '%s' "$p"; fi; }
+disp_policy="$(display_path "$POLICY")"; disp_cli="$(display_path "$BIN_DIR/codex-flow")"; disp_shell_rc="$(display_path "$SHELL_CONFIG_DIR/.${SHELL_NAME}rc")"
 
-display_path() {
-  local p="$1"
-  if [[ -n "${HOME:-}" && "$p" == "$HOME"* ]]; then
-    printf '~%s' "${p#$HOME}"
+printf '\n🚀 %s\n\n' "$(cf_t "codex-flow v$VERSION installed successfully" "codex-flow v$VERSION 安装成功")"
+printf '  ╭─ %s ──────────────────────────────────────────────────────────╮\n' "$(cf_t 'Summary' '安装摘要')"
+printf '  │  • %s: %s\n' "$(cf_t 'Policy' '策略')" "$disp_policy"
+printf '  │  • CLI: %s\n' "$disp_cli"
+printf '  │  • Skill: FlowPilot (flow-pilot)\n'
+printf '  │  • %s: parent (%s) -> worker (%s)\n' "$(cf_t 'Routing' '路由')" "$PARENT_MODEL_POLICY" "$WORKER_MODEL"
+printf '  │  • %s: %s (%s: %s)\n' "$(cf_t 'Language' '语言')" "$UI_LANGUAGE" "$(cf_t 'configured' '配置')" "$UI_LANG"
+if [[ "$TELEMETRY_ENABLED" == "true" ]]; then printf '  │  • Telemetry: ● enabled (%sd retention)\n' "$TELEMETRY_RETENTION_DAYS"; else printf '  │  • Telemetry: ○ disabled\n'; fi
+printf '  ╰────────────────────────────────────────────────────────────────────╯\n\n'
+
+if [[ "$UI_LANG" == "zh" ]]; then
+  printf '  ┌─ ⚠️  必须完成的后续步骤 ───────────────────────────────────────────┐\n'
+  if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
+    printf '  │  [1/3] Shell 补全：执行 source %s（或打开新终端）\n' "$disp_shell_rc"
   else
-    printf '%s' "$p"
+    printf '  │  [1/3] PATH：确保 %s 所在目录已加入 PATH\n' "$disp_cli"
   fi
-}
-
-disp_policy="$(display_path "$POLICY")"
-disp_cli="$(display_path "$BIN_DIR/codex-flow")"
-disp_shell_rc="$(display_path "$SHELL_CONFIG_DIR/.${SHELL_NAME}rc")"
-
-box_line() {
-  local content="$1"
-  local width=68
-  local plain
-  plain="$(printf '%s' "$content" | sed -E 's/\x1b\[[0-9;]*m//g')"
-  local len=${#plain}
-  local pad=$((width - len))
-  if (( pad < 0 )); then pad=0; fi
-  printf '  %s│%s  %s%*s %s│%s\n' "$C_DIM" "$C_RESET" "$content" "$pad" "" "$C_DIM" "$C_RESET"
-}
-
-step_box_line() {
-  local content="$1"
-  local width=68
-  local plain
-  plain="$(printf '%s' "$content" | sed -E 's/\x1b\[[0-9;]*m//g')"
-  local len=${#plain}
-  local pad=$((width - len))
-  if (( pad < 0 )); then pad=0; fi
-  printf '  %s│%s  %s%*s %s│%s\n' "$C_YELLOW" "$C_RESET" "$content" "$pad" "" "$C_YELLOW" "$C_RESET"
-}
-
-printf '\n%s🚀 codex-flow v%s installed successfully%s\n\n' "$C_BOLD$C_GREEN" "$VERSION" "$C_RESET"
-printf '  %s╭─ Summary ──────────────────────────────────────────────────────────╮%s\n' "$C_DIM" "$C_RESET"
-box_line "${C_BOLD}• Policy:${C_RESET}     ${C_CYAN}${disp_policy}${C_RESET}"
-box_line "${C_BOLD}• CLI:${C_RESET}        ${disp_cli}"
-box_line "${C_BOLD}• Skill:${C_RESET}      FlowPilot ${C_DIM}(flow-pilot)${C_RESET}"
-box_line "${C_BOLD}• Routing:${C_RESET}    parent (${PARENT_MODEL_POLICY}) ➔ worker (${WORKER_MODEL})"
-box_line "${C_BOLD}• Reasoning:${C_RESET}  adaptive ${C_DIM}(high ➔ xhigh ➔ max)${C_RESET}"
-if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
-  box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_GREEN}● enabled${C_RESET} ${C_DIM}(hooks + app-server; ${TELEMETRY_RETENTION_DAYS}d retention)${C_RESET}"
-  if [[ "$TELEMETRY_NOTIFICATIONS" == "true" ]]; then
-    box_line "${C_BOLD}• Notify:${C_RESET}     ${C_GREEN}● macOS system notification${C_RESET}"
+  printf '  │  [2/3] 完整重启 Codex：完全退出后重新启动，仅新建任务不够。\n'
+  if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+    printf '  │  [3/3] 授权 Hooks：在 Codex 中运行 /hooks，并批准 FlowPilot telemetry。\n'
   else
-    box_line "${C_BOLD}• Notify:${C_RESET}     ${C_DIM}○ disabled${C_RESET}"
+    printf '  │  [3/3] Hooks：遥测已关闭，无需进行 hook 授权。\n'
   fi
+  printf '  └────────────────────────────────────────────────────────────────────┘\n\n'
 else
-  box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_DIM}○ disabled${C_RESET}"
-fi
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  if [[ -f "$STATE_DIR/bin/FlowPilot" || -f "$STATE_DIR/bin/codex-flow-overlay" ]]; then
-    box_line "${C_BOLD}• FlowPilot UI:${C_RESET} ${C_GREEN}● installed${C_RESET} ${C_DIM}(start: codex-flow overlay start)${C_RESET}"
+  printf '  ┌─ ⚠️  REQUIRED NEXT STEPS ───────────────────────────────────────────┐\n'
+  if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
+    printf '  │  [1/3] Shell Completion\n'
+    printf '  │        Run: source %s (or open a new terminal)\n' "$disp_shell_rc"
   else
-    box_line "${C_BOLD}• FlowPilot UI:${C_RESET} ${C_DIM}○ optional (build: bash apps/macos-overlay/build.sh)${C_RESET}"
+    printf '  │  [1/3] PATH Configuration\n'
+    printf '  │        Add %s to PATH to run codex-flow status\n' "${disp_cli%/*}"
   fi
-fi
-printf '  %s╰────────────────────────────────────────────────────────────────────╯%s\n\n' "$C_DIM" "$C_RESET"
-
-printf '  %s┌─ ⚠️  REQUIRED NEXT STEPS ───────────────────────────────────────────┐%s\n' "$C_YELLOW" "$C_RESET"
-step_box_line ""
-if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
-  step_box_line "${C_BOLD}[1/3] Shell Completion${C_RESET}"
-  step_box_line "      Run: ${C_CYAN}source ${disp_shell_rc}${C_RESET} (or open a new terminal tab)"
-else
-  step_box_line "${C_BOLD}[1/3] PATH Configuration${C_RESET}"
-  case ":${PATH}:" in
-    *":$BIN_DIR:"*) step_box_line "      Run: ${C_CYAN}codex-flow status${C_RESET}" ;;
-    *) step_box_line "      Add ${C_CYAN}${disp_cli%/*}${C_RESET} to PATH to run: ${C_CYAN}codex-flow status${C_RESET}" ;;
-  esac
-fi
-step_box_line ""
-step_box_line "${C_BOLD}[2/3] Complete Codex Restart${C_RESET}"
-step_box_line "      Fully quit Codex and relaunch it. Starting a new task"
-step_box_line "      alone is NOT enough to load new hooks and snapshots."
-step_box_line ""
-if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
-  step_box_line "${C_BOLD}[3/3] Authorize Hooks${C_RESET}"
-  step_box_line "      Run ${C_CYAN}/hooks${C_RESET} in Codex and approve FlowPilot telemetry"
-  step_box_line "      if it is pending approval."
-else
-  step_box_line "${C_BOLD}[3/3] Hooks Status${C_RESET}"
-  step_box_line "      Telemetry is disabled: no hook authorization is required."
-fi
-step_box_line ""
-printf '  %s└────────────────────────────────────────────────────────────────────┘%s\n\n' "$C_YELLOW" "$C_RESET"
-
-if ! command -v codex >/dev/null 2>&1; then
-  printf '  %s💡 Tip:%s Install Codex CLI for token quota reads & benchmarks: %snpm install -g @openai/codex%s\n\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+  printf '  │  [2/3] Complete Codex Restart\n'
+  printf '  │        Fully quit Codex and relaunch it. Starting a new task\n'
+  printf '  │        alone is NOT enough to load new hooks and snapshots.\n'
+  if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+    printf '  │  [3/3] Authorize Hooks\n'
+    printf '  │        Run /hooks in Codex and approve FlowPilot telemetry if it is pending approval.\n'
+  else
+    printf '  │  [3/3] Hooks Status\n'
+    printf '  │        Telemetry is disabled: no hook authorization is required.\n'
+  fi
+  printf '  └────────────────────────────────────────────────────────────────────┘\n\n'
 fi
