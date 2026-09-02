@@ -166,6 +166,12 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue((self.bin_dir / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")).exists())
 
 
+    def test_install_lock_rejects_concurrent_writer(self) -> None:
+        with updater.install_lock():
+            with self.assertRaisesRegex(RuntimeError, "already running"):
+                with updater.install_lock():
+                    pass
+
     def test_legacy_update_detached_checkout_reinstalls_without_pull(self) -> None:
         source = self.root / "source"
         (source / ".git").mkdir(parents=True)

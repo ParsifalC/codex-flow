@@ -498,6 +498,15 @@ def update_lock(stale_seconds: int = 600):
                 path.unlink()
 
 
+@contextlib.contextmanager
+def install_lock():
+    """Require exclusive ownership for update/rollback writers."""
+    with update_lock() as acquired:
+        if not acquired:
+            raise RuntimeError("another codex-flow update or rollback is already running")
+        yield
+
+
 def start_background_check() -> bool:
     """Spawn a silent checker and return immediately.
 
@@ -975,7 +984,7 @@ def _install_package(package_root: Path, version: str, manifest: dict[str, Any])
         shutil.rmtree(staged_version, ignore_errors=True)
 
 
-def perform_update(*, force_check: bool = True) -> UpdateState:
+def _perform_update_unlocked(*, force_check: bool = True) -> UpdateState:
     state = check_for_updates(force=force_check)
     manifest = state.extra.get("manifest") if isinstance(state.extra, dict) else None
     if not state.update_available:
@@ -1016,7 +1025,12 @@ def perform_update(*, force_check: bool = True) -> UpdateState:
         return _install_package(root, version, manifest)
 
 
-def rollback() -> UpdateState:
+def perform_update(*, force_check: bool = True) -> UpdateState:
+    with install_lock():
+        return _perform_update_unlocked(force_check=force_check)
+
+
+def _rollback_unlocked() -> UpdateState:
     state_dir = _state_dir()
     current = current_version()
     previous_path = state_dir / "previous-version"
@@ -1055,6 +1069,11 @@ def rollback() -> UpdateState:
     except Exception:
         _restore_snapshot(backup)
         raise
+
+
+def rollback() -> UpdateState:
+    with install_lock():
+        return _rollback_unlocked()
 
 
 def _legacy_git_update() -> int:
