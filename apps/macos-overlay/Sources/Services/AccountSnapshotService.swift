@@ -66,15 +66,13 @@ public struct AccountSnapshot {
     public var orderedWindows: [AccountQuotaWindow] {
         var result: [AccountQuotaWindow] = []
         if let fiveHourWindow { result.append(fiveHourWindow) }
-        if let weeklyWindow { result.append(weeklyHourWindow) }
+        if let weeklyWindow { result.append(weeklyWindow) }
         let knownIds = Set(result.map(\.id))
         result.append(contentsOf: quotaWindows.filter { !knownIds.contains($0.id) }.sorted {
             ($0.durationMinutes ?? Int.max) < ($1.durationMinutes ?? Int.max)
         })
         return result
     }
-
-    private var weeklyHourWindow: AccountQuotaWindow? { weeklyWindow }
 
     public var nearestResetCreditExpiry: Date? {
         resetCredits.compactMap(\.expiresAt).filter { $0 > Date() }.min()
