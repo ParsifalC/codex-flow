@@ -12,7 +12,7 @@ public struct FlowPilotUpdateView: View {
                     Circle()
                         .fill(Color.cyan.opacity(0.16))
                         .frame(width: 34, height: 34)
-                    Image(systemName: service.isRestartRequired ? "arrow.clockwise.circle.fill" : "arrow.down.circle.fill")
+                    Image(systemName: (service.isRestartRequired || service.isFlowPilotRestartRequired) ? "arrow.clockwise.circle.fill" : "arrow.down.circle.fill")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(service.isRestartRequired ? .orange : .cyan)
                 }
@@ -74,62 +74,63 @@ public struct FlowPilotUpdateView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if service.isRestartRequired {
+            if service.isRestartRequired || service.isFlowPilotRestartRequired {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 9))
                             .foregroundColor(.orange)
-                        Text(L(
-                            "The new files are installed. Restart FlowPilot to load the new app binary, and fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
-                            "新文件已经安装。请重启 FlowPilot 载入新的 App 程序，并完整重启 Codex 以激活新的 FlowPilot 策略和 Hook 快照。"
-                        ))
+                        Text(restartExplanation)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.secondary)
                     }
 
                     HStack(spacing: 6) {
-                        Button {
-                            service.restartFlowPilot()
-                        } label: {
-                            HStack(spacing: 4) {
-                                if service.isRestartingFlowPilot {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
+                    if service.isFlowPilotRestartRequired {
+                            Button {
+                                service.restartFlowPilot()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    if service.isRestartingFlowPilot {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    Text(L("Restart FlowPilot", "重启 FlowPilot"))
                                 }
-                                Text(L("Restart FlowPilot", "重启 FlowPilot"))
+                                .font(.system(size: 9.5, weight: .semibold))
                             }
-                            .font(.system(size: 9.5, weight: .semibold))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            service.isRestartingFlowPilot
-                            || service.isAcknowledgingRestart
-                            || service.isInstalling
-                            || service.isChecking
-                        )
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                service.isRestartingFlowPilot
+                                || service.isAcknowledgingRestart
+                                || service.isInstalling
+                                || service.isChecking
+                            )
+                    }
 
-                        Button {
-                            service.acknowledgeRestart()
-                        } label: {
-                            HStack(spacing: 4) {
-                                if service.isAcknowledgingRestart {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Image(systemName: "checkmark.circle")
+                    if service.isRestartRequired {
+                            Button {
+                                service.acknowledgeRestart()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    if service.isAcknowledgingRestart {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Image(systemName: "checkmark.circle")
+                                    }
+                                    Text(L("I've restarted Codex", "我已重启 Codex"))
                                 }
-                                Text(L("I've restarted Codex", "我已重启 Codex"))
+                                .font(.system(size: 9.5, weight: .semibold))
                             }
-                            .font(.system(size: 9.5, weight: .semibold))
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(
-                            service.isAcknowledgingRestart
-                            || service.isRestartingFlowPilot
-                            || service.isInstalling
-                            || service.isChecking
-                        )
+                            .buttonStyle(.bordered)
+                            .disabled(
+                                service.isAcknowledgingRestart
+                                || service.isRestartingFlowPilot
+                                || service.isInstalling
+                                || service.isChecking
+                            )
+                    }
                     }
                 }
             }
@@ -188,6 +189,25 @@ public struct FlowPilotUpdateView: View {
             service.refreshFromDisk()
             service.requestCachedCheck()
         }
+    }
+
+    private var restartExplanation: String {
+        if service.isFlowPilotRestartRequired && service.isRestartRequired {
+            return L(
+                "The new files are installed. Restart FlowPilot to load the new app binary, and fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
+                "新文件已经安装。请重启 FlowPilot 载入新的 App 程序，并完整重启 Codex 以激活新的 FlowPilot 策略和 Hook 快照。"
+            )
+        }
+        if service.isFlowPilotRestartRequired {
+            return L(
+                "The updated FlowPilot binary is installed. Restart FlowPilot to load it.",
+                "新的 FlowPilot 程序已经安装。请重启 FlowPilot 以载入新版本。"
+            )
+        }
+        return L(
+            "Fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
+            "请完整重启 Codex，以激活新的 FlowPilot 策略和 Hook 快照。"
+        )
     }
 
     private func versionRow(title: String, value: String) -> some View {

@@ -241,7 +241,7 @@ printf '%s\n' "$VERSION" > "$STATE_DIR/version"
 printf '%s\n' "$BIN_DIR" > "$STATE_DIR/bin_dir"
 cp "$DEFAULTS" "$STATE_DIR/defaults.toml"
 cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"; chmod +x "$BIN_DIR/codex-flow"
-for file in updater.py telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py strategy_runtime.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
+for file in updater.py update_runtime_config.py telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py strategy_runtime.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
 rm -rf "$STATE_DIR/strategies" "$STATE_DIR/telemetry_core"
 cp -r "$ROOT_DIR/scripts/strategies" "$STATE_DIR/strategies"
 cp -r "$ROOT_DIR/scripts/telemetry_core" "$STATE_DIR/telemetry_core"

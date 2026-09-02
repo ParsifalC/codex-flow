@@ -133,6 +133,7 @@ def main() -> int:
         (STATE_DIR / "strategies/__init__.py", "built-in strategy registry"),
         (STATE_DIR / "defaults.toml", "release policy defaults"),
         (STATE_DIR / "updater.py", "OTA updater"),
+        (STATE_DIR / "update_runtime_config.py", "runtime config reconciler"),
     ]
     for path, label in checks:
         ok(T(f"{label} installed", f"{label} 已安装")) if path.is_file() else fail(T(f"{label} missing", f"缺少 {label}"))

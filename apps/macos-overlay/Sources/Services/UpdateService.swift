@@ -13,6 +13,7 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
     public var updateAvailable: Bool?
     public var checkedAt: String?
     public var restartRequired: Bool?
+    public var flowPilotRestartRequired: Bool?
     public var mandatory: Bool?
     public var releaseURL: String?
     public var releaseNotes: String?
@@ -29,6 +30,7 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
         case updateAvailable = "update_available"
         case checkedAt = "checked_at"
         case restartRequired = "restart_required"
+        case flowPilotRestartRequired = "flowpilot_restart_required"
         case releaseURL = "release_url"
         case releaseNotes = "release_notes"
         case artifactAvailable = "artifact_available"
@@ -54,6 +56,7 @@ public final class FlowPilotUpdateService: ObservableObject {
 
     private init() {
         refreshFromDisk()
+        acknowledgeFlowPilotRestartAfterLaunchIfNeeded()
         timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
             Task { @MainActor in
                 FlowPilotUpdateService.shared.refreshFromDisk()
@@ -67,11 +70,19 @@ public final class FlowPilotUpdateService: ObservableObject {
     }
 
     public var hasUpdateBadge: Bool {
-        (snapshot.notifyApp ?? true) && ((snapshot.updateAvailable ?? false) || (snapshot.restartRequired ?? false))
+        (snapshot.notifyApp ?? true) && (
+            (snapshot.updateAvailable ?? false)
+            || (snapshot.restartRequired ?? false)
+            || (snapshot.flowPilotRestartRequired ?? false)
+        )
     }
 
     public var isRestartRequired: Bool {
         snapshot.restartRequired ?? false
+    }
+
+    public var isFlowPilotRestartRequired: Bool {
+        snapshot.flowPilotRestartRequired ?? false
     }
 
     public var displayVersion: String? {
@@ -88,8 +99,14 @@ public final class FlowPilotUpdateService: ObservableObject {
         if isChecking {
             return L("Checking for updates…", "正在检查更新…")
         }
-        if snapshot.restartRequired == true {
+        if snapshot.flowPilotRestartRequired == true && snapshot.restartRequired == true {
             return L("Update installed · restart FlowPilot and Codex", "更新已安装 · 请重启 FlowPilot 和 Codex")
+        }
+        if snapshot.flowPilotRestartRequired == true {
+            return L("Update installed · restart FlowPilot", "更新已安装 · 请重启 FlowPilot")
+        }
+        if snapshot.restartRequired == true {
+            return L("Update installed · restart Codex", "更新已安装 · 请重启 Codex")
         }
         if snapshot.updateAvailable == true, let latest = snapshot.latestVersion {
             return L("v\(latest) is available", "v\(latest) 可更新")
@@ -142,6 +159,20 @@ public final class FlowPilotUpdateService: ObservableObject {
         actionMessage = nil
         isAcknowledgingRestart = true
         runUpdater(arguments: ["update", "--ack-restart", "--quiet"], mode: .acknowledgeRestart)
+    }
+
+    private func acknowledgeFlowPilotRestartAfterLaunchIfNeeded() {
+        guard snapshot.flowPilotRestartRequired == true, let executable = codexFlowExecutable else { return }
+        Task.detached(priority: .utility) {
+            let result = Self.executeUpdater(
+                executable: executable,
+                arguments: ["update", "--ack-flowpilot-restart", "--quiet"]
+            )
+            guard result.exitCode == 0 else { return }
+            await MainActor.run {
+                FlowPilotUpdateService.shared.refreshFromDisk()
+            }
+        }
     }
 
     // The OTA installer atomically replaces the FlowPilot binary on disk, but

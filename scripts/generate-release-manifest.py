@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "ParsifalC/codex-flow"
+MINIMUM_UPDATER_VERSION = "1.0.0"
 
 
 def main() -> int:
@@ -55,7 +56,7 @@ def main() -> int:
         "version": version,
         "channel": args.channel,
         "published_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "minimum_updater_version": "1.7.0",
+        "minimum_updater_version": MINIMUM_UPDATER_VERSION,
         "restart_required": True,
         "mandatory": False,
         "release_url": f"https://github.com/{REPO}/releases/tag/{tag}",

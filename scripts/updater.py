@@ -31,8 +31,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 REPO = "ParsifalC/codex-flow"
-STATE_SCHEMA = 1
+STATE_SCHEMA = 2
 MANIFEST_SCHEMA = 1
+UPDATER_VERSION = "1.0.0"
 DEFAULT_CHECK_INTERVAL_HOURS = 24
 DEFAULT_RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 MANIFEST_ASSET = "codex-flow-update.json"
@@ -256,6 +257,7 @@ class UpdateState:
     checked_at: str | None = None
     last_attempt_at: str | None = None
     restart_required: bool = False
+    flowpilot_restart_required: bool = False
     mandatory: bool = False
     release_url: str | None = None
     release_notes: str | None = None
@@ -289,6 +291,13 @@ class UpdateState:
 def load_state() -> UpdateState:
     state = UpdateState.from_mapping(_read_json(_update_state_path(), {}))
     state.current_version = current_version()
+    # Cached availability is advisory. Recompute it from the version currently
+    # installed on disk so a second process cannot reinstall a version another
+    # updater completed after this cache was written.
+    if state.latest_version:
+        state.update_available = is_newer(state.latest_version, state.current_version)
+        if not state.update_available and state.status in {"available", "downloading", "installing"}:
+            state.status = "latest"
     return state
 
 
@@ -397,7 +406,7 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
     if not str(manifest.get("version") or "").strip():
         raise RuntimeError("update manifest is missing version")
     minimum_updater = str(manifest.get("minimum_updater_version") or "").strip()
-    if minimum_updater and is_newer(minimum_updater, current_version()):
+    if minimum_updater and is_newer(minimum_updater, UPDATER_VERSION):
         raise RuntimeError(
             f"update requires updater v{_strip_v(minimum_updater)} or newer; "
             "reinstall codex-flow once to refresh the updater"
@@ -473,29 +482,73 @@ def _lock_path() -> Path:
     return _update_dir() / "check.lock"
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Best-effort process liveness check; uncertainty is treated as alive."""
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            process_query_limited_information = 0x1000
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+
+
 @contextlib.contextmanager
 def update_lock(stale_seconds: int = 600):
     path = _lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
+        owner_pid: int | None = None
+        with contextlib.suppress(OSError, ValueError):
+            owner_pid = int(path.read_text(errors="ignore").strip())
+        age = 0.0
         with contextlib.suppress(OSError):
-            if time.time() - path.stat().st_mtime > stale_seconds:
+            age = max(0.0, time.time() - path.stat().st_mtime)
+        should_reclaim = (
+            owner_pid is not None and not _pid_is_alive(owner_pid)
+        ) or (
+            owner_pid is None and age > stale_seconds
+        )
+        if should_reclaim:
+            with contextlib.suppress(OSError):
                 path.unlink()
     fd: int | None = None
+    owned = False
     try:
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.write(fd, str(os.getpid()).encode("ascii"))
         os.close(fd)
         fd = None
+        owned = True
         yield True
     except FileExistsError:
         yield False
     finally:
         if fd is not None:
             os.close(fd)
-        with contextlib.suppress(FileNotFoundError):
-            if path.exists() and path.read_text(errors="ignore").strip() == str(os.getpid()):
-                path.unlink()
+        if owned:
+            with contextlib.suppress(FileNotFoundError):
+                if path.exists() and path.read_text(errors="ignore").strip() == str(os.getpid()):
+                    path.unlink()
 
 
 @contextlib.contextmanager
@@ -544,8 +597,12 @@ def update_menu_label(lang: str = "en", state: UpdateState | None = None) -> str
     zh = lang.lower().startswith("zh")
     if state.notify_cli is False:
         return "🔄 检查更新" if zh else "🔄 Check for updates"
-    if state.restart_required:
+    if state.flowpilot_restart_required or state.restart_required:
         version = state.current_version or state.latest_version or ""
+        if state.flowpilot_restart_required and state.restart_required:
+            return f"⚠️ v{version} 已安装 · 请重启 FlowPilot / Codex" if zh else f"⚠️ v{version} installed · restart FlowPilot / Codex"
+        if state.flowpilot_restart_required:
+            return f"⚠️ v{version} 已安装 · 请重启 FlowPilot" if zh else f"⚠️ v{version} installed · restart FlowPilot"
         return f"⚠️ v{version} 已安装 · 请重启 Codex" if zh else f"⚠️ v{version} installed · restart Codex"
     if state.update_available and state.latest_version:
         return (
@@ -666,6 +723,7 @@ def _snapshot(current: str) -> Path:
     managed.mkdir()
     for name in (
         "updater.py",
+        "update_runtime_config.py",
         "telemetry.py",
         "manage-hooks.py",
         "menu.py",
@@ -818,6 +876,7 @@ def _sync_managed_runtime(package_root: Path) -> None:
     scripts = package_root / "scripts"
     for name in (
         "updater.py",
+        "update_runtime_config.py",
         "telemetry.py",
         "manage-hooks.py",
         "menu.py",
@@ -900,7 +959,14 @@ def _history() -> list[dict[str, Any]]:
 def _append_history(entry: dict[str, Any]) -> None:
     history = _history()
     history.append(entry)
-    atomic_write_json(_history_path(), history[-20:])
+    retained = history[-20:]
+    atomic_write_json(_history_path(), retained)
+    referenced = {str(item.get("backup")) for item in retained if item.get("backup")}
+    backup_root = _state_dir() / "backups"
+    if backup_root.exists():
+        for candidate in backup_root.iterdir():
+            if candidate.is_dir() and str(candidate) not in referenced:
+                shutil.rmtree(candidate, ignore_errors=True)
 
 
 def _ensure_current_version_package(version: str) -> Path | None:
@@ -951,7 +1017,7 @@ def _ensure_current_version_package(version: str) -> Path | None:
             (staging / "VERSION").write_text(version + "\n", encoding="utf-8")
             scripts = staging / "scripts"
             scripts.mkdir(parents=True)
-            for name in ("updater.py", "telemetry.py", "manage-hooks.py", "menu.py", "localization.py", "ui.py", "doctor.py", "strategy_runtime.py"):
+            for name in ("updater.py", "update_runtime_config.py", "telemetry.py", "manage-hooks.py", "menu.py", "localization.py", "ui.py", "doctor.py", "strategy_runtime.py"):
                 src = _state_dir() / name
                 if src.exists():
                     shutil.copy2(src, scripts / name)
@@ -1016,7 +1082,11 @@ def _install_package(package_root: Path, version: str, manifest: dict[str, Any])
         state.previous_version = current
         state.update_available = is_newer(state.latest_version, version)
         state.status = "available" if state.update_available else "latest"
-        state.restart_required = True
+        state.restart_required = bool(manifest.get("restart_required", True))
+        state.flowpilot_restart_required = (
+            platform.system().lower() == "darwin"
+            and any((target_version / "apps" / "macos-overlay" / "bin" / name).exists() for name in ("FlowPilot", "codex-flow-overlay"))
+        )
         state.installed_at = utc_now()
         state.last_error = None
         state.progress = 1.0
@@ -1033,6 +1103,7 @@ def _install_package(package_root: Path, version: str, manifest: dict[str, Any])
         return state
     except Exception:
         _restore_snapshot(backup)
+        shutil.rmtree(backup, ignore_errors=True)
         raise
     finally:
         shutil.rmtree(staged_version, ignore_errors=True)
@@ -1120,12 +1191,17 @@ def _rollback_unlocked() -> UpdateState:
         state.update_available = bool(state.latest_version and is_newer(state.latest_version, previous))
         state.status = "available" if state.update_available else "latest"
         state.restart_required = True
+        state.flowpilot_restart_required = (
+            platform.system().lower() == "darwin"
+            and any((_state_dir() / "bin" / name).exists() for name in ("FlowPilot", "codex-flow-overlay"))
+        )
         state.last_error = None
         save_state(state)
         _append_history({"from": current, "to": previous, "rollback": True, "installed_at": utc_now(), "backup": str(backup)})
         return state
     except Exception:
         _restore_snapshot(backup)
+        shutil.rmtree(backup, ignore_errors=True)
         raise
 
 
@@ -1185,7 +1261,11 @@ def _print_status(state: UpdateState, as_json: bool = False) -> None:
     if as_json:
         print(json.dumps(state.to_mapping(), ensure_ascii=False, indent=2, sort_keys=True))
         return
-    if state.restart_required:
+    if state.flowpilot_restart_required and state.restart_required:
+        print(f"✓ codex-flow v{state.current_version} installed; restart FlowPilot and Codex to activate all updated components.")
+    elif state.flowpilot_restart_required:
+        print(f"✓ codex-flow v{state.current_version} installed; restart FlowPilot to load the updated app binary.")
+    elif state.restart_required:
         print(f"✓ codex-flow v{state.current_version} installed; restart Codex to activate updated policy/hooks snapshots.")
     elif state.update_available and state.latest_version:
         suffix = "" if state.artifact_available else " (release package not available yet)"
@@ -1208,7 +1288,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ack-restart",
         action="store_true",
-        help="clear restart-required reminder after Codex has been fully restarted",
+        help="clear Codex restart reminder after Codex has been fully restarted",
+    )
+    parser.add_argument(
+        "--ack-flowpilot-restart",
+        action="store_true",
+        help="clear FlowPilot restart reminder after the updated FlowPilot binary has launched",
     )
     parser.add_argument("--no-legacy-fallback", action="store_true")
     return parser
@@ -1222,13 +1307,24 @@ def main(argv: Iterable[str] | None = None) -> int:
         state.restart_required = False
         save_state(state)
         if not args.quiet:
-            print("✓ Restart reminder cleared after Codex restart.")
+            print("✓ Codex restart reminder cleared.")
+        return 0
+    if args.ack_flowpilot_restart:
+        state = load_state()
+        state.flowpilot_restart_required = False
+        save_state(state)
+        if not args.quiet:
+            print("✓ FlowPilot restart reminder cleared.")
         return 0
     if args.command == "rollback":
         try:
             state = rollback()
             if not args.quiet:
-                print(f"↩ Rolled back codex-flow to v{state.current_version}. Restart Codex to activate it.")
+                print(f"↩ Rolled back codex-flow to v{state.current_version}.")
+                if state.flowpilot_restart_required:
+                    print("⚠ Restart FlowPilot to load the rolled-back app binary.")
+                if state.restart_required:
+                    print("⚠ Restart Codex to activate rolled-back policy/hooks snapshots.")
             return 0
         except Exception as exc:
             print(f"codex-flow rollback failed: {exc}", file=sys.stderr)
@@ -1247,7 +1343,10 @@ def main(argv: Iterable[str] | None = None) -> int:
             state = perform_update(force_check=False)
             if not args.quiet:
                 print(f"✨ Updated codex-flow to v{state.current_version}.")
-                print("⚠ Restart Codex to activate updated FlowPilot policy/hooks snapshots.")
+                if state.flowpilot_restart_required:
+                    print("⚠ Restart FlowPilot to load the updated app binary.")
+                if state.restart_required:
+                    print("⚠ Restart Codex to activate updated FlowPilot policy/hooks snapshots.")
             return 0
         if state.update_available and not state.artifact_available:
             raise RuntimeError("new release detected but no installable artifact is available")

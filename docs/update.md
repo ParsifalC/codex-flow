@@ -20,7 +20,7 @@ codex-flow rollback
 
 终端交互菜单会直接在“更新”选项中显示“已是最新”或“vX.Y.Z 可用”。FlowPilot 顶栏提供更新按钮；有更新或已安装但仍需要重启 Codex 时显示角标。App 与 CLI 都读取 `~/.codex/codex-flow/state/update.json`。
 
-更新安装完成后会写入 `restart_required=true`。用户完整重启 Codex 后，可在 FlowPilot 更新面板点击“我已重启 Codex”，或使用 `codex-flow update --ack-restart` 清除提醒。Updater 无法可靠跨平台证明 Codex 宿主进程是否已经完整重启，因此不伪造自动确认。
+更新安装完成后会写入 `restart_required=true`。用户完整重启 Codex 后，可在 FlowPilot 更新面板点击“我已重启 Codex”，或使用 `codex-flow update --ack-restart` 清除 Codex 提醒。macOS 还会单独记录 `flowpilot_restart_required`；新的 FlowPilot 进程成功启动后会自动执行 `codex-flow update --ack-flowpilot-restart`，因此 App 二进制激活与 Codex snapshot 激活不会被混成同一个状态。Updater 无法可靠跨平台证明 Codex 宿主进程是否已经完整重启，因此 Codex 仍要求用户主动确认。
 
 ## 默认配置
 
@@ -95,6 +95,8 @@ Release workflow 先创建 **Draft Release**，完成全部平台构建、SHA-25
 
 已经公开的 Release 被视为不可变：workflow 不允许重新 `--clobber` 已发布版本的 OTA 资产；需要修复时必须提升 `VERSION` 并发布新版本。只有仍处于 draft 的同版本 Release 可以被构建任务覆盖重试。
 
+manifest 中的 `minimum_updater_version` 使用独立的 updater protocol version（当前为 `1.0.0`），不会拿 codex-flow 产品版本代替 updater 版本做兼容判断。
+
 ## Release channel
 
 `VERSION` 是唯一版本源，同时决定 release channel：
@@ -107,4 +109,4 @@ Git tag 必须严格等于 `v$VERSION`。beta / nightly GitHub Release 会被标
 
 ## 重启语义
 
-新的 CLI、updater、telemetry 和 FlowPilot binary 在 OTA 成功后已经落盘，但 Codex 对 Skill / Agent / Hook / policy snapshot 的加载需要完整重启 Codex 才能保证全部生效。因此 CLI / App 会明确保持 restart reminder，直到用户完成重启并主动确认，而不是把“文件已安装”和“Codex 已激活新 snapshot”混为一个状态。
+新的 CLI、updater、telemetry 和 FlowPilot binary 在 OTA 成功后已经落盘。macOS 上 `flowpilot_restart_required` 只表示需要重启 FlowPilot 进程来载入新 App binary，并由新进程自动清除；`restart_required` 则只表示 Codex 对 Skill / Agent / Hook / policy snapshot 的加载需要完整重启 Codex，并由用户完成重启后主动确认。两个状态互不代替。

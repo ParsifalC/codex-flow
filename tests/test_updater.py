@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 import tarfile
 import tempfile
@@ -129,7 +130,7 @@ class UpdaterTest(unittest.TestCase):
 
     def test_manifest_enforces_minimum_updater_version(self) -> None:
         manifest = self.manifest()
-        manifest["minimum_updater_version"] = "9.0.0"
+        manifest["minimum_updater_version"] = "1.1.0"
         with self.assertRaises(RuntimeError):
             updater._validate_manifest(manifest)
 
@@ -182,6 +183,48 @@ class UpdaterTest(unittest.TestCase):
         self.assertIn('default_subagent_model = "fixture-worker"', config_text)
         policy_text = (self.codex_home / "codex-flow.toml").read_text(encoding="utf-8")
         self.assertIn('resolved_model = "fixture-worker"', policy_text)
+
+    def test_cached_available_state_is_recomputed_after_another_process_updates(self) -> None:
+        state = updater.UpdateState(
+            current_version="1.7.0",
+            latest_version="1.8.0",
+            update_available=True,
+            status="available",
+        )
+        updater.save_state(state)
+        (self.state / "version").write_text("1.8.0\n", encoding="utf-8")
+        loaded = updater.load_state()
+        self.assertEqual(loaded.current_version, "1.8.0")
+        self.assertFalse(loaded.update_available)
+        self.assertEqual(loaded.status, "latest")
+
+    def test_stale_lock_owned_by_live_process_is_not_stolen(self) -> None:
+        lock = updater._lock_path()
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(str(os.getpid()), encoding="ascii")
+        os.utime(lock, (1, 1))
+        with updater.update_lock(stale_seconds=1) as acquired:
+            self.assertFalse(acquired)
+        self.assertTrue(lock.exists())
+        lock.unlink()
+
+    def test_flowpilot_restart_ack_is_independent_from_codex_restart(self) -> None:
+        state = updater.load_state()
+        state.restart_required = True
+        state.flowpilot_restart_required = True
+        updater.save_state(state)
+        self.assertEqual(updater.main(["--ack-flowpilot-restart", "--quiet"]), 0)
+        loaded = updater.load_state()
+        self.assertTrue(loaded.restart_required)
+        self.assertFalse(loaded.flowpilot_restart_required)
+        self.assertEqual(updater.main(["--ack-restart", "--quiet"]), 0)
+        self.assertFalse(updater.load_state().restart_required)
+
+    def test_manifest_generator_uses_updater_protocol_version(self) -> None:
+        source = (ROOT / "scripts" / "generate-release-manifest.py").read_text(encoding="utf-8")
+        match = re.search(r'^MINIMUM_UPDATER_VERSION = "([^"]+)"$', source, re.MULTILINE)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), updater.UPDATER_VERSION)
 
     def test_install_lock_rejects_concurrent_writer(self) -> None:
         with updater.install_lock():
