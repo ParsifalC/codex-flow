@@ -18,7 +18,7 @@ if [[ -f "$HOOK_HELPER" ]] && command -v python3 >/dev/null 2>&1; then
   python3 "$HOOK_HELPER" uninstall --hooks "$HOOKS"
 fi
 
-rm -f "$CODEX_HOME/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-implementer.toml"
+rm -f "$CODEX_HOME/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-implementer.toml" "$CODEX_HOME/agents/worker-reviewer.toml"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 rm -f "$CODEX_HOME/codex-flow.toml"
 rm -rf "$CODEX_HOME/skills/flow-pilot"

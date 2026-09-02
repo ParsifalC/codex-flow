@@ -39,33 +39,95 @@ read_default() {
   fi
   printf '%s\n' "$value"
 }
+policy_or_default() {
+  local section="$1" key="$2" fallback="$3" value=""
+  if [[ -f "$POLICY" ]]; then
+    value="$(read_toml_value "$section" "$key" "$POLICY" 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${value:-$fallback}"
+}
 
 DEFAULT_WORKER_MODEL="$(read_default models worker_model)"
+DEFAULT_WORKER_POLICY="$(read_default models worker_policy)"
 DEFAULT_PARENT_POLICY="$(read_default models parent_policy)"
 DEFAULT_PARENT_MIN_MODEL="$(read_default models parent_min_model)"
+DEFAULT_STRATEGY="$(read_default strategy profile)"
+DEFAULT_ROUTING_MODE="$(read_default routing mode)"
+DEFAULT_REVIEW_MODIFIER="$(read_default modifiers review)"
+DEFAULT_FANOUT_MODIFIER="$(read_default modifiers fanout)"
+DEFAULT_PARENT_MIN_EFFORT="$(read_default reasoning.parent minimum)"
+DEFAULT_PARENT_ROUTINE_EFFORT="$(read_default reasoning.parent routine)"
+DEFAULT_PARENT_COMPLEX_EFFORT="$(read_default reasoning.parent complex)"
+DEFAULT_PARENT_CRITICAL_EFFORT="$(read_default reasoning.parent critical)"
+DEFAULT_WORKER_MIN_EFFORT="$(read_default reasoning.worker minimum)"
+DEFAULT_WORKER_ROUTINE_EFFORT="$(read_default reasoning.worker routine)"
+DEFAULT_WORKER_COMPLEX_EFFORT="$(read_default reasoning.worker complex)"
+DEFAULT_WORKER_CRITICAL_EFFORT="$(read_default reasoning.worker critical)"
 DEFAULT_MAX_THREADS="$(read_default runtime max_concurrent_threads)"
 DEFAULT_MAX_REPAIRS="$(read_default runtime max_repair_cycles)"
+DEFAULT_TELEMETRY_ENABLED="$(read_default telemetry enabled)"
+DEFAULT_TELEMETRY_NOTIFICATIONS="$(read_default telemetry notifications)"
+DEFAULT_TELEMETRY_RETENTION_DAYS="$(read_default telemetry retention_days)"
 
-PARENT_MODEL_POLICY="${CODEX_FLOW_PARENT_MODEL_POLICY:-$DEFAULT_PARENT_POLICY}"
-PARENT_MIN_MODEL="${CODEX_FLOW_PARENT_MIN_MODEL:-$DEFAULT_PARENT_MIN_MODEL}"
-PARENT_MIN_EFFORT="${CODEX_FLOW_PARENT_MIN_EFFORT:-high}"
-WORKER_MODEL_POLICY="${CODEX_FLOW_WORKER_MODEL_POLICY:-latest-efficient}"
-WORKER_MODEL_REQUESTED="${CODEX_FLOW_WORKER_MODEL:-auto}"
+EXISTING_STRATEGY="$(policy_or_default strategy profile "$DEFAULT_STRATEGY")"
+EXISTING_ROUTING="$(policy_or_default routing mode "$DEFAULT_ROUTING_MODE")"
+EXISTING_REVIEW="$(policy_or_default modifiers review "$DEFAULT_REVIEW_MODIFIER")"
+EXISTING_FANOUT="$(policy_or_default modifiers fanout "$DEFAULT_FANOUT_MODIFIER")"
+EXISTING_PARENT_POLICY="$(policy_or_default parent model_policy "$DEFAULT_PARENT_POLICY")"
+EXISTING_PARENT_MIN_MODEL="$(policy_or_default parent min_model "$DEFAULT_PARENT_MIN_MODEL")"
+EXISTING_PARENT_MIN_EFFORT="$(policy_or_default parent min_reasoning_effort "$DEFAULT_PARENT_MIN_EFFORT")"
+EXISTING_PARENT_ROUTINE_EFFORT="$(policy_or_default parent routine_effort "$DEFAULT_PARENT_ROUTINE_EFFORT")"
+EXISTING_PARENT_COMPLEX_EFFORT="$(policy_or_default parent complex_effort "$DEFAULT_PARENT_COMPLEX_EFFORT")"
+EXISTING_PARENT_CRITICAL_EFFORT="$(policy_or_default parent critical_effort "$DEFAULT_PARENT_CRITICAL_EFFORT")"
+EXISTING_WORKER_POLICY="$(policy_or_default worker model_policy "$DEFAULT_WORKER_POLICY")"
+EXISTING_WORKER_MODEL="$(policy_or_default worker model auto)"
+EXISTING_WORKER_MIN_EFFORT="$(policy_or_default worker min_reasoning_effort "$DEFAULT_WORKER_MIN_EFFORT")"
+EXISTING_WORKER_ROUTINE_EFFORT="$(policy_or_default worker routine_effort "$DEFAULT_WORKER_ROUTINE_EFFORT")"
+EXISTING_WORKER_COMPLEX_EFFORT="$(policy_or_default worker complex_effort "$DEFAULT_WORKER_COMPLEX_EFFORT")"
+EXISTING_WORKER_CRITICAL_EFFORT="$(policy_or_default worker critical_effort "$DEFAULT_WORKER_CRITICAL_EFFORT")"
+EXISTING_MAX_THREADS="$(policy_or_default runtime max_concurrent_threads "$DEFAULT_MAX_THREADS")"
+EXISTING_MAX_REPAIRS="$(policy_or_default runtime max_repair_cycles "$DEFAULT_MAX_REPAIRS")"
+EXISTING_TELEMETRY_ENABLED="$(policy_or_default telemetry enabled "$DEFAULT_TELEMETRY_ENABLED")"
+EXISTING_TELEMETRY_NOTIFICATIONS="$(policy_or_default telemetry notifications "$DEFAULT_TELEMETRY_NOTIFICATIONS")"
+EXISTING_TELEMETRY_RETENTION_DAYS="$(policy_or_default telemetry retention_days "$DEFAULT_TELEMETRY_RETENTION_DAYS")"
+
+STRATEGY_PROFILE="${CODEX_FLOW_STRATEGY:-$EXISTING_STRATEGY}"
+ROUTING_MODE="${CODEX_FLOW_ROUTING_MODE:-$EXISTING_ROUTING}"
+REVIEW_MODIFIER="${CODEX_FLOW_REVIEW_MODIFIER:-$EXISTING_REVIEW}"
+FANOUT_MODIFIER="${CODEX_FLOW_FANOUT_MODIFIER:-$EXISTING_FANOUT}"
+PARENT_MODEL_POLICY="${CODEX_FLOW_PARENT_MODEL_POLICY:-$EXISTING_PARENT_POLICY}"
+PARENT_MIN_MODEL="${CODEX_FLOW_PARENT_MIN_MODEL:-$EXISTING_PARENT_MIN_MODEL}"
+PARENT_MIN_EFFORT="${CODEX_FLOW_PARENT_MIN_EFFORT:-$EXISTING_PARENT_MIN_EFFORT}"
+PARENT_ROUTINE_EFFORT="${CODEX_FLOW_PARENT_ROUTINE_EFFORT:-$EXISTING_PARENT_ROUTINE_EFFORT}"
+PARENT_COMPLEX_EFFORT="${CODEX_FLOW_PARENT_COMPLEX_EFFORT:-$EXISTING_PARENT_COMPLEX_EFFORT}"
+PARENT_CRITICAL_EFFORT="${CODEX_FLOW_PARENT_CRITICAL_EFFORT:-$EXISTING_PARENT_CRITICAL_EFFORT}"
+WORKER_MODEL_POLICY="${CODEX_FLOW_WORKER_MODEL_POLICY:-$EXISTING_WORKER_POLICY}"
+WORKER_MODEL_REQUESTED="${CODEX_FLOW_WORKER_MODEL:-$EXISTING_WORKER_MODEL}"
 WORKER_MODEL="$WORKER_MODEL_REQUESTED"; [[ "$WORKER_MODEL" == "auto" ]] && WORKER_MODEL="$DEFAULT_WORKER_MODEL"
-WORKER_MIN_EFFORT="${CODEX_FLOW_WORKER_MIN_EFFORT:-high}"
-MAX_THREADS="${CODEX_FLOW_MAX_THREADS:-$DEFAULT_MAX_THREADS}"
-MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$DEFAULT_MAX_REPAIRS}"
-TELEMETRY_ENABLED="${CODEX_FLOW_TELEMETRY_ENABLED:-true}"
-TELEMETRY_NOTIFICATIONS="${CODEX_FLOW_TELEMETRY_NOTIFICATIONS:-true}"
-TELEMETRY_RETENTION_DAYS="${CODEX_FLOW_TELEMETRY_RETENTION_DAYS:-30}"
+WORKER_MIN_EFFORT="${CODEX_FLOW_WORKER_MIN_EFFORT:-$EXISTING_WORKER_MIN_EFFORT}"
+WORKER_ROUTINE_EFFORT="${CODEX_FLOW_WORKER_ROUTINE_EFFORT:-$EXISTING_WORKER_ROUTINE_EFFORT}"
+WORKER_COMPLEX_EFFORT="${CODEX_FLOW_WORKER_COMPLEX_EFFORT:-$EXISTING_WORKER_COMPLEX_EFFORT}"
+WORKER_CRITICAL_EFFORT="${CODEX_FLOW_WORKER_CRITICAL_EFFORT:-$EXISTING_WORKER_CRITICAL_EFFORT}"
+MAX_THREADS="${CODEX_FLOW_MAX_THREADS:-$EXISTING_MAX_THREADS}"
+MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$EXISTING_MAX_REPAIRS}"
+TELEMETRY_ENABLED="${CODEX_FLOW_TELEMETRY_ENABLED:-$EXISTING_TELEMETRY_ENABLED}"
+TELEMETRY_NOTIFICATIONS="${CODEX_FLOW_TELEMETRY_NOTIFICATIONS:-$EXISTING_TELEMETRY_NOTIFICATIONS}"
+TELEMETRY_RETENTION_DAYS="${CODEX_FLOW_TELEMETRY_RETENTION_DAYS:-$EXISTING_TELEMETRY_RETENTION_DAYS}"
 UI_LANGUAGE="auto"
 if [[ -f "$POLICY" ]]; then UI_LANGUAGE="$(python3 "$LOCALIZATION" --policy "$POLICY" --configured 2>/dev/null || echo auto)"; fi
 UI_LANGUAGE="$(python3 "$LOCALIZATION" --normalize "$UI_LANGUAGE")"
 
-case "$PARENT_MIN_EFFORT" in high|xhigh|max) ;; *) echo "parent minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
-case "$WORKER_MIN_EFFORT" in high|xhigh|max) ;; *) echo "worker minimum effort must be high, xhigh, or max" >&2; exit 2 ;; esac
+case "$STRATEGY_PROFILE" in efficient|balanced|quality|speed) ;; *) echo "CODEX_FLOW_STRATEGY must be efficient, balanced, quality, or speed" >&2; exit 2 ;; esac
+case "$ROUTING_MODE" in adaptive|direct|delegate) ;; *) echo "CODEX_FLOW_ROUTING_MODE must be adaptive, direct, or delegate" >&2; exit 2 ;; esac
+case "$REVIEW_MODIFIER" in auto|standard|strict) ;; *) echo "CODEX_FLOW_REVIEW_MODIFIER must be auto, standard, or strict" >&2; exit 2 ;; esac
+case "$FANOUT_MODIFIER" in auto|conservative|aggressive) ;; *) echo "CODEX_FLOW_FANOUT_MODIFIER must be auto, conservative, or aggressive" >&2; exit 2 ;; esac
+for effort in "$PARENT_MIN_EFFORT" "$PARENT_ROUTINE_EFFORT" "$PARENT_COMPLEX_EFFORT" "$PARENT_CRITICAL_EFFORT" "$WORKER_MIN_EFFORT" "$WORKER_ROUTINE_EFFORT" "$WORKER_COMPLEX_EFFORT" "$WORKER_CRITICAL_EFFORT"; do
+  case "$effort" in high|xhigh|max) ;; *) echo "reasoning efforts must be high, xhigh, or max" >&2; exit 2 ;; esac
+done
 case "$TELEMETRY_ENABLED" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_ENABLED must be true or false" >&2; exit 2 ;; esac
 case "$TELEMETRY_NOTIFICATIONS" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_NOTIFICATIONS must be true or false" >&2; exit 2 ;; esac
+[[ "$MAX_THREADS" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_MAX_THREADS must be a positive integer" >&2; exit 2; }
+[[ "$MAX_REPAIRS" =~ ^[0-9]+$ ]] || { echo "CODEX_FLOW_MAX_REPAIR_CYCLES must be a non-negative integer" >&2; exit 2; }
 [[ "$TELEMETRY_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_TELEMETRY_RETENTION_DAYS must be a positive integer" >&2; exit 2; }
 
 mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$BIN_DIR"
@@ -96,19 +158,29 @@ path.write_text(text)
 PY
 
 cat > "$POLICY" <<EOF
-schema_version = 3
+schema_version = 4
 
 [ui]
 language = "$UI_LANGUAGE"
+
+[strategy]
+profile = "$STRATEGY_PROFILE"
+
+[routing]
+mode = "$ROUTING_MODE"
+
+[modifiers]
+review = "$REVIEW_MODIFIER"
+fanout = "$FANOUT_MODIFIER"
 
 [parent]
 model_policy = "$PARENT_MODEL_POLICY"
 min_model = "$PARENT_MIN_MODEL"
 min_reasoning_effort = "$PARENT_MIN_EFFORT"
 reasoning_policy = "adaptive"
-routine_effort = "$PARENT_MIN_EFFORT"
-complex_effort = "xhigh"
-critical_effort = "max"
+routine_effort = "$PARENT_ROUTINE_EFFORT"
+complex_effort = "$PARENT_COMPLEX_EFFORT"
+critical_effort = "$PARENT_CRITICAL_EFFORT"
 
 [worker]
 model_policy = "$WORKER_MODEL_POLICY"
@@ -116,9 +188,9 @@ model = "$WORKER_MODEL_REQUESTED"
 resolved_model = "$WORKER_MODEL"
 min_reasoning_effort = "$WORKER_MIN_EFFORT"
 reasoning_policy = "adaptive"
-routine_effort = "$WORKER_MIN_EFFORT"
-complex_effort = "xhigh"
-critical_effort = "max"
+routine_effort = "$WORKER_ROUTINE_EFFORT"
+complex_effort = "$WORKER_COMPLEX_EFFORT"
+critical_effort = "$WORKER_CRITICAL_EFFORT"
 
 [runtime]
 max_concurrent_threads = $MAX_THREADS
@@ -134,16 +206,19 @@ EOF
 
 cp "$ROOT_DIR/templates/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-explorer.toml"
 cp "$ROOT_DIR/templates/agents/worker-implementer.toml" "$CODEX_HOME/agents/worker-implementer.toml"
+cp "$ROOT_DIR/templates/agents/worker-reviewer.toml" "$CODEX_HOME/agents/worker-reviewer.toml"
 cp "$ROOT_DIR/templates/skills/flow-pilot/SKILL.md" "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 
 printf '%s\n' "$ROOT_DIR" > "$STATE_DIR/source"
 printf '%s\n' "$VERSION" > "$STATE_DIR/version"
+cp "$DEFAULTS" "$STATE_DIR/defaults.toml"
 cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"; chmod +x "$BIN_DIR/codex-flow"
-for file in telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
-rm -rf "$STATE_DIR/telemetry_core"
+for file in telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py strategy_runtime.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
+rm -rf "$STATE_DIR/strategies" "$STATE_DIR/telemetry_core"
+cp -r "$ROOT_DIR/scripts/strategies" "$STATE_DIR/strategies"
 cp -r "$ROOT_DIR/scripts/telemetry_core" "$STATE_DIR/telemetry_core"
-chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/doctor.py"
+chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/doctor.py" "$STATE_DIR/strategy_runtime.py"
 
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"; else python3 "$STATE_DIR/manage-hooks.py" uninstall --hooks "$HOOKS"; fi
 
@@ -167,10 +242,12 @@ disp_policy="$(display_path "$POLICY")"; disp_cli="$(display_path "$BIN_DIR/code
 
 printf '\n🚀 %s\n\n' "$(cf_t "codex-flow v$VERSION installed successfully" "codex-flow v$VERSION 安装成功")"
 printf '  ╭─ %s ──────────────────────────────────────────────────────────╮\n' "$(cf_t 'Summary' '安装摘要')"
-printf '  │  • %s: %s\n' "$(cf_t 'Policy' '策略')" "$disp_policy"
+printf '  │  • %s: %s\n' "$(cf_t 'Policy' '策略文件')" "$disp_policy"
 printf '  │  • CLI: %s\n' "$disp_cli"
 printf '  │  • Skill: FlowPilot (flow-pilot)\n'
-printf '  │  • %s: parent (%s) -> worker (%s)\n' "$(cf_t 'Routing' '路由')" "$PARENT_MODEL_POLICY" "$WORKER_MODEL"
+printf '  │  • %s: %s / %s\n' "$(cf_t 'Strategy' '执行策略')" "$STRATEGY_PROFILE" "$ROUTING_MODE"
+printf '  │  • %s: review=%s / fanout=%s\n' "$(cf_t 'Modifiers' '修饰策略')" "$REVIEW_MODIFIER" "$FANOUT_MODIFIER"
+printf '  │  • %s: parent (%s) -> worker (%s)\n' "$(cf_t 'Models' '模型')" "$PARENT_MODEL_POLICY" "$WORKER_MODEL"
 printf '  │  • %s: %s (%s: %s)\n' "$(cf_t 'Language' '语言')" "$UI_LANGUAGE" "$(cf_t 'configured' '配置')" "$UI_LANG"
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then printf '  │  • Telemetry: ● enabled (%sd retention)\n' "$TELEMETRY_RETENTION_DAYS"; else printf '  │  • Telemetry: ○ disabled\n'; fi
 printf '  ╰────────────────────────────────────────────────────────────────────╯\n\n'

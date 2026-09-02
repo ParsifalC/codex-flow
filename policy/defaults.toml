@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 
 # Release-time recommendations. `auto` policy values resolve through this file.
 # Keep workflow semantics model-agnostic; update only these recommendations as
@@ -10,15 +10,33 @@ parent_recommended_model = "gpt-5.6-sol"
 worker_policy = "latest-efficient"
 worker_model = "gpt-5.6-luna"
 
+# FlowPilot is the strategy runtime. The default profile preserves the historical
+# codex-flow objective while offloading more deep execution to cheap workers.
+[strategy]
+profile = "efficient"
+
+# Routing is an execution constraint, not a strategy. Prompt-level explicit
+# direct/delegate/adaptive instructions may override this for one task only.
+[routing]
+mode = "adaptive"
+
+# Orthogonal behavior modifiers avoid combinatorial strategy names.
+[modifiers]
+review = "auto"
+fanout = "auto"
+
+# This is the single release-time source of truth for reasoning defaults. Parent
+# reasoning is intentionally economical because the capable parent model is much
+# more expensive. Efficient workers receive one higher effort tier by default.
 [reasoning.parent]
 minimum = "high"
 routine = "high"
-complex = "xhigh"
-critical = "max"
+complex = "high"
+critical = "xhigh"
 
 [reasoning.worker]
-minimum = "high"
-routine = "high"
+minimum = "xhigh"
+routine = "xhigh"
 complex = "xhigh"
 critical = "max"
 
@@ -29,4 +47,6 @@ max_repair_cycles = 2
 [telemetry]
 enabled = true
 summary = true
+notifications = true
+retention_days = 30
 source = "hooks+app-server"

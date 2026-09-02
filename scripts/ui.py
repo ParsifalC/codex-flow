@@ -88,9 +88,11 @@ def status(lang: str) -> int:
         print(box_line(f"• {T('Checkout', '源码目录', lang)}:    {compact_path(src)} (v{available})"))
     else:
         print(box_line(f"• {T('Checkout', '源码目录', lang)}:    {T('unavailable', '不可用', lang)}"))
-    print(box_line(f"• {T('Skill', 'Skill', lang)}:       FlowPilot (flow-pilot)"))
+    print(box_line(f"• {T('Runtime', '运行时', lang)}:     FlowPilot (flow-pilot)"))
     if POLICY.exists():
-        print("  ├─ " + T("Model Routing", "模型路由", lang) + " " + "─" * (52 if lang == "en" else 56) + "┤")
+        print("  ├─ " + T("Strategy & Model Routing", "策略与模型路由", lang) + " " + "─" * (40 if lang == "en" else 46) + "┤")
+        strategy = policy_value("strategy", "profile", "efficient")
+        routing = policy_value("routing", "mode", "adaptive")
         p_policy = policy_value("parent", "model_policy", "unknown")
         p_effort = policy_value("parent", "min_reasoning_effort", "unknown")
         w_model = policy_value("worker", "resolved_model", "unknown")
@@ -100,6 +102,8 @@ def status(lang: str) -> int:
         retention = policy_value("telemetry", "retention_days", "30")
         configured = configured_language(POLICY)
         effective = resolve_language(POLICY)
+        print(box_line(f"• {T('Strategy', '执行策略', lang)}:    {strategy}"))
+        print(box_line(f"• {T('Routing', '路由模式', lang)}:     {routing}"))
         print(box_line(f"• {T('Parent', '父 Agent', lang)}:      {p_policy} ({T('min effort', '最低推理', lang)}: {p_effort})"))
         print(box_line(f"• {T('Worker', '子 Agent', lang)}:      {w_model} ({T('min effort', '最低推理', lang)}: {w_effort})"))
         print(box_line(f"• {T('Telemetry', '遥测', lang)}:   {'● ' + T('enabled','已启用',lang) if t_enabled == 'true' else '○ ' + T('disabled','已禁用',lang)}"))
@@ -154,9 +158,14 @@ def help_text(lang: str) -> int:
 
   核心命令
     status                      查看版本与当前生效的 FlowPilot 策略
+    strategy show               查看持久化 strategy / routing
+    strategy profiles           查看 efficient/balanced/quality/speed
+    strategy set <profile>      设置默认执行策略
+    strategy routing <mode>     设置 adaptive/direct/delegate 路由约束
+    strategy plan [选项]        从结构化 TaskProfile 生成 ExecutionPlan(JSON)
     language [auto|zh|en]       查看或设置界面语言（默认 auto 跟随系统）
     update                      拉取源码、保留策略并刷新安装
-    doctor                      检查安装、路由和遥测链路
+    doctor                      检查安装、策略运行时和遥测链路
     overlay [start|stop|toggle] macOS 原生悬浮窗
     usage last [--json]         查看最近一次任务遥测摘要
     usage list [选项]           浏览任务历史（-n N、--project P、--today、--json）
@@ -173,8 +182,8 @@ def help_text(lang: str) -> int:
     uninstall                   移除 codex-flow 管理的文件与 hooks
 
   提示:
-    运行 `codex-flow` 进入交互控制台；语言默认跟随系统，也可用
-    `codex-flow language zh` 或 `codex-flow language en` 固定语言。
+    默认策略为 efficient，路由为 adaptive；这与旧版 FlowPilot 行为兼容。
+    对话中的明确策略/路由指令只覆盖当前任务，不修改持久化配置。
 """)
     else:
         print("""
@@ -184,10 +193,15 @@ Usage: codex-flow <command> [options]
     codex-flow                  Launch the interactive management console (no args in TTY)
 
   Core Commands
-    status                      Show installed version and effective FlowPilot policy
+    status                      Show installed version and effective FlowPilot strategy
+    strategy show               Show persistent strategy / routing
+    strategy profiles           List efficient/balanced/quality/speed profiles
+    strategy set <profile>      Set the default execution strategy
+    strategy routing <mode>     Set adaptive/direct/delegate routing constraint
+    strategy plan [options]     Compile a structured TaskProfile to ExecutionPlan JSON
     language [auto|zh|en]       Show or set UI language (auto follows the system)
     update                      Pull checkout, preserve policy, refresh installation
-    doctor                      Verify installation, routing, and telemetry wiring
+    doctor                      Verify installation, strategy runtime, and telemetry wiring
     overlay [start|stop|toggle] Native macOS floating widget
     usage last [--json]         Show the last task telemetry summary
     usage list [options]        List task history (-n N, --project P, --today, --json)
@@ -204,8 +218,8 @@ Usage: codex-flow <command> [options]
     uninstall                   Remove codex-flow-managed files and hooks
 
   Tip:
-    Run `codex-flow` to enter the interactive console. Language follows the system by
-    default; pin it with `codex-flow language zh` or `codex-flow language en`.
+    The default is efficient + adaptive, preserving previous FlowPilot behavior.
+    Explicit strategy/routing instructions in a prompt override only the current task.
 """)
     return 0
 

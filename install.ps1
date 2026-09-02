@@ -20,49 +20,108 @@ $BinDir = [System.IO.Path]::GetFullPath($BinDir)
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $Version = if (Test-Path (Join-Path $RootDir 'VERSION')) { (Read-Utf8NoBom (Join-Path $RootDir 'VERSION')).Trim() } else { 'dev' }
 
-function Get-TomlString([string]$Text, [string]$Section, [string]$Key) {
+function Get-TomlValue([string]$Text, [string]$Section, [string]$Key) {
     $m = [regex]::Match($Text, '(?ms)^\[' + [regex]::Escape($Section) + '\]\s*(.*?)(?=^\[[^\r\n]+\]|\z)')
     if (-not $m.Success) { return '' }
-    $k = [regex]::Match($m.Groups[1].Value, '(?m)^\s*' + [regex]::Escape($Key) + '\s*=\s*"([^"]+)"\s*$')
-    if ($k.Success) { return $k.Groups[1].Value }
-    return ''
+    $k = [regex]::Match($m.Groups[1].Value, '(?m)^\s*' + [regex]::Escape($Key) + '\s*=\s*(.*?)\s*$')
+    if (-not $k.Success) { return '' }
+    $value = [regex]::Replace($k.Groups[1].Value, '\s+#.*$', '').Trim()
+    if ($value.Length -ge 2 -and $value[0] -eq '"' -and $value[$value.Length - 1] -eq '"') {
+        return $value.Substring(1, $value.Length - 2)
+    }
+    return $value
 }
-function Get-TomlInt([string]$Text, [string]$Section, [string]$Key) {
-    $m = [regex]::Match($Text, '(?ms)^\[' + [regex]::Escape($Section) + '\]\s*(.*?)(?=^\[[^\r\n]+\]|\z)')
-    if (-not $m.Success) { return '' }
-    $k = [regex]::Match($m.Groups[1].Value, '(?m)^\s*' + [regex]::Escape($Key) + '\s*=\s*(\d+)\s*$')
-    if ($k.Success) { return $k.Groups[1].Value }
-    return ''
+function Existing-OrDefault([string]$Text, [string]$Section, [string]$Key, [string]$Fallback) {
+    $value = Get-TomlValue $Text $Section $Key
+    if ($value) { return $value }
+    return $Fallback
 }
 
 if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) { throw 'python3 is required' }
 $defaultsText = Read-Utf8NoBom $Defaults
-$DefaultWorkerModel = Get-TomlString $defaultsText 'models' 'worker_model'
-$DefaultParentPolicy = Get-TomlString $defaultsText 'models' 'parent_policy'
-$DefaultParentMinModel = Get-TomlString $defaultsText 'models' 'parent_min_model'
-$DefaultMaxThreads = Get-TomlInt $defaultsText 'runtime' 'max_concurrent_threads'
-$DefaultMaxRepairs = Get-TomlInt $defaultsText 'runtime' 'max_repair_cycles'
+$existingText = if (Test-Path $Policy) { Read-Utf8NoBom $Policy } else { '' }
 
-$ParentModelPolicy = if ($env:CODEX_FLOW_PARENT_MODEL_POLICY) { $env:CODEX_FLOW_PARENT_MODEL_POLICY } else { $DefaultParentPolicy }
-$ParentMinModel = if ($env:CODEX_FLOW_PARENT_MIN_MODEL) { $env:CODEX_FLOW_PARENT_MIN_MODEL } else { $DefaultParentMinModel }
-$ParentMinEffort = if ($env:CODEX_FLOW_PARENT_MIN_EFFORT) { $env:CODEX_FLOW_PARENT_MIN_EFFORT } else { 'high' }
-$WorkerModelPolicy = if ($env:CODEX_FLOW_WORKER_MODEL_POLICY) { $env:CODEX_FLOW_WORKER_MODEL_POLICY } else { 'latest-efficient' }
-$WorkerRequested = if ($env:CODEX_FLOW_WORKER_MODEL) { $env:CODEX_FLOW_WORKER_MODEL } else { 'auto' }
+$DefaultWorkerModel = Get-TomlValue $defaultsText 'models' 'worker_model'
+$DefaultWorkerPolicy = Get-TomlValue $defaultsText 'models' 'worker_policy'
+$DefaultParentPolicy = Get-TomlValue $defaultsText 'models' 'parent_policy'
+$DefaultParentMinModel = Get-TomlValue $defaultsText 'models' 'parent_min_model'
+$DefaultStrategy = Get-TomlValue $defaultsText 'strategy' 'profile'
+$DefaultRoutingMode = Get-TomlValue $defaultsText 'routing' 'mode'
+$DefaultReviewModifier = Get-TomlValue $defaultsText 'modifiers' 'review'
+$DefaultFanoutModifier = Get-TomlValue $defaultsText 'modifiers' 'fanout'
+$DefaultParentMinEffort = Get-TomlValue $defaultsText 'reasoning.parent' 'minimum'
+$DefaultParentRoutineEffort = Get-TomlValue $defaultsText 'reasoning.parent' 'routine'
+$DefaultParentComplexEffort = Get-TomlValue $defaultsText 'reasoning.parent' 'complex'
+$DefaultParentCriticalEffort = Get-TomlValue $defaultsText 'reasoning.parent' 'critical'
+$DefaultWorkerMinEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'minimum'
+$DefaultWorkerRoutineEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'routine'
+$DefaultWorkerComplexEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'complex'
+$DefaultWorkerCriticalEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'critical'
+$DefaultMaxThreads = Get-TomlValue $defaultsText 'runtime' 'max_concurrent_threads'
+$DefaultMaxRepairs = Get-TomlValue $defaultsText 'runtime' 'max_repair_cycles'
+$DefaultTelemetryEnabled = Get-TomlValue $defaultsText 'telemetry' 'enabled'
+$DefaultTelemetryNotifications = Get-TomlValue $defaultsText 'telemetry' 'notifications'
+$DefaultTelemetryRetentionDays = Get-TomlValue $defaultsText 'telemetry' 'retention_days'
+
+$ExistingStrategy = Existing-OrDefault $existingText 'strategy' 'profile' $DefaultStrategy
+$ExistingRouting = Existing-OrDefault $existingText 'routing' 'mode' $DefaultRoutingMode
+$ExistingReview = Existing-OrDefault $existingText 'modifiers' 'review' $DefaultReviewModifier
+$ExistingFanout = Existing-OrDefault $existingText 'modifiers' 'fanout' $DefaultFanoutModifier
+$ExistingParentPolicy = Existing-OrDefault $existingText 'parent' 'model_policy' $DefaultParentPolicy
+$ExistingParentMinModel = Existing-OrDefault $existingText 'parent' 'min_model' $DefaultParentMinModel
+$ExistingParentMinEffort = Existing-OrDefault $existingText 'parent' 'min_reasoning_effort' $DefaultParentMinEffort
+$ExistingParentRoutineEffort = Existing-OrDefault $existingText 'parent' 'routine_effort' $DefaultParentRoutineEffort
+$ExistingParentComplexEffort = Existing-OrDefault $existingText 'parent' 'complex_effort' $DefaultParentComplexEffort
+$ExistingParentCriticalEffort = Existing-OrDefault $existingText 'parent' 'critical_effort' $DefaultParentCriticalEffort
+$ExistingWorkerPolicy = Existing-OrDefault $existingText 'worker' 'model_policy' $DefaultWorkerPolicy
+$ExistingWorkerModel = Existing-OrDefault $existingText 'worker' 'model' 'auto'
+$ExistingWorkerMinEffort = Existing-OrDefault $existingText 'worker' 'min_reasoning_effort' $DefaultWorkerMinEffort
+$ExistingWorkerRoutineEffort = Existing-OrDefault $existingText 'worker' 'routine_effort' $DefaultWorkerRoutineEffort
+$ExistingWorkerComplexEffort = Existing-OrDefault $existingText 'worker' 'complex_effort' $DefaultWorkerComplexEffort
+$ExistingWorkerCriticalEffort = Existing-OrDefault $existingText 'worker' 'critical_effort' $DefaultWorkerCriticalEffort
+$ExistingMaxThreads = Existing-OrDefault $existingText 'runtime' 'max_concurrent_threads' $DefaultMaxThreads
+$ExistingMaxRepairs = Existing-OrDefault $existingText 'runtime' 'max_repair_cycles' $DefaultMaxRepairs
+$ExistingTelemetryEnabled = Existing-OrDefault $existingText 'telemetry' 'enabled' $DefaultTelemetryEnabled
+$ExistingTelemetryNotifications = Existing-OrDefault $existingText 'telemetry' 'notifications' $DefaultTelemetryNotifications
+$ExistingTelemetryRetentionDays = Existing-OrDefault $existingText 'telemetry' 'retention_days' $DefaultTelemetryRetentionDays
+
+$StrategyProfile = if ($env:CODEX_FLOW_STRATEGY) { $env:CODEX_FLOW_STRATEGY } else { $ExistingStrategy }
+$RoutingMode = if ($env:CODEX_FLOW_ROUTING_MODE) { $env:CODEX_FLOW_ROUTING_MODE } else { $ExistingRouting }
+$ReviewModifier = if ($env:CODEX_FLOW_REVIEW_MODIFIER) { $env:CODEX_FLOW_REVIEW_MODIFIER } else { $ExistingReview }
+$FanoutModifier = if ($env:CODEX_FLOW_FANOUT_MODIFIER) { $env:CODEX_FLOW_FANOUT_MODIFIER } else { $ExistingFanout }
+$ParentModelPolicy = if ($env:CODEX_FLOW_PARENT_MODEL_POLICY) { $env:CODEX_FLOW_PARENT_MODEL_POLICY } else { $ExistingParentPolicy }
+$ParentMinModel = if ($env:CODEX_FLOW_PARENT_MIN_MODEL) { $env:CODEX_FLOW_PARENT_MIN_MODEL } else { $ExistingParentMinModel }
+$ParentMinEffort = if ($env:CODEX_FLOW_PARENT_MIN_EFFORT) { $env:CODEX_FLOW_PARENT_MIN_EFFORT } else { $ExistingParentMinEffort }
+$ParentRoutineEffort = if ($env:CODEX_FLOW_PARENT_ROUTINE_EFFORT) { $env:CODEX_FLOW_PARENT_ROUTINE_EFFORT } else { $ExistingParentRoutineEffort }
+$ParentComplexEffort = if ($env:CODEX_FLOW_PARENT_COMPLEX_EFFORT) { $env:CODEX_FLOW_PARENT_COMPLEX_EFFORT } else { $ExistingParentComplexEffort }
+$ParentCriticalEffort = if ($env:CODEX_FLOW_PARENT_CRITICAL_EFFORT) { $env:CODEX_FLOW_PARENT_CRITICAL_EFFORT } else { $ExistingParentCriticalEffort }
+$WorkerModelPolicy = if ($env:CODEX_FLOW_WORKER_MODEL_POLICY) { $env:CODEX_FLOW_WORKER_MODEL_POLICY } else { $ExistingWorkerPolicy }
+$WorkerRequested = if ($env:CODEX_FLOW_WORKER_MODEL) { $env:CODEX_FLOW_WORKER_MODEL } else { $ExistingWorkerModel }
 $WorkerModel = if ($WorkerRequested -eq 'auto') { $DefaultWorkerModel } else { $WorkerRequested }
-$WorkerMinEffort = if ($env:CODEX_FLOW_WORKER_MIN_EFFORT) { $env:CODEX_FLOW_WORKER_MIN_EFFORT } else { 'high' }
-$MaxThreads = if ($env:CODEX_FLOW_MAX_THREADS) { $env:CODEX_FLOW_MAX_THREADS } else { $DefaultMaxThreads }
-$MaxRepairs = if ($env:CODEX_FLOW_MAX_REPAIR_CYCLES) { $env:CODEX_FLOW_MAX_REPAIR_CYCLES } else { $DefaultMaxRepairs }
-$TelemetryEnabled = if ($env:CODEX_FLOW_TELEMETRY_ENABLED) { $env:CODEX_FLOW_TELEMETRY_ENABLED } else { 'true' }
-$TelemetryNotifications = if ($env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS) { $env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS } else { 'true' }
-$TelemetryRetentionDays = if ($env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS) { $env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS } else { '30' }
+$WorkerMinEffort = if ($env:CODEX_FLOW_WORKER_MIN_EFFORT) { $env:CODEX_FLOW_WORKER_MIN_EFFORT } else { $ExistingWorkerMinEffort }
+$WorkerRoutineEffort = if ($env:CODEX_FLOW_WORKER_ROUTINE_EFFORT) { $env:CODEX_FLOW_WORKER_ROUTINE_EFFORT } else { $ExistingWorkerRoutineEffort }
+$WorkerComplexEffort = if ($env:CODEX_FLOW_WORKER_COMPLEX_EFFORT) { $env:CODEX_FLOW_WORKER_COMPLEX_EFFORT } else { $ExistingWorkerComplexEffort }
+$WorkerCriticalEffort = if ($env:CODEX_FLOW_WORKER_CRITICAL_EFFORT) { $env:CODEX_FLOW_WORKER_CRITICAL_EFFORT } else { $ExistingWorkerCriticalEffort }
+$MaxThreads = if ($env:CODEX_FLOW_MAX_THREADS) { $env:CODEX_FLOW_MAX_THREADS } else { $ExistingMaxThreads }
+$MaxRepairs = if ($env:CODEX_FLOW_MAX_REPAIR_CYCLES) { $env:CODEX_FLOW_MAX_REPAIR_CYCLES } else { $ExistingMaxRepairs }
+$TelemetryEnabled = if ($env:CODEX_FLOW_TELEMETRY_ENABLED) { $env:CODEX_FLOW_TELEMETRY_ENABLED } else { $ExistingTelemetryEnabled }
+$TelemetryNotifications = if ($env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS) { $env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS } else { $ExistingTelemetryNotifications }
+$TelemetryRetentionDays = if ($env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS) { $env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS } else { $ExistingTelemetryRetentionDays }
 $UiLanguage = 'auto'
 if (Test-Path $Policy) {
     try { $UiLanguage = (& python3 $Localization --policy $Policy --configured 2>$null | Out-String).Trim() } catch { $UiLanguage = 'auto' }
 }
 $UiLanguage = (& python3 $Localization --normalize $UiLanguage | Out-String).Trim()
 
-if ($ParentMinEffort -notin @('high','xhigh','max')) { throw 'parent minimum effort must be high, xhigh, or max' }
-if ($WorkerMinEffort -notin @('high','xhigh','max')) { throw 'worker minimum effort must be high, xhigh, or max' }
+if ($StrategyProfile -notin @('efficient','balanced','quality','speed')) { throw 'CODEX_FLOW_STRATEGY must be efficient, balanced, quality, or speed' }
+if ($RoutingMode -notin @('adaptive','direct','delegate')) { throw 'CODEX_FLOW_ROUTING_MODE must be adaptive, direct, or delegate' }
+if ($ReviewModifier -notin @('auto','standard','strict')) { throw 'CODEX_FLOW_REVIEW_MODIFIER must be auto, standard, or strict' }
+if ($FanoutModifier -notin @('auto','conservative','aggressive')) { throw 'CODEX_FLOW_FANOUT_MODIFIER must be auto, conservative, or aggressive' }
+foreach ($effort in @($ParentMinEffort,$ParentRoutineEffort,$ParentComplexEffort,$ParentCriticalEffort,$WorkerMinEffort,$WorkerRoutineEffort,$WorkerComplexEffort,$WorkerCriticalEffort)) {
+    if ($effort -notin @('high','xhigh','max')) { throw 'reasoning efforts must be high, xhigh, or max' }
+}
+if ($MaxThreads -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_MAX_THREADS must be a positive integer' }
+if ($MaxRepairs -notmatch '^[0-9]+$') { throw 'CODEX_FLOW_MAX_REPAIR_CYCLES must be a non-negative integer' }
 if ($TelemetryEnabled -notin @('true','false')) { throw 'CODEX_FLOW_TELEMETRY_ENABLED must be true or false' }
 if ($TelemetryNotifications -notin @('true','false')) { throw 'CODEX_FLOW_TELEMETRY_NOTIFICATIONS must be true or false' }
 if ($TelemetryRetentionDays -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_TELEMETRY_RETENTION_DAYS must be a positive integer' }
@@ -97,19 +156,29 @@ if ($match.Success) {
 Write-Utf8NoBom $Config $text
 
 @"
-schema_version = 3
+schema_version = 4
 
 [ui]
 language = "$UiLanguage"
+
+[strategy]
+profile = "$StrategyProfile"
+
+[routing]
+mode = "$RoutingMode"
+
+[modifiers]
+review = "$ReviewModifier"
+fanout = "$FanoutModifier"
 
 [parent]
 model_policy = "$ParentModelPolicy"
 min_model = "$ParentMinModel"
 min_reasoning_effort = "$ParentMinEffort"
 reasoning_policy = "adaptive"
-routine_effort = "$ParentMinEffort"
-complex_effort = "xhigh"
-critical_effort = "max"
+routine_effort = "$ParentRoutineEffort"
+complex_effort = "$ParentComplexEffort"
+critical_effort = "$ParentCriticalEffort"
 
 [worker]
 model_policy = "$WorkerModelPolicy"
@@ -117,9 +186,9 @@ model = "$WorkerRequested"
 resolved_model = "$WorkerModel"
 min_reasoning_effort = "$WorkerMinEffort"
 reasoning_policy = "adaptive"
-routine_effort = "$WorkerMinEffort"
-complex_effort = "xhigh"
-critical_effort = "max"
+routine_effort = "$WorkerRoutineEffort"
+complex_effort = "$WorkerComplexEffort"
+critical_effort = "$WorkerCriticalEffort"
 
 [runtime]
 max_concurrent_threads = $MaxThreads
@@ -135,6 +204,7 @@ source = "hooks+app-server"
 
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-explorer.toml') (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-implementer.toml') (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force
+Copy-Item (Join-Path $RootDir 'templates/agents/worker-reviewer.toml') (Join-Path $CodexHome 'agents/worker-reviewer.toml') -Force
 Copy-Item (Join-Path $RootDir 'templates/skills/flow-pilot/SKILL.md') (Join-Path $CodexHome 'skills/flow-pilot/SKILL.md') -Force
 Remove-Item (Join-Path $CodexHome 'agents/luna-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorAction SilentlyContinue
@@ -142,8 +212,11 @@ Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorA
 Write-Utf8NoBom (Join-Path $StateDir 'source') $RootDir
 Write-Utf8NoBom (Join-Path $StateDir 'version') $Version
 Write-Utf8NoBom $BinDirState $BinDir
-foreach ($name in @('telemetry.py','manage-hooks.py','menu.py','localization.py','ui.py','doctor.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
+Copy-Item $Defaults (Join-Path $StateDir 'defaults.toml') -Force
+foreach ($name in @('telemetry.py','manage-hooks.py','menu.py','localization.py','ui.py','doctor.py','strategy_runtime.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
+Remove-Item (Join-Path $StateDir 'strategies') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $StateDir 'telemetry_core') -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $RootDir 'scripts/strategies') (Join-Path $StateDir 'strategies') -Recurse -Force
 Copy-Item (Join-Path $RootDir 'scripts/telemetry_core') (Join-Path $StateDir 'telemetry_core') -Recurse -Force
 if ($TelemetryEnabled -eq 'true') { & python3 (Join-Path $StateDir 'manage-hooks.py') install --hooks $Hooks --script (Join-Path $StateDir 'telemetry.py') }
 else { & python3 (Join-Path $StateDir 'manage-hooks.py') uninstall --hooks $Hooks }
@@ -169,7 +242,9 @@ Write-Host (L '  +-- Summary ---------------------------------------------------
 Write-Host "  |  * Policy:     $dispPolicy"
 Write-Host "  |  * CLI:        $dispBin"
 Write-Host "  |  * Skill:      FlowPilot (flow-pilot)"
-Write-Host "  |  * Routing:    parent ($ParentModelPolicy) -> worker ($WorkerModel)"
+Write-Host "  |  * Strategy:   $StrategyProfile / $RoutingMode"
+Write-Host "  |  * Modifiers:  review=$ReviewModifier / fanout=$FanoutModifier"
+Write-Host "  |  * Models:     parent ($ParentModelPolicy) -> worker ($WorkerModel)"
 Write-Host "  |  * Language:   $UiLanguage (effective: $UiLang)"
 if ($TelemetryEnabled -eq 'true') { Write-Host "  |  * Telemetry:  [+] enabled (hooks + app-server; ${TelemetryRetentionDays}d retention)" } else { Write-Host '  |  * Telemetry:  [-] disabled' }
 Write-Host '  +--------------------------------------------------------------------+' -ForegroundColor DarkGray

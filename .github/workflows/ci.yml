@@ -18,12 +18,14 @@ jobs:
           bash -n scripts/doctor
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
+          bash -n tests/strategy-runtime.sh
           bash -n tests/telemetry.sh
           bash -n tests/chatgpt-mcp.sh
           bash -n tests/benchmark.sh
           bash -n tests/runner.sh
           bash -n tests/corpus.sh
           bash -n tests/report.sh
+          python3 -m py_compile scripts/strategy_runtime.py
           python3 -m py_compile scripts/check-recommendation.py
           python3 -m py_compile scripts/analyze-benchmark.py
           python3 -m py_compile scripts/run-benchmark.py
@@ -44,6 +46,8 @@ jobs:
           python3 -m py_compile scripts/render-benchmark-report.py
           python3 -m py_compile scripts/benchmark-local.py
           ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].each { |f| YAML.parse_file(f) }'
+      - name: Strategy runtime test
+        run: bash tests/strategy-runtime.sh
       - name: Recommendation policy test
         run: |
           python3 scripts/check-recommendation.py --fixture tests/fixtures/models.json --json | tee /tmp/recommendation.json
@@ -128,29 +132,80 @@ jobs:
           }
           & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') status
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $strategyOutput = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') strategy show | Out-String).Trim()
+          if ($strategyOutput -ne 'strategy=efficient routing=adaptive') { throw "unexpected strategy output: $strategyOutput" }
+          $bareStrategyOutput = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') strategy | Out-String).Trim()
+          if ($bareStrategyOutput -ne 'strategy=efficient routing=adaptive') { throw "unexpected bare strategy output: $bareStrategyOutput" }
           $doctorOutput = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') doctor 2>&1 | Out-String)
           $doctorExit = $LASTEXITCODE
           if ($doctorExit -ne 0) { exit $doctorExit }
           if ($doctorOutput -notmatch 'thread-attributed telemetry may be unavailable') { throw 'old Codex compatibility warning missing' }
+          if ($doctorOutput -notmatch 'review modifier: auto') { throw 'review modifier doctor check missing' }
+          if ($doctorOutput -notmatch 'fanout modifier: auto') { throw 'fanout modifier doctor check missing' }
 
           $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
           if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after install' }
           if ($config -notmatch 'default_subagent_model\s*=\s*"gpt-5\.6-luna"') { throw 'worker model was not installed' }
-          $policy = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'codex-flow.toml'), $utf8NoBom)
-          if ($policy -notmatch 'schema_version\s*=\s*3') { throw 'policy schema was not upgraded' }
+          $policyPath = Join-Path $env:CODEX_HOME 'codex-flow.toml'
+          $policy = [System.IO.File]::ReadAllText($policyPath, $utf8NoBom)
+          if ($policy -notmatch 'schema_version\s*=\s*4') { throw 'policy schema was not upgraded to v4' }
+          if ($policy -notmatch 'profile\s*=\s*"efficient"') { throw 'default strategy profile missing' }
+          if ($policy -notmatch 'mode\s*=\s*"adaptive"') { throw 'default routing mode missing' }
           if ($policy -notmatch 'model\s*=\s*"auto"') { throw 'auto worker policy was not preserved' }
           $binState = Join-Path $env:CODEX_HOME 'codex-flow/bin_dir'
           if (-not ([System.IO.File]::ReadAllText($binState, $utf8NoBom).Trim() -eq $env:CODEX_FLOW_BIN_DIR)) { throw 'custom bin directory was not persisted' }
-          $policyBytes = [System.IO.File]::ReadAllBytes((Join-Path $env:CODEX_HOME 'codex-flow.toml'))
+          if (-not (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow/defaults.toml'))) { throw 'release defaults were not installed' }
+          $policyBytes = [System.IO.File]::ReadAllBytes($policyPath)
           if ($policyBytes.Length -ge 3 -and $policyBytes[0] -eq 0xef -and $policyBytes[1] -eq 0xbb -and $policyBytes[2] -eq 0xbf) { throw 'policy unexpectedly has a UTF-8 BOM' }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'skills/flow-pilot/SKILL.md'))) { throw 'FlowPilot skill missing' }
+          if (-not (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow/strategy_runtime.py'))) { throw 'strategy runtime helper missing' }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'hooks.json'))) { throw 'telemetry hooks missing' }
+
+          # Change every policy family that reinstall/update must round-trip without loss.
+          $policy = $policy.Replace('profile = "efficient"', 'profile = "balanced"')
+          $policy = $policy.Replace('mode = "adaptive"', 'mode = "delegate"')
+          $policy = $policy.Replace('review = "auto"', 'review = "strict"')
+          $policy = $policy.Replace('fanout = "auto"', 'fanout = "conservative"')
+          $policy = $policy.Replace('routine_effort = "high"', 'routine_effort = "xhigh"')
+          $policy = $policy.Replace('complex_effort = "xhigh"', 'complex_effort = "max"')
+          $policy = $policy.Replace('max_concurrent_threads = 4', 'max_concurrent_threads = 3')
+          $policy = $policy.Replace('max_repair_cycles = 2', 'max_repair_cycles = 1')
+          $policy = $policy.Replace('notifications = true', 'notifications = false')
+          $policy = $policy.Replace('retention_days = 30', 'retention_days = 17')
+          [System.IO.File]::WriteAllText($policyPath, $policy, $utf8NoBom)
+
+          # Reinstall must preserve the customized policy, not reset it to release defaults.
+          & "$root\install.ps1" | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $policy = [System.IO.File]::ReadAllText($policyPath, $utf8NoBom)
+          foreach ($expected in @(
+            'profile = "balanced"', 'mode = "delegate"', 'review = "strict"', 'fanout = "conservative"',
+            'routine_effort = "xhigh"', 'complex_effort = "max"', 'max_concurrent_threads = 3',
+            'max_repair_cycles = 1', 'notifications = false', 'retention_days = 17'
+          )) {
+            if (-not $policy.Contains($expected)) { throw "policy value lost on reinstall: $expected" }
+          }
+
+          & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') strategy set quality
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') strategy routing direct
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           Remove-Item Env:CODEX_FLOW_BIN_DIR
           & (Join-Path $tmp 'bin-installed/codex-flow.cmd') update
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.cmd'))) { throw 'custom bin directory was not reused by update' }
           if (-not (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.ps1'))) { throw 'PowerShell wrapper was not refreshed in custom bin directory' }
+          $policy = [System.IO.File]::ReadAllText($policyPath, $utf8NoBom)
+          if ($policy -notmatch 'profile\s*=\s*"quality"') { throw 'strategy profile was not preserved by update' }
+          if ($policy -notmatch 'mode\s*=\s*"direct"') { throw 'routing mode was not preserved by update' }
+          foreach ($expected in @(
+            'review = "strict"', 'fanout = "conservative"', 'routine_effort = "xhigh"',
+            'complex_effort = "max"', 'max_concurrent_threads = 3', 'max_repair_cycles = 1',
+            'notifications = false', 'retention_days = 17'
+          )) {
+            if (-not $policy.Contains($expected)) { throw "policy value lost on update: $expected" }
+          }
           $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
           if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after update' }
 

@@ -70,6 +70,12 @@ case "$cmd" in
     [[ -f "$ui_script" ]] || fail "$(cf_t 'localized UI helper is missing; reinstall codex-flow' '本地化 UI 组件缺失，请重新安装 codex-flow')"
     exec python3 "$ui_script" language "$@"
     ;;
+  strategy)
+    shift
+    strategy_script="$(script_path strategy_runtime.py 2>/dev/null || true)"
+    [[ -f "$strategy_script" ]] || fail "$(cf_t 'strategy runtime is missing; reinstall codex-flow' '策略运行时缺失，请重新安装 codex-flow')"
+    exec python3 "$strategy_script" --policy "$POLICY" "$@"
+    ;;
   usage)
     shift
     telemetry_script="$(script_path telemetry.py 2>/dev/null || true)"
@@ -104,6 +110,10 @@ case "$cmd" in
     command -v git >/dev/null 2>&1 || fail "$(cf_t 'git is required for update' '更新需要 git')"
     [[ -f "$POLICY" ]] || fail "$(cf_t 'missing policy; reinstall codex-flow' '策略文件缺失，请重新安装 codex-flow')"
 
+    strategy_profile="$(read_policy_value strategy profile "$POLICY")"; [[ -n "$strategy_profile" ]] || strategy_profile=efficient
+    routing_mode="$(read_policy_value routing mode "$POLICY")"; [[ -n "$routing_mode" ]] || routing_mode=adaptive
+    review_modifier="$(read_policy_value modifiers review "$POLICY")"; [[ -n "$review_modifier" ]] || review_modifier=auto
+    fanout_modifier="$(read_policy_value modifiers fanout "$POLICY")"; [[ -n "$fanout_modifier" ]] || fanout_modifier=auto
     parent_policy="$(read_policy_value parent model_policy "$POLICY")"
     parent_model="$(read_policy_value parent min_model "$POLICY")"
     parent_effort="$(read_policy_value parent min_reasoning_effort "$POLICY")"
@@ -126,6 +136,8 @@ case "$cmd" in
     fi
     after="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
 
+    CODEX_FLOW_STRATEGY="$strategy_profile" CODEX_FLOW_ROUTING_MODE="$routing_mode" \
+    CODEX_FLOW_REVIEW_MODIFIER="$review_modifier" CODEX_FLOW_FANOUT_MODIFIER="$fanout_modifier" \
     CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \
     CODEX_FLOW_WORKER_MODEL_POLICY="$worker_policy" CODEX_FLOW_WORKER_MODEL="$worker_model" CODEX_FLOW_WORKER_MIN_EFFORT="$worker_effort" \
     CODEX_FLOW_MAX_THREADS="$max_threads" CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" CODEX_FLOW_TELEMETRY_ENABLED="$telemetry_enabled" CODEX_FLOW_TELEMETRY_NOTIFICATIONS="$telemetry_notifications" CODEX_FLOW_TELEMETRY_RETENTION_DAYS="$telemetry_retention_days" \

@@ -49,8 +49,8 @@ if ($args.Count -eq 0 -and [System.Environment]::UserInteractive) {
     if ($menuScript) { & python3 $menuScript; exit $LASTEXITCODE }
 }
 
-$cmd = if ($args.Count -gt 0) { $args[0] } else { 'help' }
-$rest = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
+$cmd = if ($args.Count -gt 0) { [string]$args[0] } else { 'help' }
+[string[]]$rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
 
 switch ($cmd) {
     'status' {
@@ -65,10 +65,16 @@ switch ($cmd) {
         & python3 $ui language @rest
         exit $LASTEXITCODE
     }
+    'strategy' {
+        $strategy = Get-ScriptPath 'strategy_runtime.py'
+        if (-not $strategy) { throw (L 'strategy runtime is missing; reinstall codex-flow' '策略运行时缺失，请重新安装 codex-flow') }
+        & python3 $strategy --policy $Policy @rest
+        exit $LASTEXITCODE
+    }
     'usage' {
         $telemetry = Get-ScriptPath 'telemetry.py'
         if (-not $telemetry) { throw (L 'telemetry collector not installed; reinstall codex-flow' '遥测组件未安装，请重新安装 codex-flow') }
-        $usageArgs = if ($rest.Count -eq 0) { @('last') } else { $rest }
+        [string[]]$usageArgs = if ($rest.Count -eq 0) { @('last') } else { $rest }
         & python3 $telemetry @usageArgs
         exit $LASTEXITCODE
     }
@@ -101,6 +107,18 @@ switch ($cmd) {
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw (L 'git is required for update' '更新需要 git') }
         if (-not (Test-Path $Policy)) { throw (L 'missing policy; reinstall codex-flow' '策略文件缺失，请重新安装 codex-flow') }
 
+        $strategyProfile = Get-PolicyValue strategy profile
+        if (-not $strategyProfile) { $strategyProfile = 'efficient' }
+        $routingMode = Get-PolicyValue routing mode
+        if (-not $routingMode) { $routingMode = 'adaptive' }
+        $reviewModifier = Get-PolicyValue modifiers review
+        if (-not $reviewModifier) { $reviewModifier = 'auto' }
+        $fanoutModifier = Get-PolicyValue modifiers fanout
+        if (-not $fanoutModifier) { $fanoutModifier = 'auto' }
+        $env:CODEX_FLOW_STRATEGY = $strategyProfile
+        $env:CODEX_FLOW_ROUTING_MODE = $routingMode
+        $env:CODEX_FLOW_REVIEW_MODIFIER = $reviewModifier
+        $env:CODEX_FLOW_FANOUT_MODIFIER = $fanoutModifier
         $env:CODEX_FLOW_PARENT_MODEL_POLICY = Get-PolicyValue parent model_policy
         $env:CODEX_FLOW_PARENT_MIN_MODEL = Get-PolicyValue parent min_model
         $env:CODEX_FLOW_PARENT_MIN_EFFORT = Get-PolicyValue parent min_reasoning_effort
