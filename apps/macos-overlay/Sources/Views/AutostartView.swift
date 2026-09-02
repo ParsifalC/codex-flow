@@ -24,10 +24,11 @@ public enum FlowPilotAutostartService {
     private static var plistURL: URL { launchAgentsDirectory.appendingPathComponent("\(label).plist") }
 
     public static func status() -> FlowPilotAutostartStatus {
-        // Login launch is explicit opt-in. Merely starting FlowPilot must never
-        // mutate launchd state or create a second process during manual startup.
-        let configured = configuredPreference() ?? false
+        // New installations are explicit opt-in, but a pre-existing LaunchAgent
+        // without the newer preference file is still an enabled registration and
+        // must be reported honestly instead of appearing disabled in the UI.
         let exists = FileManager.default.fileExists(atPath: plistURL.path)
+        let configured = configuredPreference() ?? exists
         return FlowPilotAutostartStatus(
             enabled: configured && exists,
             plistExists: exists,
