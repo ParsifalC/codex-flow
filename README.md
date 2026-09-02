@@ -415,23 +415,32 @@ CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME
 
 - Shell / Python / PowerShell 语法
 - 模型推荐 fixture
-## macOS 原生悬浮窗 (Native Floating Widget)
+## FlowPilot macOS 原生悬浮窗与效能看板 (Native Widget)
 
-`1.2.0` 引入了基于 SwiftUI + AppKit 原生构建的 macOS 实时悬浮窗与 Summary 统计仪表盘：
+`1.3.0` 全面升级并深度集成了 `codex-flow usage` 的全部核心能力（基于 SwiftUI + AppKit 原生构建）：
 
-- **极简边缘迷你胶囊（Dock Tab）**：闲置时自动收拢为 44px 侧边胶囊，常驻呈现实时状态灯与完整 Token 消耗；
-- **流光圆形气泡（Floating Bubble）**：光标划过 0.14s 弹出为 58px 彩虹流光气泡，支持智能边缘磁吸吸附；
-- **Summary 仪表盘卡片（0.4s 悬停展开）**：耗时 / Tokens / Cost 环形仪表盘、Prompt/Output/Cache 动态比例分布条、多 Agent 架构列表与一键复制；
-- **内核事件驱动（0% 闲置开销）**：通过 Unix Socket 与 XNU Vnode 事件毫秒级被动监听，零轮询、零耗电，完全支持系统 AppNap 深度休眠。
+- **⚡️ Inspector 实时巡检与 Quota 配额感知**：
+  - 3 组高精环形仪表盘（耗时 / Tokens / 费用估算）、Prompt / Output / Cached / Reasoning 细分分布条、多 Agent 拓扑架构树；
+  - **Rate Limits & Account Quota 监控**：实时呈现 5m / 1h / 1d 配额消耗进度、用量变化（`+X pp`）与重置倒计时；
+  - **历史任务回溯**：支持一键回溯历史任务详情并一键 `[⚡️ Jump to Live]` 返回实时。
+- **📜 History 历史任务回溯**：
+  - 时间线任务列表（序号、时间、项目/分支、会话摘要、Workers 计数、Tokens 胶囊与状态）；
+  - 支持 `All / Today` 过滤、多项目下拉筛选与即时关键词搜索，点击任意历史任务即刻切至 Inspector 回溯详情。
+- **📊 Analytics 效能聚合看板**：
+  - 支持 7d / 30d 周期切换；总任务数（委派 vs 直接）、总活跃时长、总 Tokens 消耗与 Cost 费用预估；
+  - **Cache Efficiency**（缓存命中率与命中 Token 数）与 **Worker Offload**（算力委派卸载比）效能进度条；
+  - **Model Breakdown**（各模型调用次数、Token 占比与角色标签）与 **Projects Distribution**（多仓库活跃度分布）。
+- **极简灵动交互**：
+  - 闲置时自动吸附为边缘微胶囊（Half-Tuck），悬停 0.4s 弹性展开为三段式 Glass 卡片；支持全局拖拽磁吸与一键 Pin 常驻。
 
 管理入口：
 ```bash
-codex-flow overlay [start|stop|toggle|expand|collapse|update|status]
+codex-flow overlay [start|stop|restart|toggle|expand|collapse|tab|stats|history|status]
 ```
-或直接在控制台菜单中选择 `[8] 🪟 macOS 原生悬浮窗`。
+或直接在控制台菜单中选择 `[8] 🪟 FlowPilot 原生悬浮窗`。
 
 ## 当前状态
 
-Private preview，版本 `1.2.0`。
+Private preview，版本 `1.3.0`。
 
 FlowPilot 是默认编排 Skill；本地认证 Benchmark 是默认真实数据采集路径；`direct`、`delegate`、`adaptive` 是显式且非持久的当前任务覆盖；正常任务 telemetry 默认开启且不额外调用模型；模型推荐变更需要 review；Benchmark routing 保持 advisory；真实 Benchmark 必须由用户明确触发；用户明确 pin 的配置始终拥有最高持久配置优先级。
