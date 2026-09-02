@@ -1,156 +1,333 @@
 ---
 name: flow-pilot
-description: Route non-trivial technical work by complexity, uncertainty, and risk, adapting reasoning, delegation, and review accordingly. Re-evaluate when a task materially expands. Skip straightforward answers and localized low-risk tasks.
+description: Profile non-trivial technical work, compile a deterministic ExecutionPlan through the codex-flow strategy runtime, then execute parent/worker/review/repair exactly from that plan while honoring current-task and repository policy.
 ---
 
-# FlowPilot
+# FlowPilot Strategy Runtime
 
-FlowPilot is the routing and execution policy for codex-flow. Optimize capability, token efficiency, and parallelism without sacrificing correctness. The policy is capability-driven, not tied to a permanent model slug.
+FlowPilot is the semantic profiler and execution runtime for codex-flow. It is **not** a second strategy engine.
 
-## 0. Load policy and honor explicit routing overrides
+The invariant is:
 
-When `~/.codex/codex-flow.toml` exists, use it as the policy source.
+> **FlowPilot profiles. `strategy_runtime.py` + the strategy registry decide. FlowPilot executes the returned plan.**
 
-Before normal classification/routing, inspect the current user task for an explicit routing override. A clear current-task instruction has higher priority than codex-flow defaults or persistent routing policy.
+Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, worker counts, review mode, fan-out, or repair budget in this skill. The installed planner and built-in strategy registry are the single source of truth for those decisions.
 
-Supported current-task modes:
+Default compatibility remains `strategy = efficient` plus `routing = adaptive`.
 
-- `direct` — do not spawn or delegate to subagents for this task. The active parent performs implementation and self-review directly.
-- `delegate` — use subagent delegation for execution when the runtime supports it and the task can be safely scoped.
-- `adaptive` — use normal FlowPilot classification and routing for this task.
+## 0. Policy precedence and current-task intent
 
-Treat an unambiguous natural-language instruction to use direct, delegated, or adaptive execution as equivalent to the corresponding mode, regardless of language. Do not infer an override from incidental mentions of these modes. Only honor an explicit instruction about how the current task should be executed. If multiple routing instructions conflict, follow the latest unambiguous instruction in the current user task.
+The planner resolves policy in this order, from strongest to weakest:
 
-Routing override scope is the current task only. Do not persist or rewrite user configuration because of a prompt-level override.
+```text
+hard runtime / safety ceilings
+  > explicit current-task overrides
+  > repository .codex-flow.toml
+  > ~/.codex/codex-flow.toml
+  > codex-flow release defaults
+```
 
-`direct` disables delegation only. It does not disable task classification, adaptive reasoning effort, validation, acceptance criteria, bounded retry, or review discipline. In direct mode, collapse the normal parent -> worker -> parent path into parent -> implementation -> self-review.
+Repository policy is discovered automatically from the current working directory up to the repository root. It may choose strategy/routing/modifiers, tighten runtime ceilings, and raise reasoning floors. It must not silently lower user reasoning floors.
 
-Default parent eligibility:
-- prefer the latest available high-capability model
-- minimum reasoning effort is `high`
-- exact model floor is configurable; `auto` means follow the current codex-flow recommendation/runtime capability
+Persistent strategy and routing are independent:
 
-Default worker policy:
-- prefer the latest cost-efficient model suitable for coding work
-- `model = "auto"` resolves to the current codex-flow recommendation at install/update time
-- reasoning baseline is `high`
-- task-specific escalation may request `xhigh` or `max`
+- `[strategy].profile`: `efficient`, `balanced`, `quality`, or `speed`.
+- `[routing].mode`: `adaptive`, `direct`, or `delegate`.
 
-Never require one historical model name to qualify. If the active parent is known to be below the configured floor, do not pretend it qualifies. Elevate when the runtime supports it; otherwise keep the work direct and surface a concise policy warning.
+Composable modifiers are also independent:
 
-## 1. Classify before spending
+- `[modifiers].review`: `auto`, `standard`, or `strict`.
+- `[modifiers].fanout`: `auto`, `conservative`, or `aggressive`.
 
-Classify the technical task as SMALL, ROUTINE, COMPLEX, or CRITICAL.
+Explicit current-task user intent overrides repository/global strategy, routing, and modifiers for this task only. It must not mutate persistent policy.
 
-SMALL:
-- obvious localized change
-- usually one or two files
-- low uncertainty and regression risk
-- little exploration/testing
+Routing overrides:
 
-ROUTINE:
-- clear implementation plan
-- several files may change
-- normal tests/debugging
-- no major architecture decision
+- `direct` — do not spawn or delegate to subagents for this task.
+- `delegate` — use subagent delegation for execution when the runtime supports it and safe scoping is possible.
+- `adaptive` — let the deterministic planner choose direct or delegated execution from the TaskProfile.
 
-COMPLEX:
-- unclear root cause, difficult debugging, refactor/migration
-- architecture/compatibility decisions
-- substantial exploration or cross-system impact
+Strategy overrides:
 
-CRITICAL:
-- security-sensitive change
-- destructive/data migration
-- production-critical infrastructure or integrity risk
-- repeated lower-effort failure where quality dominates cost
+- `efficient` — minimize expensive Parent use and total waste while moving deep execution loops to efficient Workers.
+- `balanced` — balance quality, quota consumption, and wall-clock latency with moderate safe worker fan-out.
+- `quality` — prioritize correctness through deeper Worker reasoning, wider exploration, independent verification, and role-scoped Parent-class capability when explicit quality intent warrants it.
+- `speed` — minimize wall-clock latency by saturating proven-safe Worker concurrency.
 
-Classification is continuous, not a one-time decision. Reclassify whenever new evidence materially increases scope, uncertainty, risk, or the number of independent workstreams. Do not anchor on the initial classification.
+Modifier overrides may be expressed explicitly, for example “strict review”, “standard review”, “conservative fan-out”, or “aggressive fan-out”. Do not infer them from incidental wording.
 
-SMALL work stays with the parent. In `adaptive` mode, delegate ROUTINE/COMPLEX/CRITICAL execution when useful. In `direct` mode, keep all execution with the parent. In `delegate` mode, prefer delegation when the runtime supports it and safe scoping is possible.
+**Strategy and routing are orthogonal.** `quality + direct` and `efficient + delegate` are both valid. Modifiers do not create new strategy names.
 
-## 2. Choose the lowest sufficient effort
+## 1. Build only the semantic TaskProfile
 
-Use the configured floor and never go below it.
+Before broad execution, classify the task into this contract:
 
-| Class | Parent planning/review | Worker execution |
-| --- | --- | --- |
-| SMALL | `high` or current qualifying effort | direct; no worker unless explicitly delegated and useful |
-| ROUTINE | `high` | `high` |
-| COMPLEX | `xhigh` when available/justified | `xhigh` when available/justified |
-| CRITICAL | `xhigh` or `max` | `xhigh` or `max` only when quality-first |
+```text
+TaskProfile
+  complexity: small | routine | complex | critical
+  uncertainty: low | medium | high
+  risk: low | medium | high | critical
+  scope: local | module | cross-module | repo-wide
+  parallelism: none | limited | high
+  write_conflict: low | high
+  exploration_need: low | medium | high
+  verification_cost: low | medium | high
+  iteration_intensity: one-shot | iterative | heavy-loop
+  writable_workstreams: positive integer
+  quality_intent: normal | strong | absolute
+```
 
-Do not use `max` merely because it exists. Escalate one level only when task risk/complexity or actual failure evidence justifies it.
+`writable_workstreams` means the number of **already identified, isolated, non-overlapping writable scopes/worktrees**. Default it to `1`. Never claim `2+` merely because parallel writes would be faster.
 
-When the current Codex spawn surface supports per-child reasoning/model overrides, request the selected worker effort for that child. When it does not, use the installed high baseline and compensate with tighter scope, evidence, and review rather than relying on a broken override path.
+`quality_intent` is current-task semantic intent, not persistent policy and not a synonym for technical risk. Default it to `normal`.
 
-## 3. Explore efficiently
+- `normal`: ordinary quality expectations; do not infer a premium-model preference merely because the task is non-trivial.
+- `strong`: the user explicitly prioritizes quality/correctness over ordinary cost efficiency, such as “quality first”, “use stronger models”, “prefer reliability over cost”, or equivalent clear intent.
+- `absolute`: the user explicitly asks for the highest practical quality and accepts materially higher cost/latency, such as “highest quality”, “cost does not matter”, “use the strongest available models and verification”, or equivalent unambiguous intent.
 
-Unless the current task is in `direct` mode, delegate bounded read-only investigations for substantial repository discovery. Parallelize only independent questions such as implementation/call sites, tests/fixtures, workflow/config paths, or compatibility constraints.
+Do not convert strong quality wording into `risk=critical`. Technical risk and user optimization intent are independent dimensions. Do not infer `strong` or `absolute` from generic words such as “careful”, “good”, or “review this”.
 
-Prefer `worker-explorer` when named roles are supported. Otherwise use a normal child with explicit read-only instructions. Do not duplicate investigations or dump entire repositories into parent context.
+Guidance:
 
-In `direct` mode, perform the same targeted exploration in the active parent context without spawning subagents.
+- `small`: obvious localized work with low uncertainty/risk.
+- `routine`: clear implementation path and ordinary validation.
+- `complex`: architecture/debugging/refactor/migration/cross-system uncertainty.
+- `critical`: security, destructive/data-integrity, production-critical risk, or repeated failure where correctness dominates cost.
+- `parallelism=none`: no planner-created parallel workers, including explorers.
+- `write_conflict=high`: writable work is not safe to fan out.
 
-## 4. Parent decides
+Do not generate profiling prose unless useful. The profile exists to feed the planner.
 
-Before broad implementation, the qualifying parent owns:
-- root cause / architecture
-- scope and non-goals
-- implementation sequence
-- compatibility constraints
-- risks
-- acceptance criteria
+Re-profile only when material evidence changes risk, scope, uncertainty, parallelism, workstream isolation, iteration intensity, or explicit quality intent.
 
-Do not delegate an ambiguous "go solve this" if the parent can cheaply remove ambiguity first.
+## 2. Compile the authoritative ExecutionPlan
 
-## 5. Compact handoff
+After TaskProfile construction, invoke the installed deterministic planner before broad execution:
 
-When delegation is active, send only:
+```bash
+python3 ~/.codex/codex-flow/strategy_runtime.py \
+  --policy ~/.codex/codex-flow.toml \
+  plan \
+  --complexity <...> \
+  --uncertainty <...> \
+  --risk <...> \
+  --scope <...> \
+  --parallelism <...> \
+  --write-conflict <...> \
+  --exploration-need <...> \
+  --verification-cost <...> \
+  --iteration-intensity <...> \
+  --writable-workstreams <N> \
+  --quality-intent normal|strong|absolute
+```
+
+The planner automatically discovers repository policy and reliable quota state. For explicit current-task overrides, append only the requested dimensions:
+
+```text
+--profile efficient|balanced|quality|speed
+--routing adaptive|direct|delegate
+--review auto|standard|strict
+--fanout auto|conservative|aggressive
+```
+
+The planner automatically:
+
+- merges release, user, and repository policy with the defined precedence;
+- loads the selected built-in strategy from the installed strategy registry;
+- resolves a strategy-specific `worker_budget` envelope;
+- computes workstream-aware explorer / implementer / reviewer counts inside that budget;
+- gives delegated Worker roles at least one higher reasoning tier than Parent when the effort ladder permits it;
+- lets only the selected strategy consume strategy-specific TaskProfile semantics such as `quality_intent`;
+- lets `quality` promote high-value Implementer/Reviewer capability for strong/absolute intent while ordinary Explorers remain efficient-worker-first unless technical risk itself is critical;
+- applies hard runtime thread/repair ceilings and writable-isolation checks;
+- reads reliable app-server quota state when available and normalizes it before strategy logic;
+- emits one ExecutionPlan without extra LLM calls.
+
+If the helper or strategy registry is unavailable, treat that as an installation/runtime failure. Do **not** silently recreate the strategy logic from this document; use the conservative installed Codex baseline and tell the user the strategy planner is unavailable.
+
+## 3. ExecutionPlan is the hard strategy/runtime boundary
+
+Current contract (schema v7):
+
+```text
+ExecutionPlan
+  schema_version
+  strategy
+  routing
+  review_modifier
+  fanout_modifier
+  quality_intent
+  parent_capability_policy
+  parent_model_floor
+  parent_reasoning
+  explorer_capability_policy | none
+  explorer_model | none
+  explorer_reasoning | none
+  implementer_capability_policy | none
+  implementer_model | none
+  implementer_reasoning | none
+  reviewer_capability_policy | none
+  reviewer_model | none
+  reviewer_reasoning | none
+  worker_budget
+    max_explorers
+    max_implementers
+    max_reviewers
+    max_total_workers
+    speculation
+  exploration_workers
+  implementation_workers
+  reviewer_workers
+  planned_worker_count
+  review_mode
+  max_repair_cycles
+  max_concurrent_threads
+  escalate_on_failure
+  quota_pressure
+  repo_policy | none
+  context_mode
+  notes
+```
+
+Once compiled, execute this plan. Do not reinterpret the strategy name or `quality_intent` to change topology or resource selection.
+
+Examples of prohibited duplication:
+
+- do not add explorers beyond `exploration_workers` because the strategy is `quality`;
+- do not upgrade a model locally because `quality_intent=strong`; per-role capability is already encoded in the plan;
+- do not increase implementers beyond `implementation_workers` because the strategy is `speed`;
+- do not spawn extra reviewers beyond `reviewer_workers`;
+- do not treat `worker_budget` maxima as mandatory worker counts; the planner has already converted the budget into concrete counts;
+- do not independently change review rigor from a modifier or strategy name after compilation;
+- do not lower or raise parent/explorer/implementer/reviewer reasoning from a table in this skill;
+- do not substitute role capability/model choices that are absent from the plan;
+- do not expand repair cycles beyond the plan;
+- do not replace `direct` with delegation because delegation seems useful.
+
+The planner may emit capability/model intent that the active Codex build cannot override per spawn. In that case use the installed baseline supported by the runtime, preserve topology/review/repair, and report the limitation rather than pretending the requested override was applied.
+
+## 4. Parent owns semantic decisions
+
+The qualifying parent owns:
+
+- root cause / architecture;
+- scope and non-goals;
+- compatibility constraints;
+- implementation sequence;
+- risks;
+- acceptance criteria;
+- construction and later revision of TaskProfile.
+
+Parent should spend reasoning on high-value semantic decisions rather than duplicating Worker execution loops. Delegated Workers intentionally run with deeper reasoning than Parent by default because the efficient Worker model is materially cheaper. If Parent is explicitly forced to `max`, Worker roles can only equal `max` because no higher effort tier exists.
+
+Model capability and reasoning effort are independent axes. `Luna max` is not treated as equivalent to Parent-class capability; strong/absolute `quality_intent` may therefore request `latest-capable` for Implementer/Reviewer roles even when their reasoning is already `max`. Read-only Explorers remain on efficient capability by default so premium capability is concentrated at higher-value decision points.
+
+Read-only exploration requested by the plan may supply evidence, but it does not own final architecture decisions.
+
+## 5. Execute exploration exactly from the plan
+
+If `exploration_workers == 0`, perform targeted discovery in the parent context.
+
+If greater than zero, delegate that many bounded read-only investigations to distinct questions such as call sites, tests, workflows/config, compatibility, or competing root-cause hypotheses. The planner may request several explorers when uncertainty/scope or the selected strategy's demand policy justify them; do not collapse them to one merely out of habit.
+
+Prefer `worker-explorer` when supported. Do not duplicate investigations. Respect `max_concurrent_threads` as the per-stage hard concurrency ceiling. Apply `explorer_capability_policy`, `explorer_model`, and `explorer_reasoning` exactly when the active Codex runtime supports per-spawn overrides; otherwise use the installed Worker baseline and report the limitation if material.
+
+## 6. Compact handoff for delegated implementation
+
+For each planned implementation worker, hand off only:
+
 - Goal
 - Root cause/design decision
-- Scope
+- Isolated scope
 - Relevant files/components
 - Steps
 - Constraints/non-goals
 - Acceptance criteria
 - Required validation
 
-Prefer fresh/no-history child context when supported. Do not hydrate a worker with irrelevant parent history. Skip this handoff stage entirely in `direct` mode.
+Prefer fresh/no-history child context when supported.
 
-## 6. Worker implements and proves
+If the plan requests multiple implementation workers, verify the TaskProfile evidence still proves the corresponding number of distinct non-overlapping writable workstreams. If that evidence has become false, **re-profile and recompile the plan** instead of silently changing worker count.
 
-When delegation is active, the worker makes the scoped change, runs the narrowest relevant validation first, fixes failures caused by the patch, avoids unrelated cleanup, and returns:
-- changed files
-- concise implementation summary
-- validation commands/results
-- deviations
-- unresolved risks/failures
+Prefer `worker-implementer` for planned implementation workers. Apply `implementer_capability_policy`, `implementer_model`, and `implementer_reasoning` exactly when supported by the runtime. If a requested per-spawn override is unsupported, fall back to the installed Worker baseline and report the limitation rather than re-planning resource policy locally.
 
-Return evidence, not verbose logs. In `direct` mode, the parent follows the same implementation and validation discipline itself.
+## 7. Worker implements and proves
 
-## 7. Parent reviews, not reimplements
+Workers make only scoped changes, run narrow validation first, fix failures caused by their patch, and return evidence:
 
-Review `git diff --stat`, the actual relevant diff, directly affected call sites, validation evidence, every acceptance criterion, architecture consistency, and regression risk.
+- changed files;
+- concise implementation summary;
+- validation commands/results;
+- deviations;
+- unresolved risks/failures.
 
-Expand investigation only for a concrete review concern. PASS only when criteria are satisfied with adequate evidence. In `direct` mode this is a self-review pass by the same parent after implementation; do not skip it merely because no worker was used.
+Evidence beats verbose logs.
 
-## 8. Repair with bounded delta tasks
+## 8. Review exactly according to the plan
 
-On failure, send only the exact defect, impact, required correction, relevant file/symbol, and validation required. Do not resend the original task.
+Parent review always checks the relevant diff, affected call sites, validation evidence, acceptance criteria, architecture consistency, and regression risk.
 
-Use the configured maximum repair cycles (default 2). If repeated repairs fail, reassess root cause/plan and optionally escalate effort/model capability rather than continuing a blind loop. In `direct` mode, apply the same bounded repair policy in the parent context without spawning a worker.
+- `review_mode=parent`: parent review only; `reviewer_workers == 0` and all `reviewer_*` fields are `none`.
+- `review_mode=independent+parent`: spawn exactly `reviewer_workers` independent reviewers, each using `reviewer_capability_policy`, `reviewer_model`, and `reviewer_reasoning`, then perform parent final verification.
 
-## Context discipline
+When more than one reviewer is requested, give them non-duplicative review objectives (for example correctness/regressions vs. acceptance/architecture) rather than asking identical questions.
 
-Prefer targeted search, diff-scoped review, concise test modes, and small relevant excerpts. Avoid full repo dumps, full verbose logs, rereading unchanged files, duplicate agents, and parent reimplementation.
+Prefer the dedicated read-only `worker-reviewer` role for independent review. Reviewers must inspect the patch adversarially and report findings; they must not silently turn themselves into implementers.
 
-## Concurrency discipline
+If the active runtime cannot apply the requested reviewer model/capability/reasoning override, use the installed Worker baseline and report the limitation. Do not select a replacement reviewer policy from the strategy name or `quality_intent`.
 
-Parallelize independent read-only exploration only when delegation is allowed. Do not run overlapping writable workers on the same files/worktree; isolate genuinely independent workstreams.
+Direct mode still requires parent self-review.
 
-## Telemetry discipline
+Do not infer review depth or reviewer resources from the strategy or modifier name after the plan has been compiled.
 
-FlowPilot telemetry is orchestration-layer instrumentation. Do not call a model to generate usage summaries, do not self-report token counts, and do not add telemetry prose to worker handoffs. Lifecycle hooks and app-server usage/quota APIs are the source of truth; unavailable capabilities must degrade to unavailable fields rather than estimates.
+## 9. Repair from bounded delta tasks
 
-The invariant is: explicit user routing intent wins for the current task; qualifying high-capability reasoning makes decisions; efficient execution performs loops when delegation is allowed; effort rises only when the task proves it needs to; telemetry observes the run without changing it.
+On failure, send the smallest useful repair delta: exact defect, impact, required correction, relevant symbol/file, and validation.
+
+Never exceed `max_repair_cycles` from ExecutionPlan.
+
+If repair fails or new evidence materially changes the task, update TaskProfile and compile a **new** ExecutionPlan. Do not mutate the old plan ad hoc.
+
+## 10. Quota and telemetry discipline
+
+Quota must never be guessed. The planner reads app-server rate-limit state when available; unavailable state becomes `unknown`.
+
+Telemetry remains observational and deterministic. Never call a model solely to estimate tokens, quota, or produce a usage summary.
+
+Quota pressure may reduce speculative fan-out or repair budget for quota-sensitive strategies, but configured reasoning/quality floors and the Worker-over-Parent reasoning invariant must not be silently lowered. `quality` is correctness-first; strong/absolute quality intent is allowed to retain Parent-class capability on high-value roles under quota pressure. Safety ceilings still apply.
+
+## 11. Context and concurrency discipline
+
+Prefer targeted search, concise excerpts, diff-scoped review, and small validation output. Avoid full-repo dumps, duplicated agents, rereading unchanged files, or parent reimplementation of worker work.
+
+`max_concurrent_threads` is a **per-stage concurrency ceiling**, not the total number of Workers in the plan. `planned_worker_count` may exceed it because exploration, implementation, and review are separate stages.
+
+Parallel work must be independent. Writable fan-out requires isolated non-overlapping scopes/worktrees already represented by `writable_workstreams`.
+
+## 12. Re-plan checkpoints
+
+Re-profile and invoke the planner again when:
+
+- complexity/risk materially changes;
+- explicit quality intent materially changes;
+- the root cause is disproven;
+- a cross-module dependency appears;
+- writable workstream isolation changes;
+- repair cycles fail;
+- reliable quota/runtime state materially changes.
+
+Re-plan from the delta; do not restart the task without evidence.
+
+## Compatibility invariant
+
+For schema-v3 users with no strategy/routing fields:
+
+```text
+strategy = efficient
+routing = adaptive
+review = auto
+fanout = auto
+quality_intent = normal
+```
+
+The deterministic planner and strategy registry, not this skill, define the concrete execution behavior for that compatibility profile.

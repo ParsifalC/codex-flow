@@ -15,7 +15,7 @@ public final class AppLocalization: ObservableObject {
     private init() {
         language = Self.resolveLanguage()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
+            guard let self = self else { return }
             let resolved = Self.resolveLanguage()
             if resolved != self.language {
                 self.language = resolved
@@ -56,7 +56,9 @@ public final class AppLocalization: ObservableObject {
             guard inUI else { continue }
             let noComment = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard noComment.hasPrefix("language"), let eq = noComment.firstIndex(of: "=") else { continue }
+            guard let eq = noComment.firstIndex(of: "=") else { continue }
+            let key = noComment[..<eq].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard key == "language" else { continue }
             let rawValue = noComment[noComment.index(after: eq)...]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
@@ -129,10 +131,13 @@ public extension QuotaWindow {
         guard let r = resetsAt, r > 0 else { return nil }
         let date = Date(timeIntervalSince1970: r > 1_000_000_000_000 ? r / 1000.0 : r)
         let interval = date.timeIntervalSince(Date())
-        if interval > 0 && interval < 86400 {
+        if interval <= 0 {
+            return L("resets now", "立即重置")
+        } else if interval < 86400 {
             let mins = Int(interval) / 60
             if mins < 60 {
-                return L("resets in \(mins)m", "\(mins) 分钟后重置")
+                let displayMins = max(1, mins)
+                return L("resets in \(displayMins)m", "\(displayMins) 分钟后重置")
             }
             let hours = mins / 60
             let remMins = mins % 60

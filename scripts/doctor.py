@@ -27,7 +27,7 @@ def T(en: str, zh: str) -> str:
 
 def policy_value(section: str, key: str, default: str = "") -> str:
     try:
-        text = POLICY.read_text(encoding="utf-8")
+        text = POLICY.read_text(encoding="utf-8-sig")
     except OSError:
         return default
     match = re.search(rf"(?ms)^\[{re.escape(section)}\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)", text)
@@ -44,7 +44,7 @@ def policy_value(section: str, key: str, default: str = "") -> str:
 
 def root_value(key: str, default: str = "") -> str:
     try:
-        text = POLICY.read_text(encoding="utf-8")
+        text = POLICY.read_text(encoding="utf-8-sig")
     except OSError:
         return default
     root = text.split("[", 1)[0]
@@ -90,6 +90,13 @@ def run_capture(args: list[str]) -> tuple[int, str]:
         return 127, ""
 
 
+def _check_effort(label_en: str, label_zh: str, value: str) -> None:
+    if value in {"high", "xhigh", "max"}:
+        ok(T(f"{label_en}: {value}", f"{label_zh}：{value}"))
+    else:
+        fail(T(f"invalid {label_en}: {value or 'missing'}", f"无效{label_zh}：{value or 'missing'}"))
+
+
 def main() -> int:
     global CODEX_AVAILABLE
     print(f"\n🩺 {T('codex-flow doctor', 'codex-flow 系统诊断')}")
@@ -116,32 +123,60 @@ def main() -> int:
     ok(T("config.toml found", "已找到 config.toml")) if CONFIG.is_file() else fail(T(f"missing {CONFIG}", f"缺少 {CONFIG}"))
     ok(T("codex-flow policy found", "已找到 codex-flow 策略文件")) if POLICY.is_file() else fail(T(f"missing {POLICY}", f"缺少 {POLICY}"))
 
-    section("Routing & Skills", "路由与 Skills")
+    section("Strategy Runtime & Skills", "策略运行时与 Skills")
     checks = [
         (CODEX_HOME / "agents/worker-explorer.toml", "worker-explorer"),
         (CODEX_HOME / "agents/worker-implementer.toml", "worker-implementer"),
+        (CODEX_HOME / "agents/worker-reviewer.toml", "worker-reviewer"),
         (CODEX_HOME / "skills/flow-pilot/SKILL.md", "FlowPilot skill"),
+        (STATE_DIR / "strategy_runtime.py", "strategy runtime helper"),
+        (STATE_DIR / "strategies/__init__.py", "built-in strategy registry"),
+        (STATE_DIR / "defaults.toml", "release policy defaults"),
     ]
     for path, label in checks:
         ok(T(f"{label} installed", f"{label} 已安装")) if path.is_file() else fail(T(f"{label} missing", f"缺少 {label}"))
 
     if POLICY.is_file():
         schema = root_value("schema_version")
-        if schema == "3":
-            ok(T("policy schema v3", "策略 schema v3"))
+        if schema == "4":
+            ok(T("policy schema v4", "策略 schema v4"))
+        elif schema == "3":
+            warn(T("policy schema v3 is backward compatible; reinstall/update recommended to enable persistent multi-strategy configuration", "策略 schema v3 可向后兼容；建议重新安装/更新以启用持久化多策略配置"))
         else:
             warn(T(f"policy schema is {schema or 'unknown'}; reinstall recommended", f"策略 schema 为 {schema or 'unknown'}；建议重新安装"))
 
+        strategy = policy_value("strategy", "profile", "efficient")
+        routing = policy_value("routing", "mode", "adaptive")
+        review = policy_value("modifiers", "review", "auto")
+        fanout = policy_value("modifiers", "fanout", "auto")
+        if strategy in {"efficient", "balanced", "quality", "speed"}:
+            ok(T(f"strategy profile: {strategy}", f"执行策略：{strategy}"))
+        else:
+            fail(T(f"invalid strategy profile: {strategy}", f"无效执行策略：{strategy}"))
+        if routing in {"adaptive", "direct", "delegate"}:
+            ok(T(f"routing mode: {routing}", f"路由模式：{routing}"))
+        else:
+            fail(T(f"invalid routing mode: {routing}", f"无效路由模式：{routing}"))
+        if review in {"auto", "standard", "strict"}:
+            ok(T(f"review modifier: {review}", f"Review 修饰策略：{review}"))
+        else:
+            fail(T(f"invalid review modifier: {review}", f"无效 Review 修饰策略：{review}"))
+        if fanout in {"auto", "conservative", "aggressive"}:
+            ok(T(f"fanout modifier: {fanout}", f"Fan-out 修饰策略：{fanout}"))
+        else:
+            fail(T(f"invalid fanout modifier: {fanout}", f"无效 Fan-out 修饰策略：{fanout}"))
+
         parent_effort = policy_value("parent", "min_reasoning_effort")
         worker_effort = policy_value("worker", "min_reasoning_effort")
-        if parent_effort in {"high", "xhigh", "max"}:
-            ok(T(f"parent minimum reasoning: {parent_effort}", f"父 Agent 最低推理强度：{parent_effort}"))
-        else:
-            fail(T("parent minimum reasoning must be high or above", "父 Agent 最低推理强度必须为 high 或以上"))
-        if worker_effort in {"high", "xhigh", "max"}:
-            ok(T(f"worker minimum reasoning: {worker_effort}", f"子 Agent 最低推理强度：{worker_effort}"))
-        else:
-            fail(T("worker minimum reasoning must be high or above", "子 Agent 最低推理强度必须为 high 或以上"))
+        _check_effort("parent minimum reasoning", "父 Agent 最低推理强度", parent_effort)
+        _check_effort("worker minimum reasoning", "子 Agent 最低推理强度", worker_effort)
+        for role, role_zh in (("parent", "父 Agent"), ("worker", "子 Agent")):
+            for key, label in (
+                ("routine_effort", "routine reasoning"),
+                ("complex_effort", "complex reasoning"),
+                ("critical_effort", "critical reasoning"),
+            ):
+                _check_effort(f"{role} {label}", f"{role_zh} {label}", policy_value(role, key))
 
         parent_reasoning = policy_value("parent", "reasoning_policy")
         worker_reasoning = policy_value("worker", "reasoning_policy")
@@ -153,6 +188,17 @@ def main() -> int:
             ok(T("worker reasoning policy: adaptive", "子 Agent 推理策略：adaptive"))
         else:
             warn(T(f"worker reasoning policy: {worker_reasoning or 'unknown'}", f"子 Agent 推理策略：{worker_reasoning or 'unknown'}"))
+
+        max_threads = policy_value("runtime", "max_concurrent_threads")
+        max_repairs = policy_value("runtime", "max_repair_cycles")
+        if re.fullmatch(r"[1-9]\d*", max_threads or ""):
+            ok(T(f"runtime thread ceiling: {max_threads}", f"运行时线程上限：{max_threads}"))
+        else:
+            fail(T(f"invalid runtime thread ceiling: {max_threads or 'missing'}", f"无效运行时线程上限：{max_threads or 'missing'}"))
+        if re.fullmatch(r"\d+", max_repairs or ""):
+            ok(T(f"runtime repair ceiling: {max_repairs}", f"运行时修复轮次上限：{max_repairs}"))
+        else:
+            fail(T(f"invalid runtime repair ceiling: {max_repairs or 'missing'}", f"无效运行时修复轮次上限：{max_repairs or 'missing'}"))
 
         parent_policy = policy_value("parent", "model_policy", "unknown")
         parent_min_model = policy_value("parent", "min_model", "unknown")
@@ -182,11 +228,11 @@ def main() -> int:
         elif notifications == "false":
             ok(T("system notifications: disabled by policy", "系统通知：已由策略禁用"))
         else:
-            warn(T(f"system notifications policy is {notifications or 'missing'}; reinstall recommended", f"系统通知策略为 {notifications or 'missing'}；建议重新安装"))
+            fail(T(f"invalid system notifications policy: {notifications or 'missing'}", f"无效系统通知策略：{notifications or 'missing'}"))
         if re.fullmatch(r"[1-9]\d*", retention or ""):
             ok(T(f"per-run telemetry retention: {retention} days", f"单次任务遥测保留：{retention} 天"))
         else:
-            warn(T(f"per-run telemetry retention is {retention or 'missing'}; reinstall recommended", f"单次任务遥测保留配置为 {retention or 'missing'}；建议重新安装"))
+            fail(T(f"invalid per-run telemetry retention: {retention or 'missing'}", f"无效单次任务遥测保留配置：{retention or 'missing'}"))
 
         section("Hooks & Telemetry", "Hooks 与遥测")
         enabled = policy_value("telemetry", "enabled", "true")
@@ -202,12 +248,14 @@ def main() -> int:
                     warn(T("command hooks may require one-time trust approval in Codex; use /hooks if Codex reports them pending", "命令 hooks 可能需要在 Codex 中进行一次信任授权；如果显示 pending，请使用 /hooks 批准"))
                 else:
                     fail(T(f"FlowPilot lifecycle hooks missing from {HOOKS}", f"{HOOKS} 中缺少 FlowPilot 生命周期 hooks"))
-        else:
+        elif enabled == "false":
             ok(T("FlowPilot telemetry disabled by policy", "FlowPilot 遥测已由策略禁用"))
+        else:
+            fail(T(f"invalid telemetry enabled policy: {enabled or 'missing'}", f"无效遥测启用配置：{enabled or 'missing'}"))
 
         if CONFIG.is_file() and worker_model and worker_model != "unknown":
             try:
-                cfg = CONFIG.read_text(encoding="utf-8")
+                cfg = CONFIG.read_text(encoding="utf-8-sig")
             except OSError:
                 cfg = ""
             if f'default_subagent_model = "{worker_model}"' in cfg:
@@ -222,9 +270,9 @@ def main() -> int:
     print("\n  " + "─" * 69)
     if not FAILED:
         if CODEX_AVAILABLE:
-            print("  ✨ " + T("Ready. FlowPilot routing and deterministic telemetry are installed.", "就绪。FlowPilot 路由与确定性遥测均已安装。"))
+            print("  ✨ " + T("Ready. FlowPilot strategy runtime and deterministic telemetry are installed.", "就绪。FlowPilot 策略运行时与确定性遥测均已安装。"))
         else:
-            print("  ✨ " + T("Ready. Core FlowPilot routing is installed and healthy; Codex CLI-dependent telemetry quota reads and benchmark execution are unavailable in this shell.", "就绪。FlowPilot 核心路由安装正常；当前 shell 中依赖 Codex CLI 的遥测额度读取和 Benchmark 执行不可用。"))
+            print("  ✨ " + T("Ready. Core FlowPilot strategy runtime is installed and healthy; Codex CLI-dependent telemetry quota reads and benchmark execution are unavailable in this shell.", "就绪。FlowPilot 核心策略运行时安装正常；当前 shell 中依赖 Codex CLI 的遥测额度读取和 Benchmark 执行不可用。"))
         print("  " + T("Note: per-spawn model/effort overrides depend on the active Codex build; the installed baseline remains valid when overrides are unavailable.", "注意：每次 spawn 的模型/推理强度覆盖取决于当前 Codex 版本；即使覆盖不可用，已安装的基线配置仍然有效。") + "\n")
         return 0
 

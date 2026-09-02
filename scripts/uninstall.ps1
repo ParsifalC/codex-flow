@@ -31,6 +31,7 @@ if ((Test-Path $hookManager) -and (Get-Command python3 -ErrorAction SilentlyCont
 
 Remove-Item (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $CodexHome 'agents/worker-reviewer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/luna-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'codex-flow.toml') -Force -ErrorAction SilentlyContinue
