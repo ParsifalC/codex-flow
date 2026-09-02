@@ -1,10 +1,12 @@
 name: ota-review-fix
 
 on:
+  workflow_dispatch:
   push:
     branches: [feat/ota-update-system]
     paths:
       - '.github/review-fix.py'
+      - '.github/workflows/review-fix.yml'
 
 permissions:
   contents: write
@@ -17,12 +19,13 @@ jobs:
         with:
           ref: feat/ota-update-system
           fetch-depth: 0
-      - run: python3 .github/review-fix.py
-      - name: Validate lock hardening
+      - name: Apply final OTA review fixes
+        run: python3 .github/review-fix.py
+      - name: Validate final OTA patch
         run: |
-          python3 -m py_compile scripts/updater.py tests/test_updater.py
-          python3 -m unittest tests.test_updater
-      - name: Commit and clean helper
+          python3 -m py_compile scripts/updater.py scripts/flowpilot.py scripts/doctor.py scripts/generate-release-manifest.py tests/test_updater.py tests/test_cli_update.py
+          python3 -m unittest tests.test_updater tests.test_cli_update
+      - name: Commit final OTA fixes and clean helper
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
@@ -30,6 +33,6 @@ jobs:
           git rm -f .github/review-fix.py .github/workflows/review-fix.yml
           git add -A
           git diff --cached --check
-          git commit -m 'fix(update): never steal a live updater lock'
+          git commit -m 'fix(update): apply final OTA self-review fixes'
           git pull --rebase origin feat/ota-update-system
           git push origin HEAD:feat/ota-update-system
