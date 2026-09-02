@@ -38,7 +38,7 @@ func printUsage() {
           start, --daemon           Start/Restart the FlowPilot floating daemon (default)
           restart                   Restart the running FlowPilot daemon with fresh build
           stop, quit                Stop running FlowPilot daemon
-          status                    Check if FlowPilot daemon is currently active
+          status [--json]           Check if FlowPilot daemon is currently active
           autostart [action]        Login launch: status|enable|disable
           toggle                    Toggle between circular bubble and expanded summary
           expand                    Expand summary window
@@ -60,7 +60,7 @@ func printUsage() {
           start, --daemon           启动/重启 FlowPilot 悬浮窗（默认）
           restart                   使用最新构建重启 FlowPilot
           stop, quit                停止 FlowPilot
-          status                    查看 FlowPilot 是否正在运行
+          status [--json]           查看 FlowPilot 是否正在运行
           autostart [操作]          登录启动：status|enable|disable
           toggle                    在悬浮球与展开摘要之间切换
           expand                    展开摘要窗口
@@ -100,14 +100,41 @@ func printAutostartStatus(_ status: FlowPilotAutostartStatus, json: Bool) {
     }
 }
 
+func printStatusFailureJSON(_ message: String) {
+    let object: [String: Any] = ["running": false, "error": message]
+    if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+       let text = String(data: data, encoding: .utf8) {
+        print(text)
+    }
+}
+
+func waitForPreviousInstanceToReleaseSocket(timeout: TimeInterval = 3.0) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while FileManager.default.fileExists(atPath: IPCService.socketPath) {
+        if Date() >= deadline {
+            return false
+        }
+        usleep(20_000)
+    }
+    return true
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "restart" {
-    // If an older instance is already running, cleanly terminate it first so new code runs.
+    // If an older instance is already running, cleanly terminate it and wait for
+    // its IPC endpoint to be released before binding a replacement. A fixed sleep
+    // can let the old shutdown race the new bind and delete the new socket.
     let statusCheck = IPCService.sendCommand("status")
     if statusCheck.success {
         _ = IPCService.sendCommand("quit")
-        usleep(250_000) // 250ms for socket cleanup
+        if !waitForPreviousInstanceToReleaseSocket() {
+            fputs(L(
+                "FlowPilot restart timed out waiting for the previous IPC socket to close.\n",
+                "FlowPilot 重启等待旧 IPC socket 关闭超时。\n"
+            ), stderr)
+            exit(1)
+        }
     }
 
     let app = NSApplication.shared
@@ -118,12 +145,21 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
     let cmd = args[0]
     switch cmd {
     case "status":
+        let wantsJSON = args.contains("--json")
         let res = IPCService.sendCommand("status")
         if res.success {
-            print(L("● FlowPilot is RUNNING: \(res.response)", "● FlowPilot 正在运行：\(res.response)"))
+            if wantsJSON {
+                print(res.response)
+            } else {
+                print(L("● FlowPilot is RUNNING: \(res.response)", "● FlowPilot 正在运行：\(res.response)"))
+            }
             exit(0)
         } else {
-            print(L("○ FlowPilot is NOT running.", "○ FlowPilot 未运行。"))
+            if wantsJSON {
+                printStatusFailureJSON(res.response)
+            } else {
+                print(L("○ FlowPilot is NOT running.", "○ FlowPilot 未运行。"))
+            }
             exit(1)
         }
     case "autostart":
