@@ -1115,6 +1115,14 @@ def _legacy_git_update() -> int:
         return 2
 
 
+def _legacy_fallback_allowed(exc: Exception) -> bool:
+    # Legacy git update exists only to bootstrap users while the first OTA-aware
+    # release is rolling out. Never bypass checksum, transaction, concurrency,
+    # migration, or health-check failures with an unverified git pull.
+    message = str(exc)
+    return MANIFEST_ASSET in message and "does not provide" in message
+
+
 def _print_status(state: UpdateState, as_json: bool = False) -> None:
     if as_json:
         print(json.dumps(state.to_mapping(), ensure_ascii=False, indent=2, sort_keys=True))
@@ -1183,7 +1191,11 @@ def main(argv: Iterable[str] | None = None) -> int:
             _print_status(state, as_json=args.json)
         return 0
     except Exception as exc:
-        if not args.no_legacy_fallback and _legacy_git_update() == 0:
+        if (
+            not args.no_legacy_fallback
+            and _legacy_fallback_allowed(exc)
+            and _legacy_git_update() == 0
+        ):
             if not args.quiet:
                 print("✓ Updated using the legacy source checkout fallback. Future release packages will use OTA automatically.")
             return 0

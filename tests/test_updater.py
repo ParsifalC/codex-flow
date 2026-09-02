@@ -172,6 +172,44 @@ class UpdaterTest(unittest.TestCase):
                 with updater.install_lock():
                     pass
 
+    def test_legacy_fallback_is_only_allowed_for_missing_ota_manifest(self) -> None:
+        self.assertTrue(
+            updater._legacy_fallback_allowed(
+                RuntimeError("release v1.7.0 does not provide codex-flow-update.json")
+            )
+        )
+        self.assertFalse(updater._legacy_fallback_allowed(RuntimeError("checksum mismatch")))
+        self.assertFalse(
+            updater._legacy_fallback_allowed(
+                RuntimeError("another codex-flow update or rollback is already running")
+            )
+        )
+        self.assertFalse(updater._legacy_fallback_allowed(RuntimeError("doctor failed")))
+
+    def test_failed_health_check_restores_policy_and_does_not_commit_migration(self) -> None:
+        original_policy = (self.codex_home / "codex-flow.toml").read_text(encoding="utf-8")
+        (self.state / "updater.py").write_text("# installed updater\n", encoding="utf-8")
+        package = self.root / "failed-package"
+        (package / "scripts" / "migrations").mkdir(parents=True)
+        (package / "scripts" / "updater.py").write_text("# new updater\n", encoding="utf-8")
+        (package / "policy").mkdir(parents=True)
+        (package / "policy" / "defaults.toml").write_text("schema_version = 4\n", encoding="utf-8")
+        (package / "VERSION").write_text("1.8.0\n", encoding="utf-8")
+        migration = package / "scripts" / "migrations" / "9999_test_failure.py"
+        migration.write_text(
+            "from pathlib import Path\nimport sys\np=Path(sys.argv[sys.argv.index('--policy')+1])\np.write_text(p.read_text()+'\\n# migrated\\n')\n",
+            encoding="utf-8",
+        )
+        with patch.object(updater, "_run_health_check", side_effect=RuntimeError("doctor failed")):
+            with self.assertRaisesRegex(RuntimeError, "doctor failed"):
+                updater._install_package(package, "1.8.0", self.manifest())
+        self.assertEqual(
+            (self.codex_home / "codex-flow.toml").read_text(encoding="utf-8"),
+            original_policy,
+        )
+        migration_state = self.state / "state" / "migrations.json"
+        self.assertFalse(migration_state.exists())
+
     def test_legacy_update_detached_checkout_reinstalls_without_pull(self) -> None:
         source = self.root / "source"
         (source / ".git").mkdir(parents=True)
