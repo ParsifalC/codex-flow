@@ -31,7 +31,7 @@ public struct AccountQuotaWindow: Identifiable {
     public var compactName: String {
         guard let mins = durationMinutes else { return "—" }
         if mins == 300 { return "5h" }
-        if mins == 10080 { return L("Weekly", "Weekly") }
+        if mins == 10080 { return L("Weekly", "每周") }
         if mins < 60 { return "\(mins)m" }
         if mins < 1440 { return "\(mins / 60)h" }
         return "\(mins / 1440)d"
@@ -51,6 +51,8 @@ public struct AccountSnapshot {
     public let planType: String?
     public let requiresOpenAIAuth: Bool?
     public let quotaWindows: [AccountQuotaWindow]
+    /// Backend `rateLimitResetCredits.availableCount`: available reset credits,
+    /// not a historical count of resets already consumed.
     public let resetCreditCount: Int?
     public let resetCredits: [AccountResetCredit]
     public let hasCredits: Bool?
@@ -358,7 +360,9 @@ public struct AccountView: View {
                 .frame(maxHeight: 390)
             }
         }
-        .onAppear(perform: refresh)
+        .onAppear {
+            refresh()
+        }
     }
 
     private var accountHeader: some View {
@@ -540,7 +544,7 @@ public struct AccountView: View {
     private func resetCard(_ value: AccountSnapshot) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(L("USAGE RESETS", "额度重置次数"))
+                Text(L("RESET CREDITS AVAILABLE", "可用重置次数"))
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.42))
                 Text(value.resetCreditCount.map(String.init) ?? "—")
@@ -551,7 +555,7 @@ public struct AccountView: View {
             Divider().frame(height: 30).overlay(Color.white.opacity(0.08))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(L("RESET CREDIT EXPIRY", "重置额度到期"))
+                Text(L("NEXT CREDIT EXPIRY", "重置次数到期"))
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.42))
                 Text(value.nearestResetCreditExpiry.map(formatAccountDate) ?? L("No expiry reported", "未返回到期时间"))
@@ -568,8 +572,9 @@ public struct AccountView: View {
     private func accountFactsCard(_ value: AccountSnapshot) -> some View {
         VStack(spacing: 5) {
             factRow(L("Credits", "Credits"), creditsDisplay(value))
-            factRow(L("Rate limit state", "限额状态"), value.rateLimitReachedType ?? L("Available", "可用"))
-            factRow(L("Spend control", "消费控制"), value.spendControlReached == true ? L("Reached", "已触发") : L("Normal / not reported", "正常 / 未返回"))
+            factRow(L("Rate limit state", "限额状态"), rateLimitStateDisplay(value))
+            factRow(L("Spend control", "消费控制"), spendControlDisplay(value.spendControlReached))
+            factRow(L("OpenAI auth", "OpenAI 认证"), booleanStatus(value.requiresOpenAIAuth, trueText: L("Required", "需要"), falseText: L("Not required", "不需要")))
             factRow(L("Last refreshed", "最后刷新"), formatAccountDate(value.fetchedAt))
         }
         .padding(9)
@@ -582,10 +587,14 @@ public struct AccountView: View {
                 .font(.system(size: 8.5, weight: .medium))
                 .foregroundColor(.white.opacity(0.45))
             Spacer()
-            Text(value)
-                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
-                .foregroundColor(.white.opacity(0.78))
-                .lineLimit(1)
+            HoverRevealText(
+                value,
+                font: .system(size: 8.5, weight: .semibold, design: .rounded),
+                foregroundColor: .white.opacity(0.78),
+                lineLimit: 1,
+                popoverWidth: 300
+            )
+            .frame(maxWidth: 190, alignment: .trailing)
         }
     }
 
@@ -648,6 +657,22 @@ public struct AccountView: View {
         if let balance = value.creditsBalance { return balance }
         if value.hasCredits == false { return L("No credit balance", "无 Credits 余额") }
         return L("Not reported", "未返回")
+    }
+
+    private func rateLimitStateDisplay(_ value: AccountSnapshot) -> String {
+        guard let state = value.rateLimitReachedType, !state.isEmpty else {
+            return L("Not reported", "未返回")
+        }
+        return state.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private func spendControlDisplay(_ value: Bool?) -> String {
+        booleanStatus(value, trueText: L("Reached", "已触发"), falseText: L("Normal", "正常"))
+    }
+
+    private func booleanStatus(_ value: Bool?, trueText: String, falseText: String) -> String {
+        guard let value else { return L("Not reported", "未返回") }
+        return value ? trueText : falseText
     }
 }
 
