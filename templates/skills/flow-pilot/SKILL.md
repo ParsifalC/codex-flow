@@ -288,9 +288,11 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
   [--replacement-isolated]
 ```
 
-Use its `state`, `action`, `replacement_allowed`, `fence_required`, and `fallback_policy` as the lifecycle decision. Parent supplies only observable facts and semantic scope overlap; the helper owns timing transitions and writable replacement fencing.
+Use its `state`, `action`, `cancel_required`, `replacement_allowed`, `fence_required`, and `fallback_policy` as the lifecycle decision. Parent supplies only observable facts and semantic scope overlap; the helper owns timing transitions, cancellation requirements, and writable replacement fencing.
 
-If the helper is unavailable, treat that as an installation/runtime failure. For writable implementation, fail safe: never start a same-scope replacement while the previous Worker is non-terminal.
+If `cancel_required=true`, request cancellation/termination of the old non-terminal Worker even when `action` already permits `continue_partial`, `parent_delta`, or an isolated `replan`. A hard/idle lifecycle exit must not leave a Worker silently running in the background. When `replacement_allowed=true` because `--replacement-isolated` was used, the isolated replacement may proceed while cancellation of the old Worker is still required.
+
+If the helper is unavailable, treat that as an installation/runtime failure. For writable implementation, fail safe: never start a same-scope replacement while the previous Worker is non-terminal. For any hard-timeout/stalled non-terminal Worker, request cleanup rather than leaving it running indefinitely.
 
 Parent execution is fork/join, not fork/block:
 
@@ -335,6 +337,8 @@ Fallback always operates on the missing delta, never by restarting the whole sta
 - `replan`: update TaskProfile if needed and compile a new plan for the remaining delta;
 - `fail`: surface the unresolved stage failure instead of silently replacing it.
 
+For a non-terminal Worker, `cancel_required=true` is independent of the fallback action: fallback may make forward progress where safe, but the old Worker still must be reclaimed.
+
 Worker lifecycle failure/stall does **not** consume `max_repair_cycles`. Repair cycles are for defects in implementation output, not scheduler/infrastructure latency.
 
 ### Hard writable replacement fence
@@ -346,7 +350,9 @@ A replacement is allowed only after either:
 1. the old writable Worker is confirmed terminal/cancelled/failed; or
 2. the new replacement is explicitly assigned a fresh isolated worktree and the old Worker's output is fenced from integration (`--replacement-isolated`).
 
-Until one of those conditions is true, the evaluator returns `action=request_cancel` and `replacement_allowed=false`. Never let a recovered old Worker and its replacement write the same scope concurrently.
+Until one of those conditions is true, the evaluator returns `action=request_cancel`, `cancel_required=true`, and `replacement_allowed=false`. Never let a recovered old Worker and its replacement write the same scope concurrently.
+
+If condition 2 is used, evaluator may return `replacement_allowed=true` before the old Worker is terminal, but `cancel_required` remains true: start the isolated replacement only if the old output is fenced from integration and still request cancellation of the old Worker.
 
 ## 6. Execute exploration exactly from the plan
 
@@ -468,4 +474,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies timing/fallback state transitions plus hard writable safety fencing.
+Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies timing/fallback state transitions, cancellation requirements, and hard writable safety fencing.
