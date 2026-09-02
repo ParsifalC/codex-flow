@@ -157,16 +157,19 @@ case "$cmd" in
     sub="${1:-toggle}"
     case "$sub" in
       start|restart)
-        # FlowPilot already owns single-instance restart semantics through IPC.
-        # Do not pre-emptively spawn a separate `stop` process or broad `pkill`:
-        # both can race a launchd-managed instance and can kill command helpers.
+        # FlowPilot owns single-instance restart semantics through IPC. Verify
+        # the exact process we just launched rather than accepting a successful
+        # status response from the old instance during the handover window.
         mkdir -p "$STATE_DIR/logs"
         start_log="$STATE_DIR/logs/flowpilot-start.log"
+        : >"$start_log"
         nohup "$overlay_bin" start >>"$start_log" 2>&1 &
         start_pid=$!
         started=false
-        for _ in {1..30}; do
-          if "$overlay_bin" status >/dev/null 2>&1; then
+        for _ in {1..50}; do
+          status_json="$("$overlay_bin" status --json 2>/dev/null || true)"
+          status_pid="$(printf '%s\n' "$status_json" | sed -nE 's/.*"pid"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')"
+          if [[ -n "$status_pid" && "$status_pid" == "$start_pid" ]]; then
             started=true
             break
           fi
