@@ -8,6 +8,8 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
     public var currentVersion: String?
     public var latestVersion: String?
     public var channel: String?
+    public var notifyCLI: Bool?
+    public var notifyApp: Bool?
     public var updateAvailable: Bool?
     public var checkedAt: String?
     public var restartRequired: Bool?
@@ -20,6 +22,8 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case schema, status, channel, mandatory, progress
+        case notifyCLI = "notify_cli"
+        case notifyApp = "notify_app"
         case currentVersion = "current_version"
         case latestVersion = "latest_version"
         case updateAvailable = "update_available"
@@ -61,7 +65,7 @@ public final class FlowPilotUpdateService: ObservableObject {
     }
 
     public var hasUpdateBadge: Bool {
-        (snapshot.updateAvailable ?? false) || (snapshot.restartRequired ?? false)
+        (snapshot.notifyApp ?? true) && ((snapshot.updateAvailable ?? false) || (snapshot.restartRequired ?? false))
     }
 
     public var isRestartRequired: Bool {

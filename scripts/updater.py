@@ -39,6 +39,19 @@ MANIFEST_ASSET = "codex-flow-update.json"
 USER_AGENT = "codex-flow-updater/1"
 
 
+def _configure_console() -> None:
+    if os.name != "nt":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(OSError, ValueError):
+                reconfigure(errors="replace")
+
+
+_configure_console()
+
+
 def _codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
 
@@ -237,6 +250,8 @@ class UpdateState:
     current_version: str = "0.0.0"
     latest_version: str | None = None
     channel: str = "stable"
+    notify_cli: bool = True
+    notify_app: bool = True
     update_available: bool = False
     checked_at: str | None = None
     last_attempt_at: str | None = None
@@ -312,8 +327,9 @@ def _release_matches_channel(release: dict[str, Any], channel: str) -> bool:
         return False
     tag = str(release.get("tag_name") or "").lower()
     prerelease = bool(release.get("prerelease"))
+    normalized = _strip_v(tag)
     if channel == "stable":
-        return not prerelease and "nightly" not in tag
+        return not prerelease and "nightly" not in tag and "-" not in normalized
     if channel == "beta":
         return "nightly" not in tag
     if channel == "nightly":
@@ -326,6 +342,7 @@ def _manifest_from_release_api(config: UpdateConfig) -> tuple[dict[str, Any], di
     if not isinstance(releases, list):
         raise RuntimeError("release API returned an unexpected payload")
     candidates = [r for r in releases if isinstance(r, dict) and _release_matches_channel(r, config.channel)]
+    candidates.sort(key=lambda r: version_key(str(r.get("tag_name") or "0.0.0")), reverse=True)
     if not candidates:
         raise RuntimeError(f"no {config.channel} release found")
     # Prefer the newest release that actually participates in the OTA protocol.
@@ -379,6 +396,12 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
         raise RuntimeError(f"unsupported update manifest schema: {manifest.get('schema')}")
     if not str(manifest.get("version") or "").strip():
         raise RuntimeError("update manifest is missing version")
+    minimum_updater = str(manifest.get("minimum_updater_version") or "").strip()
+    if minimum_updater and is_newer(minimum_updater, current_version()):
+        raise RuntimeError(
+            f"update requires updater v{_strip_v(minimum_updater)} or newer; "
+            "reinstall codex-flow once to refresh the updater"
+        )
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         raise RuntimeError("update manifest is missing artifacts")
@@ -394,6 +417,8 @@ def check_for_updates(*, force: bool = False, quiet: bool = False) -> UpdateStat
     config = load_config()
     state = load_state()
     state.channel = config.channel
+    state.notify_cli = config.notify_cli
+    state.notify_app = config.notify_app
     state.current_version = current_version()
     if not config.check and not force:
         return state
@@ -437,6 +462,8 @@ def cached_status(*, trigger_background: bool = False) -> UpdateState:
     config = load_config()
     state = load_state()
     state.channel = config.channel
+    state.notify_cli = config.notify_cli
+    state.notify_app = config.notify_app
     if trigger_background and config.check and not cache_is_fresh(state, config):
         start_background_check()
     return state
@@ -506,6 +533,8 @@ def start_background_check() -> bool:
 def update_menu_label(lang: str = "en", state: UpdateState | None = None) -> str:
     state = state or load_state()
     zh = lang.lower().startswith("zh")
+    if state.notify_cli is False:
+        return "🔄 检查更新" if zh else "🔄 Check for updates"
     if state.restart_required:
         version = state.current_version or state.latest_version or ""
         return f"⚠️ v{version} 已安装 · 请重启 Codex" if zh else f"⚠️ v{version} installed · restart Codex"
@@ -652,6 +681,23 @@ def _snapshot(current: str) -> Path:
         if path.exists():
             overlay_backup.mkdir(exist_ok=True)
             shutil.copy2(path, overlay_backup / name)
+
+    user_backup = backup / "user-managed"
+    user_backup.mkdir()
+    live_targets = {
+        "hooks.json": _codex_home() / "hooks.json",
+        "worker-explorer.toml": _codex_home() / "agents" / "worker-explorer.toml",
+        "worker-implementer.toml": _codex_home() / "agents" / "worker-implementer.toml",
+        "worker-reviewer.toml": _codex_home() / "agents" / "worker-reviewer.toml",
+        "SKILL.md": _codex_home() / "skills" / "flow-pilot" / "SKILL.md",
+        "migrations.json": _migration_state_path(),
+    }
+    presence: dict[str, bool] = {}
+    for name, path in live_targets.items():
+        presence[name] = path.exists()
+        if path.exists():
+            shutil.copy2(path, user_backup / name)
+    atomic_write_json(user_backup / "presence.json", presence)
     return backup
 
 
@@ -681,6 +727,25 @@ def _restore_snapshot(backup: Path) -> None:
         for path in overlay.iterdir():
             _atomic_copy(path, _state_dir() / "bin" / path.name, executable=True)
 
+    user_backup = backup / "user-managed"
+    if user_backup.exists():
+        presence = _read_json(user_backup / "presence.json", {})
+        live_targets = {
+            "hooks.json": _codex_home() / "hooks.json",
+            "worker-explorer.toml": _codex_home() / "agents" / "worker-explorer.toml",
+            "worker-implementer.toml": _codex_home() / "agents" / "worker-implementer.toml",
+            "worker-reviewer.toml": _codex_home() / "agents" / "worker-reviewer.toml",
+            "SKILL.md": _codex_home() / "skills" / "flow-pilot" / "SKILL.md",
+            "migrations.json": _migration_state_path(),
+        }
+        for name, dst in live_targets.items():
+            src = user_backup / name
+            if src.exists():
+                _atomic_copy(src, dst)
+            elif isinstance(presence, dict) and presence.get(name) is False:
+                with contextlib.suppress(FileNotFoundError):
+                    dst.unlink()
+
 
 def _read_policy_bool(section: str, key: str, fallback: bool) -> bool:
     try:
@@ -690,12 +755,12 @@ def _read_policy_bool(section: str, key: str, fallback: bool) -> bool:
     return _as_bool(_simple_toml_value(text, section, key), fallback)
 
 
-def _run_migrations(package_root: Path) -> None:
+def _run_migrations(package_root: Path) -> list[str]:
     migrations_dir = package_root / "scripts" / "migrations"
-    if not migrations_dir.exists():
-        return
     state = _read_json(_migration_state_path(), {"applied": []})
     applied = set(state.get("applied") or []) if isinstance(state, dict) else set()
+    if not migrations_dir.exists():
+        return sorted(applied)
     for script in sorted(migrations_dir.glob("*.py")):
         migration_id = script.stem
         if migration_id.startswith("_") or migration_id in applied:
@@ -706,7 +771,7 @@ def _run_migrations(package_root: Path) -> None:
             env=os.environ.copy(),
         )
         applied.add(migration_id)
-        atomic_write_json(_migration_state_path(), {"applied": sorted(applied)})
+    return sorted(applied)
 
 
 def _sync_managed_runtime(package_root: Path) -> None:
@@ -871,9 +936,10 @@ def _install_package(package_root: Path, version: str, manifest: dict[str, Any])
     shutil.rmtree(staged_version, ignore_errors=True)
     shutil.copytree(package_root, staged_version)
     try:
-        _run_migrations(staged_version)
+        applied_migrations = _run_migrations(staged_version)
         _sync_managed_runtime(staged_version)
         _run_health_check()
+        atomic_write_json(_migration_state_path(), {"applied": applied_migrations})
         if target_version.exists():
             shutil.rmtree(target_version)
         os.replace(staged_version, target_version)
@@ -961,7 +1027,15 @@ def rollback() -> UpdateState:
     if not package_root.exists():
         raise RuntimeError(f"rollback package is missing: {package_root}")
     backup = _snapshot(current)
+    history_entry = next(
+        (entry for entry in reversed(_history()) if entry.get("from") == previous and entry.get("to") == current and entry.get("backup")),
+        None,
+    )
     try:
+        if history_entry:
+            historical_backup = Path(str(history_entry["backup"]))
+            if historical_backup.exists():
+                _restore_snapshot(historical_backup)
         _sync_managed_runtime(package_root)
         _run_health_check()
         atomic_write_text(state_dir / "version", previous + "\n")

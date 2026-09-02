@@ -109,6 +109,21 @@ class UpdaterTest(unittest.TestCase):
         self.assertFalse(state.update_available)
         self.assertIsNone(state.last_error)
 
+    def test_stable_channel_rejects_unmarked_beta_tag(self) -> None:
+        release = {"tag_name": "v1.8.0-beta.1", "draft": False, "prerelease": False}
+        self.assertFalse(updater._release_matches_channel(release, "stable"))
+        self.assertTrue(updater._release_matches_channel(release, "beta"))
+
+    def test_menu_can_disable_cli_update_badge(self) -> None:
+        state = updater.UpdateState(current_version="1.7.0", latest_version="1.8.0", update_available=True, notify_cli=False)
+        self.assertEqual(updater.update_menu_label("en", state), "🔄 Check for updates")
+
+    def test_manifest_enforces_minimum_updater_version(self) -> None:
+        manifest = self.manifest()
+        manifest["minimum_updater_version"] = "9.0.0"
+        with self.assertRaises(RuntimeError):
+            updater._validate_manifest(manifest)
+
     def test_safe_extract_rejects_zip_path_traversal(self) -> None:
         archive = self.root / "bad.zip"
         with zipfile.ZipFile(archive, "w") as zf:
