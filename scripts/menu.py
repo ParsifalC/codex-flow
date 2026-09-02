@@ -332,73 +332,155 @@ def get_overlay_bin() -> Path | None:
     return next((c for c in candidates if c.exists() and os.access(str(c), os.X_OK)), None)
 
 
+def run_overlay_build() -> bool:
+    src = get_source_dir()
+    build_script = src / "apps" / "macos-overlay" / "build.sh"
+    if not build_script.exists():
+        print(f"\n{style.RED}❌ {T('Build script not found', '未找到构建脚本')}: {build_script}{style.RESET}")
+        return False
+    print(f"\n{style.BOLD}{T('🔨 Building FlowPilot native macOS overlay...', '🔨 正在编译 FlowPilot macOS 原生悬浮窗...')}{style.RESET}")
+    print(f"{style.DIM}{T('(Native SwiftUI compilation, typically takes ~30-50s)', '(基于 SwiftUI 原生编译，通常耗时约 30-50 秒)')}{style.RESET}\n")
+    try:
+        res = subprocess.run(["bash", str(build_script)])
+        return res.returncode == 0
+    except Exception as exc:
+        print(f"{style.RED}❌ {T('Build execution error', '执行构建失败')}: {exc}{style.RESET}")
+        return False
+
+
 def handle_manage_overlay() -> None:
     if sys.platform != "darwin":
         print(f"\n{style.YELLOW}⚠️ {T('The native FlowPilot floating window is available only on macOS.', 'FlowPilot 原生悬浮窗仅支持 macOS 系统。')}{style.RESET}")
         pause_prompt()
         return
-    overlay_bin = get_overlay_bin()
-    if overlay_bin is None or not overlay_bin.exists():
-        src = get_source_dir()
-        print(f"\n{style.YELLOW}💡 {T('The native FlowPilot floating window has not been built yet.', 'FlowPilot 原生悬浮窗尚未编译。')}{style.RESET}")
-        print(f"{style.DIM}{T('To enable it, run', '如需启用，请在终端执行')}: bash {src}/apps/macos-overlay/build.sh{style.RESET}\n")
-        pause_prompt()
-        return
 
     while True:
-        try:
-            status_res = subprocess.run([str(overlay_bin), "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            is_running = status_res.returncode == 0
-        except Exception:
-            is_running = False
+        overlay_bin = get_overlay_bin()
+        has_bin = overlay_bin is not None and overlay_bin.exists() and os.access(str(overlay_bin), os.X_OK)
+
+        is_running = False
+        if has_bin:
+            try:
+                status_res = subprocess.run([str(overlay_bin), "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                is_running = status_res.returncode == 0
+            except Exception:
+                is_running = False
+
         print(f"\n{style.BOLD}🪟 {T('macOS Native Floating Widget:', 'macOS 原生悬浮窗管理 (Native Floating Widget):')}{style.RESET}")
-        if is_running:
+        if not has_bin:
+            print(f"  {T('Status', '当前状态')}: {style.YELLOW}⚠️ {T('Not built yet (binary not found)', '尚未编译构建 (未找到可执行文件)')}{style.RESET}")
+        elif is_running:
             print(f"  {T('Status', '当前状态')}: {style.GREEN}● {T('running (hover 0.4s to expand Summary)', '正在运行 (Hover 0.4s 展开 Summary)')}{style.RESET}")
         else:
-            print(f"  {T('Status', '当前状态')}: {style.DIM}○ {T('stopped', '未运行')}{style.RESET}")
+            print(f"  {T('Status', '当前状态')}: {style.DIM}○ {T('stopped (ready to start)', '未运行 (就绪)')}{style.RESET}")
+
         print(f"\n  [{style.CYAN}1{style.RESET}] {T('⏹ Stop widget', '⏹ 停止浮窗') if is_running else T('🚀 Start widget', '🚀 启动浮窗')}")
         if is_running:
-            print(f"  [{style.CYAN}2{style.RESET}] {T('🔄 Toggle expanded / collapsed', '🔄 切换展开 / 折叠 (Toggle)')}")
-            print(f"  [{style.CYAN}3{style.RESET}] {T('⚡ Push latest data and expand', '⚡️ 发送最新数据并展开 (Push Last Summary)')}")
-        print(f"  [{style.CYAN}4{style.RESET}] {T('🔨 Rebuild', '🔨 重新编译构建 (Rebuild)')}")
+            print(f"  [{style.CYAN}2{style.RESET}] {T('🔨 Rebuild and restart widget', '🔨 重新编译并重启浮窗')}")
+        else:
+            print(f"  [{style.CYAN}2{style.RESET}] {T('🔨 Build and start widget', '🔨 编译并启动浮窗')}")
+        print(f"  [{style.CYAN}3{style.RESET}] {T('📦 Build widget only', '📦 编译浮窗 (仅编译构建)')}")
+
+        if is_running:
+            print(f"  [{style.CYAN}4{style.RESET}] {T('🔄 Toggle expanded / collapsed', '🔄 切换展开 / 折叠 (Toggle)')}")
+            print(f"  [{style.CYAN}5{style.RESET}] {T('⚡ Push latest data and expand', '⚡️ 发送最新数据并展开 (Push Last Summary)')}")
+
         print(f"  [{style.CYAN}0{style.RESET}] 🔙 {T('Back to main menu', '返回主菜单')}\n")
+
         try:
             choice = input(f"{style.CYAN}{T('Select action', '请选择操作')}: {style.RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             break
+
         if choice in ("0", "q", "exit", "back"):
             break
+
         if choice == "1":
             if is_running:
                 try:
                     subprocess.run([str(overlay_bin), "stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["pkill", "-f", "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception:
                     pass
                 print(f"{style.YELLOW}{T('Widget stopped.', '浮窗已停止。')}{style.RESET}")
+                pause_prompt()
             else:
+                if not has_bin:
+                    print(f"\n{style.YELLOW}💡 {T('The floating window has not been built yet.', 'FlowPilot 原生悬浮窗尚未编译。')}{style.RESET}")
+                    try:
+                        ask_build = input(f"{style.CYAN}{T('Would you like to build and start it now? [Y/n]: ', '是否立即编译并启动浮窗？[Y/n]: ')}{style.RESET}").strip().lower()
+                    except (KeyboardInterrupt, EOFError):
+                        ask_build = "n"
+                    if ask_build in ("", "y", "yes", "是"):
+                        if run_overlay_build():
+                            overlay_bin = get_overlay_bin()
+                            if overlay_bin and overlay_bin.exists():
+                                subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                print(f"{style.GREEN}{T('Widget started. It appears near the top-right and expands after a 0.4s hover.', '浮窗已启动！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。')}{style.RESET}")
+                            else:
+                                print(f"{style.RED}{T('Binary not found after build.', '编译成功但未找到可执行文件。')}{style.RESET}")
+                        else:
+                            print(f"{style.RED}{T('Build failed. Please check the logs above.', '编译失败，请检查上方构建日志。')}{style.RESET}")
+                    pause_prompt()
+                else:
+                    try:
+                        subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        print(f"{style.GREEN}{T('Widget started. It appears near the top-right and expands after a 0.4s hover.', '浮窗已启动！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。')}{style.RESET}")
+                    except Exception as exc:
+                        print(f"{style.RED}{T('Start failed', '启动失败')}: {exc}{style.RESET}")
+                    pause_prompt()
+
+        elif choice == "2":
+            if is_running and overlay_bin:
                 try:
-                    subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    print(f"{style.GREEN}{T('Widget started. It appears near the top-right and expands after a 0.4s hover.', '浮窗已启动！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。')}{style.RESET}")
-                except Exception as exc:
-                    print(f"{style.RED}{T('Start failed', '启动失败')}: {exc}{style.RESET}")
+                    subprocess.run([str(overlay_bin), "stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["pkill", "-f", "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+            if run_overlay_build():
+                overlay_bin = get_overlay_bin()
+                if overlay_bin and overlay_bin.exists():
+                    try:
+                        subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        print(f"\n{style.GREEN}✨ {T('Build succeeded and widget started! It appears near the top-right.', '✨ 编译完成并已成功启动浮窗！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。')}{style.RESET}")
+                    except Exception as exc:
+                        print(f"\n{style.RED}{T('Start failed', '启动失败')}: {exc}{style.RESET}")
+                else:
+                    print(f"\n{style.RED}{T('Binary not found after build.', '编译成功但未找到可执行文件。')}{style.RESET}")
+            else:
+                print(f"\n{style.RED}{T('Build failed. Please check the logs above.', '编译失败，请检查上方构建日志。')}{style.RESET}")
             pause_prompt()
-        elif choice == "2" and is_running:
+
+        elif choice == "3":
+            if is_running and overlay_bin:
+                print(f"{style.DIM}{T('Stopping running widget before rebuild...', '重新编译前正在停止运行中的浮窗...')}{style.RESET}")
+                try:
+                    subprocess.run([str(overlay_bin), "stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["pkill", "-f", "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+            if run_overlay_build():
+                print(f"\n{style.GREEN}✨ {T('Widget build succeeded! You can now select [1] to start it.', '✨ 浮窗编译构建成功！可选择 [1] 启动浮窗。')}{style.RESET}")
+            else:
+                print(f"\n{style.RED}❌ {T('Build failed. Please check the logs above.', '编译失败，请检查上方构建日志。')}{style.RESET}")
+            pause_prompt()
+
+        elif choice == "4" and is_running:
             try:
                 subprocess.run([str(overlay_bin), "toggle"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
-        elif choice == "3" and is_running:
+
+        elif choice == "5" and is_running:
             try:
                 subprocess.run([str(overlay_bin), "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 print(f"{style.GREEN}{T('Latest Summary pushed and expanded.', '已向浮窗推送最新 Summary 并展开。')}{style.RESET}")
             except Exception as exc:
                 print(f"{style.RED}{T('Push failed', '推送失败')}: {exc}{style.RESET}")
             pause_prompt()
-        elif choice == "4":
-            build_script = get_source_dir() / "apps" / "macos-overlay" / "build.sh"
-            if build_script.exists():
-                subprocess.run(["bash", str(build_script)])
-                overlay_bin = get_overlay_bin()
+
+        else:
+            print(f"{style.RED}❌ {T('Invalid option', '无效选项')}{style.RESET}")
             pause_prompt()
 
 
@@ -407,14 +489,14 @@ def main_menu() -> int:
     while True:
         print_banner(version)
         items = [
-            ("1", T("📊 Latest task card", "📊 查看最新任务卡片"), "usage last"),
-            ("2", T("📜 Task history", "📜 浏览历史任务列表"), "usage list"),
-            ("3", T("📈 Project aggregate statistics", "📈 项目聚合统计分析"), "usage stats"),
-            ("4", T("🎯 Effective policy", "🎯 查看生效策略配置"), "status"),
-            ("5", T("🩺 Diagnostics", "🩺 运行系统诊断检查"), "doctor"),
-            ("6", T("⚡ Local quick Benchmark", "⚡ 本地快速 Benchmark"), "benchmark-local quick"),
-            ("7", T("🔄 Check and pull updates", "🔄 检查与拉取更新"), "update"),
-            ("8", T("🪟 macOS native floating widget", "🪟 macOS 原生悬浮窗"), "overlay widget"),
+            ("1", T("🪟 macOS native floating widget", "🪟 macOS 原生悬浮窗"), "overlay widget"),
+            ("2", T("📊 Latest task card", "📊 查看最新任务卡片"), "usage last"),
+            ("3", T("📜 Task history", "📜 浏览历史任务列表"), "usage list"),
+            ("4", T("📈 Project aggregate statistics", "📈 项目聚合统计分析"), "usage stats"),
+            ("5", T("🎯 Effective policy", "🎯 查看生效策略配置"), "status"),
+            ("6", T("🩺 Diagnostics", "🩺 运行系统诊断检查"), "doctor"),
+            ("7", T("⚡ Local quick Benchmark", "⚡ 本地快速 Benchmark"), "benchmark-local quick"),
+            ("8", T("🔄 Check and pull updates", "🔄 检查与拉取更新"), "update"),
         ]
         for key, label, command in items:
             print(f"  [{style.CYAN}{key}{style.RESET}] {label} {style.DIM}({command}){style.RESET}")
@@ -428,14 +510,14 @@ def main_menu() -> int:
             print(T("👋 Exited codex-flow console.", "👋 已退出 codex-flow 控制台。"))
             return 0
         handlers = {
-            "1": handle_show_last,
-            "2": handle_show_history,
-            "3": handle_show_stats,
-            "4": handle_show_status,
-            "5": handle_run_doctor,
-            "6": handle_run_benchmark,
-            "7": handle_update,
-            "8": handle_manage_overlay,
+            "1": handle_manage_overlay,
+            "2": handle_show_last,
+            "3": handle_show_history,
+            "4": handle_show_stats,
+            "5": handle_show_status,
+            "6": handle_run_doctor,
+            "7": handle_run_benchmark,
+            "8": handle_update,
         }
         handler = handlers.get(choice)
         if handler:

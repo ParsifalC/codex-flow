@@ -94,15 +94,18 @@ codex-flow
 ```
 
 ```text
-╭──────────────────────────────────────────────────╮
-│   ⚡️  FlowPilot Management Console               │
-╰──────────────────────────────────────────────────╯
-  [1] 📋 Last Task Summary (usage last)
-  [2] 📜 Task History (usage list)
-  [3] 📊 Efficiency & Worker Offload Dashboard (usage stats)
-  [4] 🩺 Health Diagnostics (doctor)
-  [5] 🪟 Launch / Toggle Native Floating Widget (overlay)
-  [6] 🔄 Check & Pull Updates (update)
+╭────────────────────────────────────────────────────────────────────╮
+│                  🚀 codex-flow Console (v1.6.0)                    │
+│   FlowPilot orchestration · deterministic telemetry · validation   │
+╰────────────────────────────────────────────────────────────────────╯
+  [1] 🪟 macOS native floating widget (overlay widget)
+  [2] 📊 Latest task card (usage last)
+  [3] 📜 Task history (usage list)
+  [4] 📈 Project aggregate statistics (usage stats)
+  [5] 🎯 Effective policy (status)
+  [6] 🩺 Diagnostics (doctor)
+  [7] ⚡ Local quick Benchmark (benchmark-local quick)
+  [8] 🔄 Check and pull updates (update)
   [0] 🚪 Exit
 ```
 
