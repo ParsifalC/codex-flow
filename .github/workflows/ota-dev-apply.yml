@@ -1,0 +1,45 @@
+name: ota-dev-apply
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths:
+      - '.github/ota-dev/ota.patch'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply integration patch
+        run: |
+          set -euo pipefail
+          git apply --check .github/ota-dev/ota.patch
+          git apply .github/ota-dev/ota.patch
+          rm -f .github/ota-dev/ota.patch .github/workflows/ota-dev-apply.yml
+      - name: Python and shell validation
+        run: |
+          set -euo pipefail
+          bash -n install.sh
+          bash -n bin/codex-flow
+          python3 -m py_compile scripts/updater.py scripts/package-release.py scripts/generate-release-manifest.py scripts/migrations/0001_update_settings.py scripts/menu.py
+          python3 -m unittest tests.test_updater
+          python3 scripts/package-release.py --platform linux-x86_64 --output-dir /tmp/codex-flow-dist
+          python3 scripts/generate-release-manifest.py --dist /tmp/codex-flow-dist --tag v$(cat VERSION) --output /tmp/codex-flow-dist/codex-flow-update.json
+      - name: Compile FlowPilot
+        run: bash apps/macos-overlay/build.sh
+      - name: Existing smoke test
+        run: bash tests/smoke.sh
+      - name: Commit verified integration
+        run: |
+          set -euo pipefail
+          git config user.name 'codex-flow-ci'
+          git config user.email 'codex-flow-ci@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat(update): integrate OTA across CLI and FlowPilot'
+          git push origin HEAD:feat/ota-update-system
