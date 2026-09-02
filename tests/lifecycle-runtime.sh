@@ -63,6 +63,7 @@ python3 - "$TMP/progress.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="progressing" and d["action"]=="continue", d
+assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
 PY
 
@@ -73,6 +74,7 @@ python3 - "$TMP/inflight.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"] in {"running","progressing"} and d["action"]=="continue", d
+assert d["cancel_required"] is False, d
 PY
 
 # Writable stall + replan is fenced: do not spawn same-scope replacement while old Worker may resume.
@@ -82,6 +84,7 @@ python3 - "$TMP/stall.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="request_cancel", d
+assert d["cancel_required"] is True, d
 assert d["fence_required"] is True and d["replacement_allowed"] is False, d
 PY
 
@@ -92,16 +95,18 @@ python3 - "$TMP/cancelled.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="cancelled" and d["action"]=="replan", d
+assert d["cancel_required"] is False, d
 assert d["fence_required"] is True and d["replacement_allowed"] is True, d
 PY
 
-# A fresh isolated replacement is also allowed, but only when old output is fenced from integration.
+# A fresh isolated replacement may proceed while cancellation is still required for the old Worker.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --replacement-isolated > "$TMP/isolated.json"
 python3 - "$TMP/isolated.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="replan", d
+assert d["cancel_required"] is True, d
 assert d["replacement_allowed"] is True and d["fence_required"] is True, d
 assert "isolated" in d["reason"], d
 PY
@@ -113,7 +118,7 @@ python3 - "$TMP/failed.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="failed" and d["action"]=="replan", d
-assert d["replacement_allowed"] is True, d
+assert d["cancel_required"] is False and d["replacement_allowed"] is True, d
 PY
 
 # Hard wall ceiling wins even if an operation is visibly in-flight.
@@ -123,6 +128,7 @@ python3 - "$TMP/hard.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="request_cancel", d
+assert d["cancel_required"] is True, d
 assert "hard worker wall-clock ceiling" in d["reason"], d
 PY
 
@@ -140,6 +146,18 @@ python3 - "$TMP/superseded.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="superseded" and d["action"]=="request_cancel", d
+assert d["cancel_required"] is True, d
+assert d["fence_required"] is False and d["replacement_allowed"] is False, d
+PY
+
+# A read-only stalled Worker can fall back immediately, but cancellation is still mandatory.
+python3 "$LIFECYCLE" --policy-json "$EXP_POLICY" --scope-id metadata \
+  --stage exploration --started-at 100 --last-progress-at 100 --now 250 > "$TMP/read-stall.json"
+python3 - "$TMP/read-stall.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="stalled" and d["action"]=="parent_delta", d
+assert d["cancel_required"] is True, d
 assert d["fence_required"] is False and d["replacement_allowed"] is False, d
 PY
 
