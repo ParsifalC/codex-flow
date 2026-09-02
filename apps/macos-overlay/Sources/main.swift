@@ -6,16 +6,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var windowController: OverlayWindowController!
     var watcher: TelemetryWatcher!
     var ipcServer: IPCService.Server!
-    
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        
+        FlowPilotAutostartService.reconcileAtLaunch()
+
         state = OverlayState()
         windowController = OverlayWindowController(state: state)
         watcher = TelemetryWatcher(state: state)
         ipcServer = IPCService.Server(state: state)
     }
-    
+
     func applicationWillTerminate(_ notification: Notification) {
         watcher?.stopWatching()
         ipcServer?.stop()
@@ -35,6 +36,7 @@ func printUsage() {
           restart                   Restart the running FlowPilot daemon with fresh build
           stop, quit                Stop running FlowPilot daemon
           status                    Check if FlowPilot daemon is currently active
+          autostart [action]        Login launch: status|enable|disable
           toggle                    Toggle between circular bubble and expanded summary
           expand                    Expand summary window
           collapse                  Collapse to circular bubble
@@ -56,6 +58,7 @@ func printUsage() {
           restart                   使用最新构建重启 FlowPilot
           stop, quit                停止 FlowPilot
           status                    查看 FlowPilot 是否正在运行
+          autostart [操作]          登录启动：status|enable|disable
           toggle                    在悬浮球与展开摘要之间切换
           expand                    展开摘要窗口
           collapse                  收起为悬浮球
@@ -69,16 +72,41 @@ func printUsage() {
     ))
 }
 
+func printAutostartStatus(_ status: FlowPilotAutostartStatus, json: Bool) {
+    if json {
+        let object: [String: Any] = [
+            "enabled": status.enabled,
+            "registered": status.plistExists,
+            "launchdLoaded": status.launchdLoaded,
+            "executable": status.executablePath
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+           let text = String(data: data, encoding: .utf8) {
+            print(text)
+        }
+        return
+    }
+
+    if status.enabled {
+        let detail = status.launchdLoaded
+            ? L("launchd loaded in this login session", "当前登录会话已由 launchd 加载")
+            : L("registered for the next login", "已注册，将在下次登录时启动")
+        print(L("● Login launch enabled · \(detail)", "● 登录启动已开启 · \(detail)"))
+    } else {
+        print(L("○ Login launch disabled", "○ 登录启动已关闭"))
+    }
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "restart" {
-    // If an older instance is already running, cleanly terminate it first so new code runs
+    // If an older instance is already running, cleanly terminate it first so new code runs.
     let statusCheck = IPCService.sendCommand("status")
     if statusCheck.success {
         _ = IPCService.sendCommand("quit")
         usleep(250_000) // 250ms for socket cleanup
     }
-    
+
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
@@ -93,6 +121,39 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
             exit(0)
         } else {
             print(L("○ FlowPilot is NOT running.", "○ FlowPilot 未运行。"))
+            exit(1)
+        }
+    case "autostart":
+        let action = args.count > 1 ? args[1].lowercased() : "status"
+        let wantsJSON = args.contains("--json")
+        do {
+            switch action {
+            case "status":
+                printAutostartStatus(FlowPilotAutostartService.status(), json: wantsJSON)
+            case "enable", "on":
+                let status = try FlowPilotAutostartService.enable()
+                printAutostartStatus(status, json: wantsJSON)
+            case "disable", "off":
+                let status = try FlowPilotAutostartService.disable()
+                printAutostartStatus(status, json: wantsJSON)
+            default:
+                print(L(
+                    "Usage: FlowPilot autostart status|enable|disable [--json]",
+                    "用法：FlowPilot autostart status|enable|disable [--json]"
+                ))
+                exit(2)
+            }
+            exit(0)
+        } catch {
+            if wantsJSON {
+                let object: [String: Any] = ["error": error.localizedDescription]
+                if let data = try? JSONSerialization.data(withJSONObject: object),
+                   let text = String(data: data, encoding: .utf8) {
+                    print(text)
+                }
+            } else {
+                print(L("Autostart update failed: \(error.localizedDescription)", "登录启动设置失败：\(error.localizedDescription)"))
+            }
             exit(1)
         }
     case "toggle":
