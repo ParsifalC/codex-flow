@@ -46,6 +46,7 @@ public final class FlowPilotUpdateService: ObservableObject {
     @Published public private(set) var isChecking = false
     @Published public private(set) var isInstalling = false
     @Published public private(set) var isAcknowledgingRestart = false
+    @Published public private(set) var isRestartingFlowPilot = false
     @Published public private(set) var actionError: String?
     @Published public private(set) var actionMessage: String?
 
@@ -88,7 +89,7 @@ public final class FlowPilotUpdateService: ObservableObject {
             return L("Checking for updates…", "正在检查更新…")
         }
         if snapshot.restartRequired == true {
-            return L("Update installed · restart Codex", "更新已安装 · 请重启 Codex")
+            return L("Update installed · restart FlowPilot and Codex", "更新已安装 · 请重启 FlowPilot 和 Codex")
         }
         if snapshot.updateAvailable == true, let latest = snapshot.latestVersion {
             return L("v\(latest) is available", "v\(latest) 可更新")
@@ -141,6 +142,34 @@ public final class FlowPilotUpdateService: ObservableObject {
         actionMessage = nil
         isAcknowledgingRestart = true
         runUpdater(arguments: ["update", "--ack-restart", "--quiet"], mode: .acknowledgeRestart)
+    }
+
+    // The OTA installer atomically replaces the FlowPilot binary on disk, but
+    // the already-running process remains the old executable. Launch the newly
+    // installed binary with `restart`; its existing IPC startup path shuts down
+    // this process and becomes the new FlowPilot instance.
+    public func restartFlowPilot() {
+        guard !isRestartingFlowPilot else { return }
+        actionError = nil
+        actionMessage = nil
+        guard let executable = flowPilotExecutable else {
+            actionError = L("The updated FlowPilot binary was not found.", "未找到更新后的 FlowPilot 可执行文件。")
+            return
+        }
+        isRestartingFlowPilot = true
+        do {
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = ["restart"]
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            actionMessage = L("Restarting FlowPilot with the updated binary…", "正在使用更新后的程序重启 FlowPilot…")
+        } catch {
+            isRestartingFlowPilot = false
+            actionError = error.localizedDescription
+        }
     }
 
     private enum RunMode: Sendable {
@@ -232,6 +261,19 @@ public final class FlowPilotUpdateService: ObservableObject {
         }
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex/codex-flow", isDirectory: true)
+    }
+
+    private var flowPilotExecutable: URL? {
+        let fm = FileManager.default
+        let stateBin = stateDirectory.appendingPathComponent("bin", isDirectory: true)
+        var candidates = [
+            stateBin.appendingPathComponent("FlowPilot"),
+            stateBin.appendingPathComponent("codex-flow-overlay"),
+        ]
+        if let firstArg = CommandLine.arguments.first, !firstArg.isEmpty {
+            candidates.append(URL(fileURLWithPath: firstArg))
+        }
+        return candidates.first { fm.isExecutableFile(atPath: $0.path) }
     }
 
     private var codexFlowExecutable: URL? {
