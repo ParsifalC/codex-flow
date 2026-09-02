@@ -150,6 +150,17 @@ assert d["cancel_required"] is True, d
 assert d["fence_required"] is False and d["replacement_allowed"] is False, d
 PY
 
+# Once a superseded Worker is cancelled, the scope is already satisfied: no fallback duplication.
+python3 "$LIFECYCLE" --policy-json "$EXP_POLICY" --scope-id metadata \
+  --stage exploration --started-at 100 --last-progress-at 120 --now 140 --scope-superseded --cancel-confirmed > "$TMP/superseded-cancelled.json"
+python3 - "$TMP/superseded-cancelled.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="superseded" and d["action"]=="continue", d
+assert d["cancel_required"] is False, d
+assert d["fallback_policy"] is None, d
+PY
+
 # A read-only stalled Worker can fall back immediately, but cancellation is still mandatory.
 python3 "$LIFECYCLE" --policy-json "$EXP_POLICY" --scope-id metadata \
   --stage exploration --started-at 100 --last-progress-at 100 --now 250 > "$TMP/read-stall.json"
@@ -159,6 +170,25 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="parent_delta", d
 assert d["cancel_required"] is True, d
 assert d["fence_required"] is False and d["replacement_allowed"] is False, d
+PY
+
+# Read-only replan may launch a replacement while the old stalled Worker is being cancelled.
+plan --profile quality --routing delegate --complexity complex --risk high --verification-cost high > "$TMP/review-plan.json"
+python3 - "$TMP/review-plan.json" > "$TMP/review-policy.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+assert p["review_stage"] is not None, p
+print(json.dumps(p["review_stage"], separators=(",", ":")))
+PY
+REV_POLICY="$(cat "$TMP/review-policy.json")"
+python3 "$LIFECYCLE" --policy-json "$REV_POLICY" --scope-id review-runtime \
+  --stage review --started-at 100 --last-progress-at 100 --now 500 > "$TMP/review-stall.json"
+python3 - "$TMP/review-stall.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="stalled" and d["action"]=="replan", d
+assert d["cancel_required"] is True, d
+assert d["replacement_allowed"] is True and d["fence_required"] is False, d
 PY
 
 # ---- Restored PR5 regression coverage ----
