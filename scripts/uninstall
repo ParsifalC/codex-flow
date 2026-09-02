@@ -9,6 +9,18 @@ STATE_DIR="$CODEX_HOME/codex-flow"
 
 if [[ -f "$STATE_DIR/shell/bin_dir" ]]; then BIN_DIR="$(cat "$STATE_DIR/shell/bin_dir")"; fi
 
+# Remove the user LaunchAgent before deleting FlowPilot itself. A full uninstall
+# is the one place where terminating a launchd-managed running instance is
+# expected; simply disabling login launch from the app intentionally keeps the
+# current widget alive.
+if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+  FLOWPILOT_LAUNCH_LABEL="com.parsifalc.codex-flow.flowpilot"
+  FLOWPILOT_LAUNCH_PLIST="$HOME/Library/LaunchAgents/$FLOWPILOT_LAUNCH_LABEL.plist"
+  launchctl bootout "gui/$(id -u)/$FLOWPILOT_LAUNCH_LABEL" >/dev/null 2>&1 || true
+  launchctl bootout "gui/$(id -u)" "$FLOWPILOT_LAUNCH_PLIST" >/dev/null 2>&1 || true
+  rm -f "$FLOWPILOT_LAUNCH_PLIST"
+fi
+
 SHELL_HELPER="$STATE_DIR/shell/manage-shell.py"
 if [[ -f "$SHELL_HELPER" ]] && command -v python3 >/dev/null 2>&1; then
   python3 "$SHELL_HELPER" uninstall --state-dir "$STATE_DIR"
@@ -61,5 +73,6 @@ fi
 printf '\n%s🗑️  codex-flow uninstalled successfully%s\n\n' "$C_BOLD" "$C_RESET"
 printf '  %s✔%s FlowPilot skill and worker agents removed\n' "$C_GREEN" "$C_RESET"
 printf '  %s✔%s Telemetry hooks and shell integration removed\n' "$C_GREEN" "$C_RESET"
+printf '  %s✔%s FlowPilot login LaunchAgent removed\n' "$C_GREEN" "$C_RESET"
 printf '  %s✔%s CLI binary (%s) removed\n' "$C_GREEN" "$C_RESET" "$BIN_DIR/codex-flow"
 printf '  %s✔%s Configuration cleaned up (existing backups preserved)\n\n' "$C_GREEN" "$C_RESET"
