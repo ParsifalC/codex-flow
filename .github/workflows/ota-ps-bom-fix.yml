@@ -19,6 +19,7 @@ jobs:
       - name: Restore UTF-8 BOM and verify Windows PowerShell 5 parsing
         shell: powershell
         run: |
+          # Windows PowerShell 5 requires a BOM here because the installer has localized text.
           $path = Join-Path (Get-Location) 'install.ps1'
           $bytes = [System.IO.File]::ReadAllBytes($path)
           $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xef -and $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf
