@@ -1,0 +1,33 @@
+name: ota-hardening-apply
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths:
+      - '.github/ota-hardening/**'
+      - '.github/workflows/ota-hardening-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ota-update-system
+      - name: Apply updater hardening
+        run: python3 .github/ota-hardening/apply.py
+      - name: Validate updater regressions
+        run: |
+          python3 -m py_compile scripts/updater.py tests/test_updater.py
+          python3 -m unittest tests.test_updater
+      - name: Commit hardening and remove helper
+        run: |
+          git config user.name 'codex-flow-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm -f .github/ota-hardening/apply.py .github/workflows/ota-hardening-apply.yml
+          git add scripts/updater.py tests/test_updater.py
+          git commit -m 'fix(update): harden transactional rollback and locking'
+          git push origin HEAD:feat/ota-update-system
