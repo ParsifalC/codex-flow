@@ -17,3 +17,46 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
+      - name: Smoke test overlay lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CODEX_HOME="$RUNNER_TEMP/flowpilot-smoke-codex-home"
+          mkdir -p "$CODEX_HOME"
+          BIN="$GITHUB_WORKSPACE/apps/macos-overlay/bin/FlowPilot"
+          LOG="$RUNNER_TEMP/flowpilot-smoke.log"
+
+          "$BIN" autostart status --json
+          "$BIN" start >"$LOG" 2>&1 &
+          START_PID=$!
+
+          running=0
+          for _ in {1..30}; do
+            if "$BIN" status >/dev/null 2>&1; then
+              running=1
+              break
+            fi
+            if ! kill -0 "$START_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [[ "$running" != "1" ]]; then
+            echo "FlowPilot failed to become reachable over IPC" >&2
+            cat "$LOG" >&2 || true
+            wait "$START_PID" || true
+            exit 1
+          fi
+
+          "$BIN" stop >/dev/null 2>&1 || true
+          for _ in {1..20}; do
+            if ! kill -0 "$START_PID" 2>/dev/null; then
+              exit 0
+            fi
+            sleep 0.1
+          done
+
+          echo "FlowPilot did not terminate after stop" >&2
+          kill "$START_PID" 2>/dev/null || true
+          exit 1
