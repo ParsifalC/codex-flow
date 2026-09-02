@@ -1,16 +1,13 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
-function New-Utf8NoBomEncoding {
-    return New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
-}
-function Read-Utf8NoBom([string]$Path) {
-    return [System.IO.File]::ReadAllText($Path, (New-Utf8NoBomEncoding))
-}
+function New-Utf8NoBomEncoding { return New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false }
+function Read-Utf8NoBom([string]$Path) { return [System.IO.File]::ReadAllText($Path, (New-Utf8NoBomEncoding)) }
 
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $StateDir = Join-Path $CodexHome 'codex-flow'
 $SourceFile = Join-Path $StateDir 'source'
 $Policy = Join-Path $CodexHome 'codex-flow.toml'
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 function Get-SourceDir {
     if (-not (Test-Path $SourceFile)) { throw 'missing source metadata; reinstall codex-flow' }
@@ -18,7 +15,20 @@ function Get-SourceDir {
     if (-not (Test-Path $dir)) { throw "source checkout no longer exists: $dir" }
     return $dir
 }
+function Get-ScriptPath([string]$Name) {
+    $state = Join-Path $StateDir $Name
+    if (Test-Path $state) { return $state }
+    $repo = Join-Path (Join-Path $RepoRoot 'scripts') $Name
+    if (Test-Path $repo) { return $repo }
+    if (Test-Path $SourceFile) {
+        $src = (Read-Utf8NoBom $SourceFile).Trim()
+        $candidate = Join-Path (Join-Path $src 'scripts') $Name
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $null
+}
 function Get-PolicyValue([string]$Section, [string]$Key) {
+    if (-not (Test-Path $Policy)) { return '' }
     $text = Read-Utf8NoBom $Policy
     $m = [regex]::Match($text, '(?ms)^\[' + [regex]::Escape($Section) + '\]\s*(.*?)(?=^\[[^\r\n]+\]|\z)')
     if (-not $m.Success) { return '' }
@@ -27,76 +37,37 @@ function Get-PolicyValue([string]$Section, [string]$Key) {
     return ''
 }
 
+$Localization = Get-ScriptPath 'localization.py'
+$UiLang = 'en'
+if ($Localization -and (Get-Command python3 -ErrorAction SilentlyContinue)) {
+    try { $UiLang = (& python3 $Localization --policy $Policy --resolved 2>$null | Out-String).Trim() } catch { $UiLang = 'en' }
+}
+function L([string]$English, [string]$Chinese) { if ($UiLang -eq 'zh') { return $Chinese } else { return $English } }
+
 if ($args.Count -eq 0 -and [System.Environment]::UserInteractive) {
-    $menuScript = Join-Path $StateDir 'menu.py'
-    if (-not (Test-Path $menuScript)) {
-        if (Test-Path $SourceFile) {
-            $srcDir = (Read-Utf8NoBom $SourceFile).Trim()
-            $menuScript = Join-Path $srcDir 'scripts/menu.py'
-        }
-    }
-    if (Test-Path $menuScript) {
-        & python3 $menuScript
-        exit $LASTEXITCODE
-    }
+    $menuScript = Get-ScriptPath 'menu.py'
+    if ($menuScript) { & python3 $menuScript; exit $LASTEXITCODE }
 }
 
 $cmd = if ($args.Count -gt 0) { $args[0] } else { 'help' }
 $rest = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
+
 switch ($cmd) {
     'status' {
-        $src = Get-SourceDir
-        $installed = if (Test-Path (Join-Path $StateDir 'version')) { (Read-Utf8NoBom (Join-Path $StateDir 'version')).Trim() } else { 'unknown' }
-        $available = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
-        $dispSrc = $src.Replace($HOME, '~')
-
-        function Write-StatusLine($content) {
-            $width = 68
-            $pad = [Math]::Max(0, $width - $content.Length)
-            Write-Host '  |  ' -ForegroundColor DarkGray -NoNewline
-            Write-Host $content -NoNewline
-            Write-Host (' ' * $pad) -NoNewline
-            Write-Host ' |' -ForegroundColor DarkGray
-        }
-
-        Write-Host ""
-        Write-Host "codex-flow status" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host '  +-- Version & Paths ------------------------------------------------+' -ForegroundColor DarkGray
-        Write-StatusLine "* Installed:   v$installed"
-        Write-StatusLine "* Checkout:    $dispSrc (v$available)"
-        Write-StatusLine "* Skill:       FlowPilot (flow-pilot)"
-        if (Test-Path $Policy) {
-            $pPolicy = Get-PolicyValue parent model_policy
-            $pEffort = Get-PolicyValue parent min_reasoning_effort
-            $wModel = Get-PolicyValue worker resolved_model
-            $wEffort = Get-PolicyValue worker min_reasoning_effort
-            $tEnabled = Get-PolicyValue telemetry enabled
-            $tNotifications = Get-PolicyValue telemetry notifications
-            $tRetention = Get-PolicyValue telemetry retention_days
-            if (-not $tNotifications) { $tNotifications = 'true' }
-            if (-not $tRetention) { $tRetention = '30' }
-
-            Write-Host '  +-- Model Routing --------------------------------------------------+' -ForegroundColor DarkGray
-            Write-StatusLine "* Parent:      $pPolicy (min effort: $pEffort)"
-            Write-StatusLine "* Worker:      $wModel (min effort: $wEffort)"
-            if ($tEnabled -eq 'true') {
-                Write-StatusLine "* Telemetry:   [+] enabled"
-            } else {
-                Write-StatusLine "* Telemetry:   [-] disabled"
-            }
-            if ($tNotifications -eq 'true') { Write-StatusLine "* Notify:      [+] system notification (macOS)" } else { Write-StatusLine "* Notify:      [-] disabled" }
-            Write-StatusLine "* Retention:   $tRetention days per-run data"
-        }
-        Write-Host '  +-------------------------------------------------------------------+' -ForegroundColor DarkGray
-        Write-Host ""
+        $ui = Get-ScriptPath 'ui.py'
+        if (-not $ui) { throw (L 'localized UI helper is missing; reinstall codex-flow' '本地化 UI 组件缺失，请重新安装 codex-flow') }
+        & python3 $ui status
+        exit $LASTEXITCODE
+    }
+    'language' {
+        $ui = Get-ScriptPath 'ui.py'
+        if (-not $ui) { throw (L 'localized UI helper is missing; reinstall codex-flow' '本地化 UI 组件缺失，请重新安装 codex-flow') }
+        & python3 $ui language @rest
+        exit $LASTEXITCODE
     }
     'usage' {
-        $telemetry = Join-Path $StateDir 'telemetry.py'
-        if (-not (Test-Path $telemetry)) {
-            $src = Get-SourceDir
-            $telemetry = Join-Path $src 'scripts/telemetry.py'
-        }
+        $telemetry = Get-ScriptPath 'telemetry.py'
+        if (-not $telemetry) { throw (L 'telemetry collector not installed; reinstall codex-flow' '遥测组件未安装，请重新安装 codex-flow') }
         $usageArgs = if ($rest.Count -eq 0) { @('last') } else { $rest }
         & python3 $telemetry @usageArgs
         exit $LASTEXITCODE
@@ -113,19 +84,22 @@ switch ($cmd) {
     }
     'benchmark' { & python3 (Join-Path (Get-SourceDir) 'scripts/run-benchmark.py') @rest; exit $LASTEXITCODE }
     'benchmark-analyze' { & python3 (Join-Path (Get-SourceDir) 'scripts/analyze-benchmark.py') @rest; exit $LASTEXITCODE }
-    'doctor' { & (Join-Path (Get-SourceDir) 'scripts/doctor.ps1'); if (-not $?) { exit 1 }; exit 0 }
+    'doctor' {
+        $doctor = Get-ScriptPath 'doctor.py'
+        if (-not $doctor) { throw (L 'doctor helper is missing; reinstall codex-flow' '诊断组件缺失，请重新安装 codex-flow') }
+        & python3 $doctor
+        exit $LASTEXITCODE
+    }
     'uninstall' {
         & (Join-Path (Get-SourceDir) 'scripts/uninstall.ps1')
         if (-not $?) { exit 1 }
-        # Do not propagate a stale native-process exit code from helpers used by
-        # uninstall.ps1. Successful PowerShell completion is the contract here.
         exit 0
     }
     'update' {
         $src = Get-SourceDir
-        if (-not (Test-Path (Join-Path $src '.git'))) { throw 'update requires the original git checkout' }
-        if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git is required for update' }
-        if (-not (Test-Path $Policy)) { throw 'missing policy; reinstall codex-flow' }
+        if (-not (Test-Path (Join-Path $src '.git'))) { throw (L 'update requires the original git checkout' '更新需要原始 Git checkout') }
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw (L 'git is required for update' '更新需要 git') }
+        if (-not (Test-Path $Policy)) { throw (L 'missing policy; reinstall codex-flow' '策略文件缺失，请重新安装 codex-flow') }
 
         $env:CODEX_FLOW_PARENT_MODEL_POLICY = Get-PolicyValue parent model_policy
         $env:CODEX_FLOW_PARENT_MIN_MODEL = Get-PolicyValue parent min_model
@@ -145,49 +119,46 @@ switch ($cmd) {
         $before = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         $currBranch = (git -C $src rev-parse --abbrev-ref HEAD 2>$null)
         $currRemote = (git -C $src config --get "branch.$currBranch.remote" 2>$null)
-        if (-not $currRemote) { $currRemote = "origin" }
-        if ($currBranch -and $currBranch -ne "HEAD") {
-            git -C $src pull --ff-only $currRemote $currBranch
-        } else {
-            git -C $src pull --ff-only
-        }
+        if (-not $currRemote) { $currRemote = 'origin' }
+        if ($currBranch -and $currBranch -ne 'HEAD') { git -C $src pull --ff-only $currRemote $currBranch } else { git -C $src pull --ff-only }
         if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
         $after = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         & (Join-Path $src 'install.ps1')
+        if (-not $?) { exit 1 }
         Write-Host ""
-        Write-Host "Updated codex-flow $before -> $after" -ForegroundColor Green
-        & (Join-Path $src 'scripts/doctor.ps1')
+        Write-Host (L "Updated codex-flow $before -> $after" "codex-flow 已更新 $before -> $after") -ForegroundColor Green
+        & python3 (Join-Path $src 'scripts/doctor.py')
+        exit $LASTEXITCODE
+    }
+    'overlay' {
+        $src = Get-SourceDir
+        $overlayBin = Join-Path $StateDir 'bin/FlowPilot'
+        if (-not (Test-Path $overlayBin)) { $overlayBin = Join-Path $StateDir 'bin/codex-flow-overlay' }
+        if (-not (Test-Path $overlayBin)) { $overlayBin = Join-Path $src 'apps/macos-overlay/bin/FlowPilot' }
+        if (-not (Test-Path $overlayBin)) { throw (L 'FlowPilot native overlay is not built.' 'FlowPilot 原生悬浮窗尚未编译。') }
+        $sub = if ($rest.Count -gt 0) { $rest[0] } else { 'toggle' }
+        if ($sub -in @('start','restart')) {
+            try { & $overlayBin stop 2>$null | Out-Null } catch { }
+            Start-Process -FilePath $overlayBin -ArgumentList 'start' -WindowStyle Hidden
+            Write-Host (L 'FlowPilot launched in background.' 'FlowPilot 已在后台启动。')
+        } else {
+            & $overlayBin @rest
+            exit $LASTEXITCODE
+        }
+    }
+    'help' {
+        $ui = Get-ScriptPath 'ui.py'
+        if (-not $ui) { throw 'localized UI helper is missing; reinstall codex-flow' }
+        & python3 $ui help
+        exit $LASTEXITCODE
+    }
+    '-h' {
+        $ui = Get-ScriptPath 'ui.py'; & python3 $ui help; exit $LASTEXITCODE
+    }
+    '--help' {
+        $ui = Get-ScriptPath 'ui.py'; & python3 $ui help; exit $LASTEXITCODE
     }
     default {
-        Write-Host @'
-
-Usage: codex-flow <command> [options]
-
-  Interactive Console
-    codex-flow                  Launch interactive management console (no args)
-
-  Core Commands
-    status                      Show installed version and effective FlowPilot policy
-    update                      Pull checkout, preserve policy, refresh recommendations
-    doctor                      Verify installation, routing, and telemetry wiring
-    usage last [--json]         Show last task telemetry summary
-    usage list [options]        List task history (-n N, --project P, --today, --json)
-    usage show <#|id> [opt]     Show specific task telemetry summary
-    usage stats [options]       Show aggregated telemetry stats (--project P, --days N)
-
-  Benchmark Commands
-    benchmark-local             Run built-in benchmark via local Codex session
-    benchmark-corpus            Materialize corpus without calling any model
-    benchmark                   Run a reproducible Codex benchmark manifest
-    benchmark-analyze           Analyze benchmark JSONL with quality-first routing
-
-  Maintenance
-    uninstall                   Remove codex-flow-managed files and hooks
-
-  Tip:
-    Run `codex-flow` to enter interactive console, or `codex-flow benchmark-local quick` for validation.
-
-'@
+        throw (L "unknown command: $cmd" "未知命令：$cmd")
     }
 }
-

@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic codex-flow telemetry collector and CLI.
-
-Consumes Codex command-hook JSON on stdin. It never calls a model. Usage and
-quota data are read from `codex app-server`; lifecycle data comes from hooks.
-"""
-
+"""Deterministic codex-flow telemetry collector and CLI."""
 from __future__ import annotations
 
 import json
@@ -14,18 +9,88 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Ensure telemetry_core is discoverable relative to this script
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from telemetry_core import *  # noqa: F401, F403
+from telemetry_core import *  # noqa: F401,F403
 from telemetry_core import (
+    aggregate_usage_value,
     collect_hook,
+    fmt_duration_ms,
+    fmt_tokens,
+    numeric_ms,
+    run_context,
     show_last,
     show_list,
     show_run,
     show_stats,
+    telemetry_notifications_enabled,
     telemetry_retention_days,
 )
+import telemetry_core.collector as _collector
+from localization import resolve_language, tr
+
+LANG = resolve_language(Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "codex-flow.toml")
+
+
+def T(en: str, zh: str) -> str:
+    return tr(en, zh, lang=LANG)
+
+
+def _localized_notification_body(run: dict) -> str:
+    session, project, branch = run_context(run)
+    label = project or session or T("Codex task", "Codex 任务")
+    if branch and project:
+        label = f"{label} · {branch}"
+    workers = list((run.get("workers") or {}).values())
+    parent = run.get("parent") or {}
+    usages = [parent.get("usage_delta") if isinstance(parent, dict) else None]
+    usages.extend(worker.get("usage") if isinstance(worker, dict) else None for worker in workers)
+    total_tokens = aggregate_usage_value(usages, "total_tokens")
+    worker_count = T(
+        f"{len(workers)} worker{'s' if len(workers) != 1 else ''}",
+        f"{len(workers)} 个子 Agent",
+    )
+    parts = [label, worker_count, f"{fmt_tokens(total_tokens)} tokens"]
+    started = numeric_ms(run.get("started_at_ms"))
+    finished = numeric_ms(run.get("finished_at_ms"))
+    if started is not None and finished is not None:
+        duration = fmt_duration_ms(finished - started)
+        if duration:
+            parts.append(duration)
+    return " · ".join(parts)
+
+
+def _localized_send_system_notification(run: dict) -> None:
+    _collector.notify_overlay_if_active(run)
+    telemetry_mod = sys.modules.get("telemetry")
+    sub_mod = getattr(telemetry_mod, "subprocess", subprocess) if telemetry_mod else subprocess
+    shutil_mod = getattr(telemetry_mod, "shutil", shutil) if telemetry_mod else shutil
+    sys_mod = getattr(telemetry_mod, "sys", sys) if telemetry_mod else sys
+    if not telemetry_notifications_enabled() or sys_mod.platform != "darwin":
+        return
+    executable = shutil_mod.which("osascript")
+    if not executable:
+        return
+    title = T("FlowPilot task finished", "FlowPilot 任务已完成")
+    script = (
+        f"display notification {_collector.applescript_literal(_localized_notification_body(run))} "
+        f"with title {_collector.applescript_literal(title)}"
+    )
+    try:
+        sub_mod.run(
+            [executable, "-e", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, Exception):
+        return
+
+
+# collect_hook resolves these names from telemetry_core.collector at runtime.
+_collector.notification_body = _localized_notification_body
+_collector.send_system_notification = _localized_send_system_notification
 
 
 def main() -> int:
@@ -52,9 +117,7 @@ def main() -> int:
                     i += 2
                 else:
                     i += 1
-            return show_list(
-                limit=limit, project=project, today=today, as_json=as_json
-            )
+            return show_list(limit=limit, project=project, today=today, as_json=as_json)
         if cmd == "show":
             as_json = "--json" in args[1:]
             target = "last"
@@ -92,10 +155,8 @@ def main() -> int:
             has_data = bool(r)
         except Exception:
             has_data = False
-
     if not has_data:
         return show_last(as_json=False)
-
     try:
         raw = sys.stdin.read()
         event = json.loads(raw) if raw.strip() else {}
@@ -105,7 +166,6 @@ def main() -> int:
         try:
             collect_hook(event)
         except Exception:
-            # Telemetry must never break or block a Codex turn.
             return 0
     return 0
 
