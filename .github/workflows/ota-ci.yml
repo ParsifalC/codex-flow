@@ -1,6 +1,7 @@
 name: ota-ci
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'scripts/updater.py'
