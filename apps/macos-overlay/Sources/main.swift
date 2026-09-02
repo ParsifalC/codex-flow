@@ -9,8 +9,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        FlowPilotAutostartService.reconcileAtLaunch()
 
+        // Keep application startup side-effect free. Login-launch registration
+        // is managed explicitly from the Account switch / CLI instead of being
+        // rewritten every time the widget process starts. This avoids launchd
+        // lifecycle races with manual start/restart and rebuild flows.
         state = OverlayState()
         windowController = OverlayWindowController(state: state)
         watcher = TelemetryWatcher(state: state)
