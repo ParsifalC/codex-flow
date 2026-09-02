@@ -7,6 +7,7 @@ public struct AnalyticsView: View {
 
     @State private var trendRuns: [TaskRun] = []
     @State private var trendLoading = false
+    @State private var trendRequestGeneration = 0
 
     public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
@@ -53,10 +54,10 @@ public struct AnalyticsView: View {
             state.loadStats()
             loadTrendRuns()
         }
-        .onChange(of: state.statsDays) { _ in
+        .onChange(of: state.statsDays) { _, _ in
             loadTrendRuns()
         }
-        .onChange(of: state.selectedProject) { _ in
+        .onChange(of: state.selectedProject) { _, _ in
             loadTrendRuns()
         }
     }
@@ -303,7 +304,8 @@ public struct AnalyticsView: View {
     }
 
     private func loadTrendRuns() {
-        guard !trendLoading else { return }
+        trendRequestGeneration += 1
+        let generation = trendRequestGeneration
         trendLoading = true
         let days = state.statsDays
         let project = state.selectedProject
@@ -317,6 +319,7 @@ public struct AnalyticsView: View {
             let cutoff = Date().addingTimeInterval(-Double(days) * 86_400).timeIntervalSince1970 * 1000.0
             let filtered = runs.filter { ($0.startedAtMs ?? 0) >= cutoff }
             DispatchQueue.main.async {
+                guard generation == trendRequestGeneration else { return }
                 trendRuns = filtered
                 trendLoading = false
             }
