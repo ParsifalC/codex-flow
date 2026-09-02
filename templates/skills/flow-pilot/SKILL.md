@@ -11,7 +11,7 @@ The invariant is:
 
 > **FlowPilot profiles. `strategy_runtime.py` + the strategy registry decide. FlowPilot executes the returned plan.**
 
-Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, worker counts, review mode, fan-out, lifecycle/join policy, cancellation policy, fallback policy, or repair budget in this skill. The installed planner and built-in strategy registry are the single source of truth for those decisions.
+Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, worker counts, review mode, fan-out, lifecycle/join policy, cancellation policy, fallback policy, or repair budget in this skill. The installed planner and built-in strategy registry are the single source of truth for those decisions. Hard Worker lifecycle safety invariants are evaluated by the installed deterministic lifecycle helper rather than improvised by Parent.
 
 Default compatibility remains `strategy = efficient` plus `routing = adaptive`.
 
@@ -262,13 +262,35 @@ State rules:
 - `stalled`: no observable progress for at least `idle_timeout_seconds` and no visible in-flight work.
 - `failed`: the Agent/tool/runtime reports a terminal error.
 - `superseded`: the same bounded scope has already been covered with equivalent evidence by Parent or another execution path, and that stage has `cancel_if_superseded=true`.
-- `cancelled`: cancellation has actually been requested/applied after a policy-authorized reason.
+- `cancelled`: cancellation/termination has actually been confirmed.
 
 `idle_timeout_seconds` is a renewable **progress lease**, not a completion deadline. New observable progress renews the lease. `hard_timeout_seconds` is the absolute wall-clock ceiling from Worker start.
 
 **A `wait()` timeout is never a Worker timeout.** A high-reasoning Worker can be healthy and slow. Repeated `wait()` calls returning without a terminal result do not by themselves justify `stalled`, `failed`, or cancellation.
 
 If the active Codex runtime does not expose sufficient intermediate activity to measure idle time reliably, do not guess. Keep a non-terminal Worker as `running`/`progressing` unless there is explicit failure, clear stall evidence, supersession, or the hard timeout is reached.
+
+### Deterministic lifecycle evaluator
+
+When timestamps/activity evidence are reliable enough to make a lifecycle decision, do not calculate timeout/fallback behavior in prose. Invoke the installed evaluator:
+
+```bash
+python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
+  --policy-json '<the relevant exploration_stage / implementation_stage / review_stage JSON>' \
+  --scope-id <scope-id> \
+  --stage exploration|implementation|review \
+  --started-at <timestamp> \
+  --last-progress-at <timestamp> \
+  --now <timestamp> \
+  [--writable] [--in-flight] \
+  [--terminal-success] [--terminal-failure] \
+  [--scope-superseded] [--cancel-confirmed] \
+  [--replacement-isolated]
+```
+
+Use its `state`, `action`, `replacement_allowed`, `fence_required`, and `fallback_policy` as the lifecycle decision. Parent supplies only observable facts and semantic scope overlap; the helper owns timing transitions and writable replacement fencing.
+
+If the helper is unavailable, treat that as an installation/runtime failure. For writable implementation, fail safe: never start a same-scope replacement while the previous Worker is non-terminal.
 
 Parent execution is fork/join, not fork/block:
 
@@ -315,6 +337,17 @@ Fallback always operates on the missing delta, never by restarting the whole sta
 
 Worker lifecycle failure/stall does **not** consume `max_repair_cycles`. Repair cycles are for defects in implementation output, not scheduler/infrastructure latency.
 
+### Hard writable replacement fence
+
+This safety invariant outranks strategy preference: if an implementation Worker has already been given a writable scope and is stalled/hard-timed-out but non-terminal, `fallback_policy=replan` does **not** authorize a same-scope replacement yet.
+
+A replacement is allowed only after either:
+
+1. the old writable Worker is confirmed terminal/cancelled/failed; or
+2. the new replacement is explicitly assigned a fresh isolated worktree and the old Worker's output is fenced from integration (`--replacement-isolated`).
+
+Until one of those conditions is true, the evaluator returns `action=request_cancel` and `replacement_allowed=false`. Never let a recovered old Worker and its replacement write the same scope concurrently.
+
 ## 6. Execute exploration exactly from the plan
 
 If `exploration_workers == 0`, perform targeted discovery in the parent context; `exploration_stage` must be `none`.
@@ -344,7 +377,7 @@ If the plan requests multiple implementation workers, verify the TaskProfile evi
 
 Prefer `worker-implementer` for planned implementation workers. Apply `implementer_capability_policy`, `implementer_model`, and `implementer_reasoning` exactly when supported by the runtime. If a requested per-spawn override is unsupported, fall back to the installed Worker baseline and report the limitation rather than re-planning resource policy locally.
 
-Implementation normally uses a required lifecycle. Do not cancel a progressing writable Worker merely to have Parent recreate the same patch. On implementation failure/stall, follow `implementation_stage.fallback_policy`; `replan` means recompile from the remaining writable delta.
+Implementation normally uses a required lifecycle. Do not cancel a progressing writable Worker merely to have Parent recreate the same patch. On implementation failure/stall, follow `implementation_stage.fallback_policy` through the deterministic lifecycle evaluator. `replan` means recompile from the remaining writable delta **after writable replacement fencing is satisfied**; it never means immediately spawning a second Worker into the same live scope.
 
 ## 8. Worker implements and proves
 
@@ -396,7 +429,7 @@ Telemetry remains observational and deterministic. Never call a model solely to 
 
 Quota pressure may reduce speculative fan-out or repair budget for quota-sensitive strategies, but configured reasoning/quality floors and the Worker-over-Parent reasoning invariant must not be silently lowered. `quality` is correctness-first; strong/absolute quality intent is allowed to retain Parent-class capability on high-value roles under quota pressure. Safety ceilings still apply.
 
-Lifecycle v1 uses deterministic strategy policies and Runtime hard ceilings. Do not invent historical latency predictions. Future telemetry-driven latency adaptation may be added only as explicit planner logic.
+Lifecycle v1 uses deterministic strategy policies, a deterministic lifecycle evaluator, and Runtime hard ceilings. Do not invent historical latency predictions. Future telemetry-driven latency adaptation may be added only as explicit planner/runtime logic.
 
 ## 12. Context and concurrency discipline
 
@@ -405,6 +438,8 @@ Prefer targeted search, concise excerpts, diff-scoped review, and small validati
 `max_concurrent_threads` is a **per-stage concurrency ceiling**, not the total number of Workers in the plan. `planned_worker_count` may exceed it because exploration, implementation, and review are separate stages.
 
 Parallel work must be independent. Writable fan-out requires isolated non-overlapping scopes/worktrees already represented by `writable_workstreams`.
+
+A replacement for a non-terminal writable Worker is **not** an additional proven writable workstream merely because replanning occurred. It must satisfy the hard replacement fence first.
 
 ## 13. Re-plan checkpoints
 
@@ -419,7 +454,7 @@ Re-profile and invoke the planner again when:
 - repair cycles fail;
 - reliable quota/runtime state materially changes.
 
-Re-plan from the delta; do not restart the task without evidence.
+Re-plan from the delta; do not restart the task without evidence. For writable work, a new plan never overrides the old Worker's fencing requirement.
 
 ## Compatibility invariant
 
@@ -433,4 +468,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry, not this skill, define their concrete values.
+Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies timing/fallback state transitions plus hard writable safety fencing.
