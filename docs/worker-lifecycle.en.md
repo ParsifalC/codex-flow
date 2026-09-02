@@ -21,7 +21,7 @@ Deterministic lifecycle evaluator
     └─ writable replacement fencing
 ```
 
-Strategy Runtime determines topology and StagePolicy. FlowPilot supplies observable facts such as recent Worker activity, scope coverage, and terminal state. Timing, stall/fallback transitions, and writable replacement permission are evaluated deterministically by `scripts/strategies/lifecycle_runtime.py`.
+Strategy Runtime determines topology and StagePolicy. FlowPilot supplies observable facts such as recent Worker activity, scope coverage, and terminal state. Timing, stall/fallback transitions, cancellation requirements, and writable replacement permission are evaluated deterministically by `scripts/strategies/lifecycle_runtime.py`.
 
 The helper is copied automatically with the `strategies/` package by both Unix and Windows installers to `~/.codex/codex-flow/strategies/lifecycle_runtime.py`.
 
@@ -102,6 +102,7 @@ The result contains:
 state
 action
 reason
+cancel_required
 replacement_allowed
 fence_required
 idle_seconds
@@ -109,7 +110,9 @@ wall_seconds
 fallback_policy
 ```
 
-This keeps StagePolicy deterministic and moves timeout/fallback state transitions out of ad-hoc Parent judgment.
+`cancel_required=true` means the Worker is still non-terminal. Even when `action` already permits `parent_delta`, `continue_partial`, or an isolated `replan`, Scheduler must still request cancellation of the old Worker. That prevents read-only fallback from leaving a timed-out Worker burning resources in the background; writable stages additionally obey `fence_required`.
+
+This keeps StagePolicy deterministic and moves timeout/fallback state transitions plus cancellation requirements out of ad-hoc Parent judgment.
 
 ## Writable replacement fencing
 
@@ -134,6 +137,8 @@ If the runtime cannot reliably terminate the old Worker, a second safe path is a
 ```text
 old Worker remains non-terminal
         ↓
+request cancellation of old Worker (cancel_required=true)
+        ↓
 replacement uses a fresh isolated worktree
         ↓
 old output is fenced from integration
@@ -146,6 +151,8 @@ The evaluator returns `replacement_allowed=true` only when either:
 1. the old writable Worker is terminal/cancelled/failed; or
 2. the replacement is explicitly isolated and the old output is fenced from integration.
 
+In the second case the replacement may proceed, but the cancellation requirement for the old Worker remains active.
+
 This prevents a stalled Worker A from recovering and writing concurrently with replacement Worker B in the same writable scope.
 
 ## Fallback
@@ -157,6 +164,8 @@ Fallback always covers the missing delta:
 - `replan`: re-profile/recompile only for the remaining delta.
 - `fail`: surface the unresolved failure instead of silently replacing it.
 
+For a non-terminal stalled/hard-timed-out Worker, fallback may proceed where policy allows, while `cancel_required=true` simultaneously requires cleanup of the old Worker.
+
 Worker lifecycle failures do not consume `max_repair_cycles`; repair cycles are reserved for defects in implementation output.
 
 ## Built-in strategy defaults
@@ -166,7 +175,7 @@ Worker lifecycle failures do not consume `max_repair_cycles`; repair cycles are 
 - **quality**: longer leases, exploration quorum target 2, required implementation, required independent review target 2, no silent Parent replacement of required reviewers.
 - **speed**: opportunistic exploration, shorter leases, required implementation, quorum review.
 
-All strategy preferences remain bounded by Runtime hard ceilings and writable replacement fencing.
+All strategy preferences remain bounded by Runtime hard ceilings, cancellation requirements, and writable replacement fencing.
 
 ## Real scenarios
 
@@ -182,9 +191,13 @@ If one owns Runtime semantics and another owns installation/platform integration
 
 When equivalent scope evidence already exists and policy allows supersession, the Worker becomes `superseded` and cancellation may be requested. The reason is loss of marginal value, not elapsed time.
 
+### Read-only Worker stalls
+
+A fallback such as `parent_delta` may continue, but evaluator also returns `cancel_required=true` so the old Worker is reclaimed rather than silently running past idle/hard ceilings.
+
 ### Writable implementation stalls
 
-Do not execute `replan → spawn same-scope replacement` directly. Terminate the old Worker first, or move the replacement into a fresh isolated worktree and fence the old output.
+Do not execute `replan → spawn same-scope replacement` directly. Terminate the old Worker first, or move the replacement into a fresh isolated worktree and fence the old output. In either path, a non-terminal old Worker must receive a cancellation request.
 
 ## Runtime invariants
 
@@ -193,6 +206,7 @@ Do not execute `replan → spawn same-scope replacement` directly. Terminate the
 3. Hard timeout is absolute.
 4. Supersession requires equivalent scope coverage, not elapsed time.
 5. Parent fallback covers only missing delta.
-6. Writable replacement requires `old terminal OR new isolated+fenced`.
-7. Lifecycle failure does not consume implementation repair cycles.
-8. Strategy-specific lifecycle preferences stay in StrategySpec; deterministic evaluator enforces hard safety invariants uniformly.
+6. Any non-terminal lifecycle exit explicitly carries `cancel_required=true`; a timed-out Worker is never silently left running.
+7. Writable replacement requires `old terminal OR new isolated+fenced`.
+8. Lifecycle failure does not consume implementation repair cycles.
+9. Strategy-specific lifecycle preferences stay in StrategySpec; deterministic evaluator enforces hard safety invariants uniformly.
