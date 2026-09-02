@@ -67,6 +67,15 @@ assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
 PY
 
+# Millisecond timestamps are rejected rather than silently misclassified as huge elapsed seconds.
+if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
+  --stage implementation --started-at 1725324000000 --last-progress-at 1725324001000 \
+  --now 1725324002000 --writable > /dev/null 2> "$TMP/millisecond.err"; then
+  echo "millisecond timestamp unexpectedly accepted" >&2
+  exit 1
+fi
+grep -Fq 'timestamps must use seconds, not milliseconds' "$TMP/millisecond.err"
+
 # A visible in-flight operation keeps the idle lease alive even beyond idle timeout.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --in-flight > "$TMP/inflight.json"
@@ -109,6 +118,47 @@ assert d["state"]=="stalled" and d["action"]=="replan", d
 assert d["cancel_required"] is True, d
 assert d["replacement_allowed"] is True and d["fence_required"] is True, d
 assert "isolated" in d["reason"], d
+PY
+
+# Writable Parent delta is also a new writer and must obey the same hard fence.
+python3 - "$TMP/impl-policy.json" > "$TMP/parent-delta-policy.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+p["fallback_policy"]="parent_delta"
+print(json.dumps(p, separators=(",", ":")))
+PY
+PARENT_DELTA_POLICY="$(cat "$TMP/parent-delta-policy.json")"
+python3 "$LIFECYCLE" --policy-json "$PARENT_DELTA_POLICY" --scope-id impl-parent \
+  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable > "$TMP/parent-delta-stall.json"
+python3 - "$TMP/parent-delta-stall.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="stalled" and d["action"]=="request_cancel", d
+assert d["cancel_required"] is True and d["fence_required"] is True, d
+assert d["replacement_allowed"] is False and d["fallback_policy"]=="parent_delta", d
+PY
+
+# Parent may take the writable delta only after old Worker termination is confirmed.
+python3 "$LIFECYCLE" --policy-json "$PARENT_DELTA_POLICY" --scope-id impl-parent \
+  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --cancel-confirmed > "$TMP/parent-delta-cancelled.json"
+python3 - "$TMP/parent-delta-cancelled.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="cancelled" and d["action"]=="parent_delta", d
+assert d["cancel_required"] is False and d["fence_required"] is True, d
+assert d["replacement_allowed"] is False, d
+PY
+
+# Or Parent may write in a fresh isolated worktree while the old Worker is still being cancelled.
+python3 "$LIFECYCLE" --policy-json "$PARENT_DELTA_POLICY" --scope-id impl-parent \
+  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --replacement-isolated > "$TMP/parent-delta-isolated.json"
+python3 - "$TMP/parent-delta-isolated.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="stalled" and d["action"]=="parent_delta", d
+assert d["cancel_required"] is True and d["fence_required"] is True, d
+assert d["replacement_allowed"] is False, d
+assert "downstream writer is explicitly isolated" in d["reason"], d
 PY
 
 # Terminal failure is already fenced and may immediately replan.
