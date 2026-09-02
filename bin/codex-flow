@@ -162,7 +162,13 @@ case "$cmd" in
     [[ -n "$telemetry_retention_days" ]] || telemetry_retention_days=30
 
     before="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
-    git -C "$src" pull --ff-only
+    curr_branch="$(git -C "$src" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+    curr_remote="$(git -C "$src" config --get "branch.$curr_branch.remote" 2>/dev/null || echo "origin")"
+    if [[ -n "$curr_branch" && "$curr_branch" != "HEAD" ]]; then
+      git -C "$src" pull --ff-only "$curr_remote" "$curr_branch" 2>/dev/null || git -C "$src" pull --ff-only
+    else
+      git -C "$src" pull --ff-only
+    fi
     after="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
 
     CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \

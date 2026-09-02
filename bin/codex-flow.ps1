@@ -143,7 +143,14 @@ switch ($cmd) {
         $env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS = if ($telemetryRetentionDays) { $telemetryRetentionDays } else { '30' }
 
         $before = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
-        git -C $src pull --ff-only
+        $currBranch = (git -C $src rev-parse --abbrev-ref HEAD 2>$null)
+        $currRemote = (git -C $src config --get "branch.$currBranch.remote" 2>$null)
+        if (-not $currRemote) { $currRemote = "origin" }
+        if ($currBranch -and $currBranch -ne "HEAD") {
+            git -C $src pull --ff-only $currRemote $currBranch
+        } else {
+            git -C $src pull --ff-only
+        }
         if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
         $after = if (Test-Path (Join-Path $src 'VERSION')) { (Read-Utf8NoBom (Join-Path $src 'VERSION')).Trim() } else { 'unknown' }
         & (Join-Path $src 'install.ps1')
