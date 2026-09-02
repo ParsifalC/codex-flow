@@ -19,6 +19,24 @@ jobs:
         with:
           ref: feat/ota-update-system
           fetch-depth: 0
+      - name: Adapt final review helper to current UpdateView indentation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/review-fix.py')
+          text = path.read_text(encoding='utf-8')
+          for variable in ('restart_button', 'codex_button'):
+              start = text.index(f"{variable} = re.compile(r'''\n")
+              end = text.index("''')", start) + 4
+              block = text[start:end]
+              lines = block.splitlines()
+              lines[1] = lines[1].replace('(?ms)', '(?ms)    ', 1)
+              for index in range(2, len(lines) - 1):
+                  lines[index] = '    ' + lines[index]
+              text = text[:start] + '\n'.join(lines) + text[end:]
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Apply final OTA review fixes
         run: python3 .github/review-fix.py
       - name: Validate final OTA patch
