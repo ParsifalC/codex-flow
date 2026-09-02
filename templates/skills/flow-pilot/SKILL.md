@@ -1,6 +1,6 @@
 ---
 name: flow-pilot
-description: Orchestrate non-trivial software engineering work through a qualifying high-capability parent and efficient workers. Adapt delegation, model capability, reasoning effort, review, and bounded repair to task difficulty while preserving correctness and explicit user routing intent.
+description: Route non-trivial technical work by complexity, uncertainty, and risk, adapting reasoning, delegation, and review accordingly. Re-evaluate when a task materially expands. Skip straightforward answers and localized low-risk tasks.
 ---
 
 # FlowPilot
@@ -46,7 +46,7 @@ Never require one historical model name to qualify. If the active parent is know
 
 ## 1. Classify before spending
 
-Classify the engineering task as SMALL, ROUTINE, COMPLEX, or CRITICAL.
+Classify the technical task as SMALL, ROUTINE, COMPLEX, or CRITICAL.
 
 SMALL:
 - obvious localized change
@@ -70,6 +70,8 @@ CRITICAL:
 - destructive/data migration
 - production-critical infrastructure or integrity risk
 - repeated lower-effort failure where quality dominates cost
+
+Classification is continuous, not a one-time decision. Reclassify whenever new evidence materially increases scope, uncertainty, risk, or the number of independent workstreams. Do not anchor on the initial classification.
 
 SMALL work stays with the parent. In `adaptive` mode, delegate ROUTINE/COMPLEX/CRITICAL execution when useful. In `direct` mode, keep all execution with the parent. In `delegate` mode, prefer delegation when the runtime supports it and safe scoping is possible.
 

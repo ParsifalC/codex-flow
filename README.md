@@ -21,7 +21,7 @@ Parent 是否合格由策略决定，而不是由模型名称决定。默认优�
 
 ## FlowPilot
 
-FlowPilot 负责当前任务的分类、路由、reasoning 强度、Worker delegation、review 和有限 repair。它不是一个固定模型，也不只是“省 token”的规则；目标是在满足质量门槛的前提下选择足够的能力和并行度。
+FlowPilot 负责当前任务的分类、路由、reasoning 强度、Worker delegation、review 和有限 repair。它会在任务开始时分类，并在范围、不确定性、风险或独立工作流明显增加时重新分类，避免受初始判断束缚。它不是一个固定模型，也不只是“省 token”的规则；目标是在满足质量门槛的前提下选择足够的能力和并行度。
 
 安装后 Skill 位于：
 
@@ -417,7 +417,7 @@ CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME
 - 模型推荐 fixture
 ## FlowPilot macOS 原生悬浮窗与效能看板 (Native Widget)
 
-`1.3.0` 全面升级并深度集成了 `codex-flow usage` 的全部核心能力（基于 SwiftUI + AppKit 原生构建）：
+`1.4.0` 全面升级并深度集成了 `codex-flow usage` 的全部核心能力（基于 SwiftUI + AppKit 原生构建），并提供中英双语 (i18n) 国际化支持：
 
 - **⚡️ Inspector 实时巡检与 Quota 配额感知**：
   - 3 组高精环形仪表盘（耗时 / Tokens / 费用估算）、Prompt / Output / Cached / Reasoning 细分分布条、多 Agent 拓扑架构树；
@@ -441,6 +441,6 @@ codex-flow overlay [start|stop|restart|toggle|expand|collapse|tab|stats|history|
 
 ## 当前状态
 
-Private preview，版本 `1.3.0`。
+Private preview，版本 `1.4.0`。
 
 FlowPilot 是默认编排 Skill；本地认证 Benchmark 是默认真实数据采集路径；`direct`、`delegate`、`adaptive` 是显式且非持久的当前任务覆盖；正常任务 telemetry 默认开启且不额外调用模型；模型推荐变更需要 review；Benchmark routing 保持 advisory；真实 Benchmark 必须由用户明确触发；用户明确 pin 的配置始终拥有最高持久配置优先级。

@@ -21,7 +21,7 @@ A parent qualifies by policy, not by name. Defaults prefer the latest available 
 
 ## FlowPilot
 
-FlowPilot owns task classification, routing, reasoning effort, worker delegation, review, and bounded repair. It is not a fixed model and is broader than a cost-saving rule: it chooses sufficient capability and parallelism while preserving the quality gate.
+FlowPilot owns task classification, routing, reasoning effort, worker delegation, review, and bounded repair. It classifies at the start and reclassifies when scope, uncertainty, risk, or independent workstreams materially increase, rather than anchoring on the initial judgment. It is not a fixed model and is broader than a cost-saving rule: it chooses sufficient capability and parallelism while preserving the quality gate.
 
 Installed skill:
 
@@ -316,4 +316,4 @@ Normal CI never invokes a paid model. It validates shell/Python/PowerShell synta
 
 ## Current Status
 
-Private preview, version `1.3.0`. FlowPilot is the default orchestration skill. Per-task `direct`, `delegate`, and `adaptive` overrides remain explicit and non-persistent. Normal-task telemetry is enabled by default and adds no model inference. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution remains explicit; explicit user pins remain authoritative. Includes native macOS FlowPilot floating widget with live telemetry inspector, rate limit quota tracking, history timeline, and analytics dashboard.
+Private preview, version `1.4.0`. FlowPilot is the default orchestration skill. Per-task `direct`, `delegate`, and `adaptive` overrides remain explicit and non-persistent. Normal-task telemetry is enabled by default and adds no model inference. Model recommendation changes remain reviewable; benchmark routing remains advisory; real benchmark execution remains explicit; explicit user pins remain authoritative. Includes native macOS FlowPilot floating widget with live telemetry inspector, rate limit quota tracking, history timeline, analytics dashboard, and full bilingual (i18n) localization support.
