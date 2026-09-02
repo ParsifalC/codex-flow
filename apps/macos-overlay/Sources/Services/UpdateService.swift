@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -44,6 +45,9 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
 public final class FlowPilotUpdateService: ObservableObject {
     public static let shared = FlowPilotUpdateService()
 
+    private static let periodicCheckInterval: TimeInterval = 30 * 60
+    private static let lifecycleRefreshInterval: TimeInterval = 5 * 60
+
     @Published public private(set) var snapshot: FlowPilotUpdateSnapshot = .empty
     @Published public private(set) var isChecking = false
     @Published public private(set) var isInstalling = false
@@ -52,21 +56,23 @@ public final class FlowPilotUpdateService: ObservableObject {
     @Published public private(set) var actionError: String?
     @Published public private(set) var actionMessage: String?
 
-    private var timer: Timer?
+    private var periodicCheckTimer: Timer?
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var isBackgroundCheckRunning = false
+    private var lastBackgroundCheckRequestedAt: Date?
 
     private init() {
         refreshFromDisk()
         acknowledgeFlowPilotRestartAfterLaunchIfNeeded()
-        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-            Task { @MainActor in
-                FlowPilotUpdateService.shared.refreshFromDisk()
-            }
-        }
+        configureLifecycleObservers()
+        configurePeriodicUpdateCheck()
         requestCachedCheck()
     }
 
     deinit {
-        timer?.invalidate()
+        periodicCheckTimer?.invalidate()
+        lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+        lifecycleObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
     }
 
     public var hasUpdateBadge: Bool {
@@ -132,7 +138,7 @@ public final class FlowPilotUpdateService: ObservableObject {
     }
 
     public func requestCachedCheck() {
-        runUpdater(arguments: ["update", "--check", "--quiet"], mode: .backgroundCheck)
+        requestBackgroundCheck(force: false, minimumInterval: 0)
     }
 
     public func checkNow() {
@@ -203,6 +209,100 @@ public final class FlowPilotUpdateService: ObservableObject {
         }
     }
 
+    private func configurePeriodicUpdateCheck() {
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.periodicCheckInterval, repeats: true) { _ in
+            Task { @MainActor in
+                FlowPilotUpdateService.shared.requestBackgroundCheck(
+                    force: true,
+                    minimumInterval: Self.periodicCheckInterval
+                )
+            }
+        }
+        timer.tolerance = 2 * 60
+        periodicCheckTimer = timer
+    }
+
+    private func configureLifecycleObservers() {
+        let activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                FlowPilotUpdateService.shared.requestLifecycleRefresh()
+            }
+        }
+        lifecycleObservers.append(activeObserver)
+
+        let wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                FlowPilotUpdateService.shared.requestLifecycleRefresh()
+            }
+        }
+        lifecycleObservers.append(wakeObserver)
+    }
+
+    private func requestLifecycleRefresh() {
+        refreshFromDisk()
+        requestBackgroundCheck(force: true, minimumInterval: Self.lifecycleRefreshInterval)
+    }
+
+    private func requestBackgroundCheck(force: Bool, minimumInterval: TimeInterval) {
+        refreshFromDisk()
+        guard !hasPendingUpdateAction else { return }
+        guard !isBackgroundCheckRunning else { return }
+
+        let now = Date()
+        if minimumInterval > 0,
+           let lastCheck = mostRecentCheckDate,
+           now.timeIntervalSince(lastCheck) < minimumInterval {
+            return
+        }
+
+        lastBackgroundCheckRequestedAt = now
+        isBackgroundCheckRunning = true
+        var arguments = ["update", "--check"]
+        if force {
+            arguments.append("--force")
+        }
+        arguments.append("--quiet")
+        runUpdater(arguments: arguments, mode: .backgroundCheck)
+    }
+
+    private var hasPendingUpdateAction: Bool {
+        (snapshot.updateAvailable ?? false)
+            || (snapshot.restartRequired ?? false)
+            || (snapshot.flowPilotRestartRequired ?? false)
+    }
+
+    private var mostRecentCheckDate: Date? {
+        let persisted = snapshot.checkedAt.flatMap(Self.parseISO8601Date)
+        switch (lastBackgroundCheckRequestedAt, persisted) {
+        case let (runtime?, persisted?):
+            return max(runtime, persisted)
+        case let (runtime?, nil):
+            return runtime
+        case let (nil, persisted?):
+            return persisted
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    private static func parseISO8601Date(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+
     private enum RunMode: Sendable {
         case backgroundCheck
         case foregroundCheck
@@ -217,7 +317,9 @@ public final class FlowPilotUpdateService: ObservableObject {
 
     private func runUpdater(arguments: [String], mode: RunMode) {
         guard let executable = codexFlowExecutable else {
-            if mode != .backgroundCheck {
+            if mode == .backgroundCheck {
+                isBackgroundCheckRunning = false
+            } else {
                 actionError = L("codex-flow CLI was not found in the installed bin directory.", "未在安装目录中找到 codex-flow CLI。")
                 isChecking = false
                 isInstalling = false
@@ -256,7 +358,7 @@ public final class FlowPilotUpdateService: ObservableObject {
         refreshFromDisk()
         switch mode {
         case .backgroundCheck:
-            break
+            isBackgroundCheckRunning = false
         case .foregroundCheck:
             isChecking = false
             if result.exitCode != 0 {
