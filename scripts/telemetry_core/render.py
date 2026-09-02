@@ -163,6 +163,15 @@ def render_summary(run: dict[str, Any]) -> str:
         else:
             lines.append(pad_line(f"{label} {w_runtime}"))
             lines.append(pad_line(f"                 ↳ {w_tokens}"))
+        worker_conclusion = compact_text(worker.get("conclusion"), 240)
+        if worker_conclusion:
+            append_wrapped_line(
+                T(
+                    f"  ↳ Result:       {worker_conclusion}",
+                    f"  ↳ 结果:         {worker_conclusion}",
+                ),
+                continuation="                 ",
+            )
     lines.append(pad_line(T(f"• Attributed:     {attr_tokens}{attr_credits}", f"• 归因用量:       {attr_tokens}{attr_credits}")))
 
     windows = run.get("quota_change_during_run") or []

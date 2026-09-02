@@ -41,7 +41,16 @@ cat > "$CODEX_HOME/codex-flow/telemetry/last.json" <<'EOF'
       "total_tokens": 200
     }
   },
-  "workers": {},
+  "workers": {
+    "smoke-worker": {
+      "agent_id": "smoke-worker",
+      "agent_type": "worker-implementer",
+      "model": "gpt-5.6-luna",
+      "status": "completed",
+      "conclusion": "Implemented worker telemetry output.",
+      "usage": {"total_tokens": 50}
+    }
+  },
   "started_at_ms": 1750000000000,
   "finished_at_ms": 1750000002500
 }
@@ -194,8 +203,10 @@ assert isinstance(tool_result.get("content") or tool_result.get("structuredConte
 structured = tool_result.get("structuredContent")
 assert isinstance(structured, dict), tool_result
 assert structured.get("status") == "completed", structured
-assert structured.get("total_tokens") == 200, structured
+assert structured.get("total_tokens") == 250, structured
 assert structured.get("parent", {}).get("model") == "gpt-5.6-sol", structured
+worker = next(item for item in structured.get("participants", []) if item.get("role") == "worker")
+assert worker.get("conclusion") == "Implemented worker telemetry output.", structured
 
 resources = rpc("resources/list", {})
 resource_entries = resources.get("resources")

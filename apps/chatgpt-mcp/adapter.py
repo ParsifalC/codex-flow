@@ -192,6 +192,7 @@ def _participant(
             participant.get("reasoning_effort") or participant.get("reasoningEffort")
         ),
         "status": _text(participant.get("status"), limit=32) or participant_status,
+        "conclusion": _text(participant.get("conclusion"), limit=1000),
         "total_tokens": _integer(usage.get("total_tokens")) if usage else None,
     }
 

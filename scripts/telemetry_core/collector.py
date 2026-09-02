@@ -610,6 +610,11 @@ def collect_hook(event: dict[str, Any]) -> None:
                 )
                 if agent_transcript_path is not None:
                     worker["transcript_path"] = agent_transcript_path
+                last_message = event.get("last_assistant_message")
+                if isinstance(last_message, str):
+                    last_message = last_message.strip()
+                    if last_message:
+                        worker["conclusion"] = last_message[:4000]
                 transcript_usage = transcript_turn_usage(
                     agent_transcript_path, event.get("turn_id")
                 )

@@ -36,7 +36,7 @@ flowchart LR
 
 | Category | Metric | Source | Description |
 | :--- | :--- | :--- | :--- |
-| **Participants** | Parent / Worker count & models | Transcript / Hooks | Models and reasoning levels involved |
+| **Participants** | Parent / Worker count, models & outcomes | Transcript / Hooks | Models, reasoning levels, and worker completion messages |
 | **Token Breakdown** | Input / Cached / Output / Reasoning | Transcript diffs | Attributed token consumption per turn |
 | **Quota Snapshot** | 5m, 1h, 1d window usage (`usedPercent`) | `codex app-server` | Live account quota usage percentage and delta |
 | **Cost & Credits** | Estimated credits / API-equivalent | Billing routes | Derived only when official billing routes are available |

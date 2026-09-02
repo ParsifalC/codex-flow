@@ -612,6 +612,12 @@ public struct SummaryView: View {
                 // Participants (Parent + Workers)
                 participantsSection(run: run)
                 
+                if run.allWorkers.contains(where: {
+                    !(($0.conclusion ?? "").trimmingCharacters(in: .whitespacesAndNewlines)).isEmpty
+                }) {
+                    workerOutcomesSection(run: run)
+                }
+                
                 // Token Distribution Bar
                 TokenDistributionBar(usage: run.aggregatedUsage)
                 
@@ -1110,6 +1116,74 @@ public struct SummaryView: View {
                     )
             )
         }
+    }
+    
+    // MARK: - Worker Outcomes
+    private func workerOutcomesSection(run: TaskRun) -> some View {
+        let workers = run.allWorkers.filter { worker in
+            guard let conclusion = worker.conclusion else { return false }
+            return !conclusion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.bubble.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(.teal.opacity(0.9))
+                Text(L("Worker Outcomes", "Worker 执行结果"))
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.85))
+                Spacer()
+                Text("\(workers.count)")
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.teal.opacity(0.9))
+            }
+            
+            ForEach(Array(workers.enumerated()), id: \.offset) { _, worker in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text(worker.agentType ?? worker.name ?? L("Worker", "Worker"))
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.9))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(worker.displayModel)
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(.teal.opacity(0.8))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    
+                    if let conclusion = worker.conclusion {
+                        Text(conclusion.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.system(size: 9, weight: .regular))
+                            .foregroundColor(.white.opacity(0.68))
+                            .lineLimit(3)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.white.opacity(0.035))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(Color.teal.opacity(0.14), lineWidth: 0.7)
+                        )
+                )
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+                )
+        )
     }
     
     // MARK: - Action Footer

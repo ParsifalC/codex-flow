@@ -124,6 +124,7 @@ public struct ParticipantInfo: Codable, Identifiable {
     public var model: String?
     public var reasoningEffort: String?
     public var status: String?
+    public var conclusion: String?
     public var usage: TokenUsage?
     public var usageDelta: TokenUsage?
     
@@ -133,6 +134,7 @@ public struct ParticipantInfo: Codable, Identifiable {
         case model
         case reasoningEffort = "reasoning_effort"
         case status
+        case conclusion
         case usage
         case usageDelta = "usage_delta"
     }
@@ -143,6 +145,7 @@ public struct ParticipantInfo: Codable, Identifiable {
         model: String? = nil,
         reasoningEffort: String? = nil,
         status: String? = nil,
+        conclusion: String? = nil,
         usage: TokenUsage? = nil,
         usageDelta: TokenUsage? = nil
     ) {
@@ -151,6 +154,7 @@ public struct ParticipantInfo: Codable, Identifiable {
         self.model = model
         self.reasoningEffort = reasoningEffort
         self.status = status
+        self.conclusion = conclusion
         self.usage = usage
         self.usageDelta = usageDelta
     }

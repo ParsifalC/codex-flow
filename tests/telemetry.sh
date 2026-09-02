@@ -45,7 +45,7 @@ export CODEX_FLOW_APP_SERVER_COMMAND="python3 $TMP/fake-app-server.py"
 hook() { printf '%s' "$1" | python3 "$ROOT_DIR/scripts/telemetry.py"; }
 hook '{"hook_event_name":"UserPromptSubmit","session_id":"parent-1","turn_id":"turn-1","cwd":"/tmp/work","model":"gpt-parent","prompt":"do work"}'
 hook '{"hook_event_name":"SubagentStart","session_id":"parent-1","turn_id":"turn-1","cwd":"/tmp/work","model":"gpt-worker","agent_id":"worker-1","agent_type":"worker-implementer"}'
-hook '{"hook_event_name":"SubagentStop","session_id":"parent-1","turn_id":"turn-1","cwd":"/tmp/work","model":"gpt-worker","agent_id":"worker-1","agent_type":"worker-implementer"}'
+hook '{"hook_event_name":"SubagentStop","session_id":"parent-1","turn_id":"turn-1","cwd":"/tmp/work","model":"gpt-worker","agent_id":"worker-1","agent_type":"worker-implementer","last_assistant_message":"Implemented worker telemetry output."}'
 summary_json="$(hook '{"hook_event_name":"Stop","session_id":"parent-1","turn_id":"turn-1","cwd":"/tmp/work","model":"gpt-parent","last_assistant_message":"done"}')"
 summary="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["systemMessage"], end="")' <<<"$summary_json")"
 python3 -c 'import json,sys; assert isinstance(json.load(sys.stdin)["systemMessage"], str)' <<<"$summary_json"
@@ -59,6 +59,7 @@ printf '%s\n' "$summary"
 [[ "$summary" == *"Resets:"* ]]
 [[ "$summary" == *"1 parent + 1 worker"* ]]
 [[ "$summary" == *"worker-implementer"* ]]
+[[ "$summary" == *"Implemented worker telemetry output."* ]]
 [[ "$summary" == *"2.3k tokens"* ]]
 [[ "$summary" == *"3.000 credits"* ]]
 [[ "$summary" == *"5h used 31% → 34% (+3 pp; 66% remaining)"* ]]
@@ -68,7 +69,7 @@ printf '%s\n' "$summary"
 last="$(python3 "$ROOT_DIR/scripts/telemetry.py" last)"
 [[ "$last" == *"2.3k tokens"* ]]
 json_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" last --json)"
-python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["workers"]["worker-1"]["status"] == "completed"; assert d["parent"]["usage_delta"]["total_tokens"] == 1500; assert d["thread"]["name"] == "Telemetry demo"; assert d["thread"]["gitInfo"]["branch"] == "main"' <<<"$json_out"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["workers"]["worker-1"]["status"] == "completed"; assert d["workers"]["worker-1"]["conclusion"] == "Implemented worker telemetry output."; assert d["parent"]["usage_delta"]["total_tokens"] == 1500; assert d["thread"]["name"] == "Telemetry demo"; assert d["thread"]["gitInfo"]["branch"] == "main"' <<<"$json_out"
 
 printf 'telemetry test passed\n'
 
