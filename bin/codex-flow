@@ -105,6 +105,12 @@ case "$cmd" in
   uninstall)
     exec bash "$(source_dir)/scripts/uninstall" ;;
   update)
+    shift
+    updater_script="$(script_path updater.py 2>/dev/null || true)"
+    if [[ -n "$updater_script" && -f "$updater_script" ]]; then
+      exec python3 "$updater_script" "$@"
+    fi
+    # Compatibility fallback for installs created before the OTA updater existed.
     src="$(source_dir)"
     [[ -d "$src/.git" ]] || fail "$(cf_t 'update requires the original git checkout' '更新需要原始 Git checkout')"
     command -v git >/dev/null 2>&1 || fail "$(cf_t 'git is required for update' '更新需要 git')"
@@ -145,6 +151,12 @@ case "$cmd" in
 
     printf '\n✨ %s\n' "$(cf_t "Updated codex-flow $before -> $after" "codex-flow 已更新 $before -> $after")"
     exec python3 "$src/scripts/doctor.py"
+    ;;
+  rollback)
+    shift
+    updater_script="$(script_path updater.py 2>/dev/null || true)"
+    [[ -n "$updater_script" && -f "$updater_script" ]] || fail "$(cf_t 'OTA updater is missing; reinstall codex-flow' 'OTA 更新组件缺失，请重新安装 codex-flow')"
+    exec python3 "$updater_script" rollback "$@"
     ;;
   overlay)
     shift

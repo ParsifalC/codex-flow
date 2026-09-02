@@ -766,12 +766,77 @@ def _append_history(entry: dict[str, Any]) -> None:
     atomic_write_json(_history_path(), history[-20:])
 
 
+def _ensure_current_version_package(version: str) -> Path | None:
+    """Capture the pre-OTA installation so the first OTA update can roll back."""
+
+    versions = _state_dir() / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    target = versions / version
+    if target.exists():
+        return target
+    staging = versions / f".{version}.bootstrap-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    source = None
+    source_file = _state_dir() / "source"
+    with contextlib.suppress(OSError):
+        candidate = Path(source_file.read_text(encoding="utf-8-sig").strip())
+        if candidate.exists() and (candidate / "VERSION").exists():
+            source = candidate
+    try:
+        if source is not None:
+            for name in ("VERSION", "install.sh", "install.ps1", "bin", "scripts", "templates", "completions", "policy"):
+                src = source / name
+                dst = staging / name
+                if src.is_dir():
+                    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+                elif src.is_file():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+            overlay = source / "apps" / "macos-overlay" / "bin"
+            if overlay.exists():
+                shutil.copytree(overlay, staging / "apps" / "macos-overlay" / "bin")
+        else:
+            (staging / "VERSION").write_text(version + "\n", encoding="utf-8")
+            scripts = staging / "scripts"
+            scripts.mkdir(parents=True)
+            for name in ("updater.py", "telemetry.py", "manage-hooks.py", "menu.py", "localization.py", "ui.py", "doctor.py", "strategy_runtime.py"):
+                src = _state_dir() / name
+                if src.exists():
+                    shutil.copy2(src, scripts / name)
+            for name in ("strategies", "telemetry_core"):
+                src = _state_dir() / name
+                if src.exists():
+                    shutil.copytree(src, scripts / name)
+            (staging / "bin").mkdir()
+            for name in ("codex-flow", "codex-flow.ps1", "codex-flow.cmd"):
+                src = _bin_dir() / name
+                if src.exists():
+                    shutil.copy2(src, staging / "bin" / name)
+            defaults = _state_dir() / "defaults.toml"
+            if defaults.exists():
+                (staging / "policy").mkdir()
+                shutil.copy2(defaults, staging / "policy" / "defaults.toml")
+            for name in ("FlowPilot", "codex-flow-overlay"):
+                src = _state_dir() / "bin" / name
+                if src.exists():
+                    dst = staging / "apps" / "macos-overlay" / "bin" / name
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+        os.replace(staging, target)
+        return target
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        return None
+
+
 def _install_package(package_root: Path, version: str, manifest: dict[str, Any]) -> UpdateState:
     state_dir = _state_dir()
     versions = state_dir / "versions"
     versions.mkdir(parents=True, exist_ok=True)
     target_version = versions / version
     current = current_version()
+    _ensure_current_version_package(current)
     backup = _snapshot(current)
     previous_source = None
     source_path = state_dir / "source"

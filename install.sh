@@ -90,6 +90,12 @@ EXISTING_MAX_REPAIRS="$(policy_or_default runtime max_repair_cycles "$DEFAULT_MA
 EXISTING_TELEMETRY_ENABLED="$(policy_or_default telemetry enabled "$DEFAULT_TELEMETRY_ENABLED")"
 EXISTING_TELEMETRY_NOTIFICATIONS="$(policy_or_default telemetry notifications "$DEFAULT_TELEMETRY_NOTIFICATIONS")"
 EXISTING_TELEMETRY_RETENTION_DAYS="$(policy_or_default telemetry retention_days "$DEFAULT_TELEMETRY_RETENTION_DAYS")"
+EXISTING_UPDATE_CHANNEL="$(policy_or_default update channel stable)"
+EXISTING_UPDATE_CHECK="$(policy_or_default update check true)"
+EXISTING_UPDATE_INTERVAL="$(policy_or_default update check_interval_hours 24)"
+EXISTING_UPDATE_NOTIFY_CLI="$(policy_or_default update notify_cli true)"
+EXISTING_UPDATE_NOTIFY_APP="$(policy_or_default update notify_app true)"
+EXISTING_UPDATE_AUTO_INSTALL="$(policy_or_default update auto_install false)"
 
 STRATEGY_PROFILE="${CODEX_FLOW_STRATEGY:-$EXISTING_STRATEGY}"
 ROUTING_MODE="${CODEX_FLOW_ROUTING_MODE:-$EXISTING_ROUTING}"
@@ -113,6 +119,12 @@ MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$EXISTING_MAX_REPAIRS}"
 TELEMETRY_ENABLED="${CODEX_FLOW_TELEMETRY_ENABLED:-$EXISTING_TELEMETRY_ENABLED}"
 TELEMETRY_NOTIFICATIONS="${CODEX_FLOW_TELEMETRY_NOTIFICATIONS:-$EXISTING_TELEMETRY_NOTIFICATIONS}"
 TELEMETRY_RETENTION_DAYS="${CODEX_FLOW_TELEMETRY_RETENTION_DAYS:-$EXISTING_TELEMETRY_RETENTION_DAYS}"
+UPDATE_CHANNEL="${CODEX_FLOW_UPDATE_CHANNEL:-$EXISTING_UPDATE_CHANNEL}"
+UPDATE_CHECK="${CODEX_FLOW_UPDATE_CHECK:-$EXISTING_UPDATE_CHECK}"
+UPDATE_INTERVAL="${CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS:-$EXISTING_UPDATE_INTERVAL}"
+UPDATE_NOTIFY_CLI="${CODEX_FLOW_UPDATE_NOTIFY_CLI:-$EXISTING_UPDATE_NOTIFY_CLI}"
+UPDATE_NOTIFY_APP="${CODEX_FLOW_UPDATE_NOTIFY_APP:-$EXISTING_UPDATE_NOTIFY_APP}"
+UPDATE_AUTO_INSTALL="${CODEX_FLOW_UPDATE_AUTO_INSTALL:-$EXISTING_UPDATE_AUTO_INSTALL}"
 UI_LANGUAGE="auto"
 if [[ -f "$POLICY" ]]; then UI_LANGUAGE="$(python3 "$LOCALIZATION" --policy "$POLICY" --configured 2>/dev/null || echo auto)"; fi
 UI_LANGUAGE="$(python3 "$LOCALIZATION" --normalize "$UI_LANGUAGE")"
@@ -129,8 +141,14 @@ case "$TELEMETRY_NOTIFICATIONS" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_
 [[ "$MAX_THREADS" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_MAX_THREADS must be a positive integer" >&2; exit 2; }
 [[ "$MAX_REPAIRS" =~ ^[0-9]+$ ]] || { echo "CODEX_FLOW_MAX_REPAIR_CYCLES must be a non-negative integer" >&2; exit 2; }
 [[ "$TELEMETRY_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_TELEMETRY_RETENTION_DAYS must be a positive integer" >&2; exit 2; }
+case "$UPDATE_CHANNEL" in stable|beta|nightly) ;; *) echo "CODEX_FLOW_UPDATE_CHANNEL must be stable, beta, or nightly" >&2; exit 2 ;; esac
+case "$UPDATE_CHECK" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_CHECK must be true or false" >&2; exit 2 ;; esac
+case "$UPDATE_NOTIFY_CLI" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_NOTIFY_CLI must be true or false" >&2; exit 2 ;; esac
+case "$UPDATE_NOTIFY_APP" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_NOTIFY_APP must be true or false" >&2; exit 2 ;; esac
+case "$UPDATE_AUTO_INSTALL" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_AUTO_INSTALL must be true or false" >&2; exit 2 ;; esac
+[[ "$UPDATE_INTERVAL" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS must be a positive integer" >&2; exit 2; }
 
-mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$BIN_DIR"
+mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$STATE_DIR/state" "$STATE_DIR/versions" "$BIN_DIR"
 if [[ -f "$CONFIG" ]]; then cp "$CONFIG" "$CONFIG.codex-flow.$STAMP.bak"; else touch "$CONFIG"; fi
 
 python3 - "$CONFIG" "$WORKER_MODEL" "$WORKER_MIN_EFFORT" "$MAX_THREADS" <<'PY'
@@ -202,6 +220,14 @@ summary = true
 notifications = $TELEMETRY_NOTIFICATIONS
 retention_days = $TELEMETRY_RETENTION_DAYS
 source = "hooks+app-server"
+
+[update]
+channel = "$UPDATE_CHANNEL"
+check = $UPDATE_CHECK
+check_interval_hours = $UPDATE_INTERVAL
+notify_cli = $UPDATE_NOTIFY_CLI
+notify_app = $UPDATE_NOTIFY_APP
+auto_install = $UPDATE_AUTO_INSTALL
 EOF
 
 cp "$ROOT_DIR/templates/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-explorer.toml"
@@ -212,13 +238,14 @@ rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implement
 
 printf '%s\n' "$ROOT_DIR" > "$STATE_DIR/source"
 printf '%s\n' "$VERSION" > "$STATE_DIR/version"
+printf '%s\n' "$BIN_DIR" > "$STATE_DIR/bin_dir"
 cp "$DEFAULTS" "$STATE_DIR/defaults.toml"
 cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"; chmod +x "$BIN_DIR/codex-flow"
-for file in telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py strategy_runtime.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
+for file in updater.py telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py strategy_runtime.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
 rm -rf "$STATE_DIR/strategies" "$STATE_DIR/telemetry_core"
 cp -r "$ROOT_DIR/scripts/strategies" "$STATE_DIR/strategies"
 cp -r "$ROOT_DIR/scripts/telemetry_core" "$STATE_DIR/telemetry_core"
-chmod +x "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/doctor.py" "$STATE_DIR/strategy_runtime.py"
+chmod +x "$STATE_DIR/updater.py" "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/doctor.py" "$STATE_DIR/strategy_runtime.py"
 
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"; else python3 "$STATE_DIR/manage-hooks.py" uninstall --hooks "$HOOKS"; fi
 

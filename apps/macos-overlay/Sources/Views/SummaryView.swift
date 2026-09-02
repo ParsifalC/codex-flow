@@ -375,12 +375,14 @@ public struct TokenDistributionBar: View {
 public struct SummaryView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
+    @ObservedObject private var updateService = FlowPilotUpdateService.shared
     public var isFullHeight: Bool = false
     @State private var copiedSummary: Bool = false
     @State private var isSummaryExpanded: Bool = true
     @State private var isSkillsExpanded: Bool = false
     @State private var isTrajectoryExpanded: Bool = false
     @State private var isLogsExpanded: Bool = false
+    @State private var showUpdatePopover: Bool = false
     
     public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
@@ -481,6 +483,32 @@ public struct SummaryView: View {
             }
             
             Spacer()
+
+            // Shared OTA entry. CLI and app both read the same update.json state.
+            Button {
+                showUpdatePopover.toggle()
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: updateService.isRestartRequired ? "arrow.clockwise.circle" : "arrow.down.circle")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(updateService.hasUpdateBadge ? .cyan : .white.opacity(0.5))
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color.white.opacity(0.06)))
+
+                    if updateService.hasUpdateBadge {
+                        Circle()
+                            .fill(updateService.isRestartRequired ? Color.orange : Color.red)
+                            .frame(width: 6.5, height: 6.5)
+                            .overlay(Circle().stroke(Color.black.opacity(0.65), lineWidth: 1))
+                            .offset(x: 1.5, y: -1.5)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help(L("Software Update", "软件更新"))
+            .popover(isPresented: $showUpdatePopover, arrowEdge: .top) {
+                FlowPilotUpdateView()
+            }
             
             // Pin Toggle Button
             Button {
