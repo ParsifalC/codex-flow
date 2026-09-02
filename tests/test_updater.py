@@ -135,5 +135,20 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue((self.bin_dir / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")).exists())
 
 
+    def test_legacy_update_detached_checkout_reinstalls_without_pull(self) -> None:
+        source = self.root / "source"
+        (source / ".git").mkdir(parents=True)
+        (source / ("install.ps1" if os.name == "nt" else "install.sh")).write_text("fixture\n", encoding="utf-8")
+        (self.state / "source").write_text(str(source) + "\n", encoding="utf-8")
+        with patch.object(updater.subprocess, "check_output", return_value="HEAD\n"), \
+             patch.object(updater.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            result = updater._legacy_git_update()
+        self.assertEqual(result, 0)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertFalse(any("pull" in command for command in commands))
+        self.assertTrue(any(("install.ps1" in " ".join(command)) or ("install.sh" in " ".join(command)) for command in commands))
+
+
 if __name__ == "__main__":
     unittest.main()

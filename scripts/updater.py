@@ -975,7 +975,20 @@ def _legacy_git_update() -> int:
     if not (src / ".git").exists():
         return 2
     try:
-        subprocess.run(["git", "-C", str(src), "pull", "--ff-only"], check=True)
+        branch = subprocess.check_output(
+            ["git", "-C", str(src), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if branch and branch != "HEAD":
+            remote = subprocess.run(
+                ["git", "-C", str(src), "config", "--get", f"branch.{branch}.remote"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).stdout.strip() or "origin"
+            subprocess.run(["git", "-C", str(src), "pull", "--ff-only", remote, branch], check=True)
         if os.name == "nt":
             subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(src / "install.ps1")], check=True)
         else:

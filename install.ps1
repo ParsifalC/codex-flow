@@ -173,7 +173,7 @@ if ($match.Success) {
 }
 Write-Utf8NoBom $Config $text
 
-@"
+$PolicyText = @"
 schema_version = 4
 
 [ui]
@@ -226,7 +226,8 @@ check_interval_hours = $UpdateInterval
 notify_cli = $UpdateNotifyCli
 notify_app = $UpdateNotifyApp
 auto_install = $UpdateAutoInstall
-"@ | ForEach-Object { Write-Utf8NoBom $Policy $_ }
+"@
+Write-Utf8NoBom $Policy $PolicyText
 
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-explorer.toml') (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-implementer.toml') (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force
