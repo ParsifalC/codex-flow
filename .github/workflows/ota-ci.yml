@@ -1,5 +1,6 @@
 name: ota-ci
 
+# Validate the same release/update contract consumed by CLI and FlowPilot.
 on:
   workflow_dispatch:
   push:
