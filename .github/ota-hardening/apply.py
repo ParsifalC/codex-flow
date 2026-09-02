@@ -1,65 +1,180 @@
 from pathlib import Path
+import re
 
 
-def replace_once(path: Path, old: str, new: str) -> None:
-    text = path.read_text(encoding="utf-8-sig")
-    if old not in text:
-        raise SystemExit(f"expected block not found in {path}")
-    updated = text.replace(old, new, 1)
-    encoding = "utf-8-sig" if path.name == "install.ps1" else "utf-8"
-    path.write_text(updated, encoding=encoding)
+def sub_once(text: str, pattern: str, replacement: str, label: str) -> str:
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE | re.DOTALL)
+    if count != 1:
+        raise SystemExit(f"{label}: expected 1 replacement, got {count}")
+    return updated
 
 
-updater = Path("scripts/updater.py")
+path = Path("scripts/updater.py")
+text = path.read_text(encoding="utf-8")
 
-replace_once(
-    updater,
-    '''def _migration_state_path() -> Path:\n    return _update_dir() / "migrations.json"\n\n\ndef _bin_dir() -> Path:\n''',
-    '''def _migration_state_path() -> Path:\n    return _update_dir() / "migrations.json"\n\n\ndef _install_lock_path() -> Path:\n    return _update_dir() / "install.lock"\n\n\n@contextlib.contextmanager\ndef update_lock(stale_after_seconds: int = 2 * 60 * 60):\n    """Serialize update/rollback writers across CLI and FlowPilot processes."""\n\n    lock = _install_lock_path()\n    lock.parent.mkdir(parents=True, exist_ok=True)\n    fd = None\n    for attempt in range(2):\n        try:\n            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)\n            os.write(fd, f"pid={os.getpid()}\\nstarted_at={utc_now()}\\n".encode("utf-8"))\n            os.close(fd)\n            fd = None\n            break\n        except FileExistsError:\n            try:\n                stale = time.time() - lock.stat().st_mtime > stale_after_seconds\n            except OSError:\n                stale = False\n            if stale and attempt == 0:\n                with contextlib.suppress(FileNotFoundError):\n                    lock.unlink()\n                continue\n            raise RuntimeError("another codex-flow update or rollback is already running")\n    else:\n        raise RuntimeError("unable to acquire codex-flow update lock")\n    try:\n        yield\n    finally:\n        if fd is not None:\n            os.close(fd)\n        with contextlib.suppress(FileNotFoundError):\n            lock.unlink()\n\n\ndef _bin_dir() -> Path:\n''',
+# Add a portable exclusive-file lock immediately after migration-state helper.
+text = sub_once(
+    text,
+    r'(def _migration_state_path\(\) -> Path:\n    return _update_dir\(\) / "migrations\.json"\n)',
+    r'''\1
+
+def _install_lock_path() -> Path:
+    return _update_dir() / "install.lock"
+
+
+@contextlib.contextmanager
+def update_lock(stale_after_seconds: int = 2 * 60 * 60):
+    """Serialize update/rollback writers across CLI and FlowPilot processes."""
+
+    lock = _install_lock_path()
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = None
+    for attempt in range(2):
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.write(fd, f"pid={os.getpid()}\nstarted_at={utc_now()}\n".encode("utf-8"))
+            os.close(fd)
+            fd = None
+            break
+        except FileExistsError:
+            try:
+                stale = time.time() - lock.stat().st_mtime > stale_after_seconds
+            except OSError:
+                stale = False
+            if stale and attempt == 0:
+                with contextlib.suppress(FileNotFoundError):
+                    lock.unlink()
+                continue
+            raise RuntimeError("another codex-flow update or rollback is already running")
+    else:
+        raise RuntimeError("unable to acquire codex-flow update lock")
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            lock.unlink()
+''',
+    "insert lock",
 )
 
-replace_once(
-    updater,
-    '''    targets = {\n        "policy": _policy_path(),\n        "version": _state_dir() / "version",\n        "source": _state_dir() / "source",\n        "defaults": _state_dir() / "defaults.toml",\n    }\n''',
-    '''    targets = {\n        "policy": _policy_path(),\n        "version": _state_dir() / "version",\n        "source": _state_dir() / "source",\n        "defaults": _state_dir() / "defaults.toml",\n        "migrations": _migration_state_path(),\n        "hooks": _codex_home() / "hooks.json",\n    }\n''',
+# Extend snapshot targets without rewriting surrounding implementation.
+text = sub_once(
+    text,
+    r'("defaults": _state_dir\(\) / "defaults\.toml",\n)(\s*})',
+    r'''\1        "migrations": _migration_state_path(),
+        "hooks": _codex_home() / "hooks.json",
+\2''',
+    "snapshot targets",
 )
 
-replace_once(
-    updater,
-    '''    for name in ("version", "source", "defaults"):\n        src = backup / name\n        dst_name = "defaults.toml" if name == "defaults" else name\n        if src.exists():\n            _atomic_copy(src, _state_dir() / dst_name)\n''',
-    '''    for name in ("version", "source", "defaults"):\n        src = backup / name\n        dst_name = "defaults.toml" if name == "defaults" else name\n        if src.exists():\n            _atomic_copy(src, _state_dir() / dst_name)\n    migrations = backup / "migrations"\n    if migrations.exists():\n        _atomic_copy(migrations, _migration_state_path())\n    else:\n        with contextlib.suppress(FileNotFoundError):\n            _migration_state_path().unlink()\n    hooks = backup / "hooks"\n    hooks_path = _codex_home() / "hooks.json"\n    if hooks.exists():\n        _atomic_copy(hooks, hooks_path)\n''',
-)
+# Restore migration marker + hooks after normal state metadata.
+anchor = '''    for name in ("version", "source", "defaults"):
+        src = backup / name
+        dst_name = "defaults.toml" if name == "defaults" else name
+        if src.exists():
+            _atomic_copy(src, _state_dir() / dst_name)
+'''
+if anchor not in text:
+    raise SystemExit("restore anchor missing")
+text = text.replace(anchor, anchor + '''    migrations = backup / "migrations"
+    if migrations.exists():
+        _atomic_copy(migrations, _migration_state_path())
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            _migration_state_path().unlink()
+    hooks = backup / "hooks"
+    hooks_path = _codex_home() / "hooks.json"
+    if hooks.exists():
+        _atomic_copy(hooks, hooks_path)
+''', 1)
 
-replace_once(
-    updater,
-    '''def perform_update(*, force_check: bool = True) -> UpdateState:\n''',
-    '''def _perform_update_unlocked(*, force_check: bool = True) -> UpdateState:\n''',
-)
-replace_once(
-    updater,
-    '''        return _install_package(root, version, manifest)\n\n\ndef rollback() -> UpdateState:\n''',
-    '''        return _install_package(root, version, manifest)\n\n\ndef perform_update(*, force_check: bool = True) -> UpdateState:\n    with update_lock():\n        return _perform_update_unlocked(force_check=force_check)\n\n\ndef _rollback_unlocked() -> UpdateState:\n''',
-)
-replace_once(
-    updater,
-    '''    except Exception:\n        _restore_snapshot(backup)\n        raise\n\n\ndef _legacy_git_update() -> int:\n''',
-    '''    except Exception:\n        _restore_snapshot(backup)\n        raise\n\n\ndef rollback() -> UpdateState:\n    with update_lock():\n        return _rollback_unlocked()\n\n\ndef _legacy_git_update() -> int:\n''',
-)
+# Wrap update and rollback writers. Function bodies remain unchanged.
+text = text.replace("def perform_update(*, force_check: bool = True) -> UpdateState:\n", "def _perform_update_unlocked(*, force_check: bool = True) -> UpdateState:\n", 1)
+needle = '''        return _install_package(root, version, manifest)
 
-# Avoid UnicodeEncodeError on legacy Windows consoles (e.g. cp1252). Keep the
-# user's encoding and replace only glyphs that cannot be represented.
-replace_once(
-    updater,
-    '''def main(argv: list[str] | None = None) -> int:\n''',
-    '''def _configure_stdio() -> None:\n    for stream in (sys.stdout, sys.stderr):\n        reconfigure = getattr(stream, "reconfigure", None)\n        if reconfigure is None:\n            continue\n        try:\n            reconfigure(errors="replace")\n        except (OSError, ValueError):\n            pass\n\n\ndef main(argv: list[str] | None = None) -> int:\n    _configure_stdio()\n''',
-)
 
-# Add focused transaction regressions.
+def rollback() -> UpdateState:
+'''
+if needle not in text:
+    raise SystemExit("update wrapper anchor missing")
+text = text.replace(needle, '''        return _install_package(root, version, manifest)
+
+
+def perform_update(*, force_check: bool = True) -> UpdateState:
+    with update_lock():
+        return _perform_update_unlocked(force_check=force_check)
+
+
+def _rollback_unlocked() -> UpdateState:
+''', 1)
+needle = '''    except Exception:
+        _restore_snapshot(backup)
+        raise
+
+
+def _legacy_git_update() -> int:
+'''
+if needle not in text:
+    raise SystemExit("rollback wrapper anchor missing")
+text = text.replace(needle, '''    except Exception:
+        _restore_snapshot(backup)
+        raise
+
+
+def rollback() -> UpdateState:
+    with update_lock():
+        return _rollback_unlocked()
+
+
+def _legacy_git_update() -> int:
+''', 1)
+
+# Gracefully degrade glyphs on legacy Windows consoles instead of crashing.
+needle = "def main(argv: list[str] | None = None) -> int:\n"
+if needle not in text:
+    raise SystemExit("main anchor missing")
+text = text.replace(needle, '''def _configure_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    _configure_stdio()
+''', 1)
+
+path.write_text(text, encoding="utf-8")
+
+# Add focused regressions.
 tests = Path("tests/test_updater.py")
-text = tests.read_text(encoding="utf-8")
-marker = '''    def test_legacy_update_detached_checkout_reinstalls_without_pull(self) -> None:\n'''
-addition = '''    def test_update_lock_rejects_concurrent_writer(self) -> None:\n        with updater.update_lock():\n            with self.assertRaisesRegex(RuntimeError, "already running"):\n                with updater.update_lock():\n                    pass\n\n    def test_snapshot_restore_restores_migration_state(self) -> None:\n        migration_state = self.state / "state" / "migrations.json"\n        migration_state.parent.mkdir(parents=True, exist_ok=True)\n        migration_state.write_text('{"applied": ["before"]}\\n', encoding="utf-8")\n        backup = updater._snapshot("1.7.0")\n        migration_state.write_text('{"applied": ["after"]}\\n', encoding="utf-8")\n        updater._restore_snapshot(backup)\n        payload = json.loads(migration_state.read_text(encoding="utf-8"))\n        self.assertEqual(payload["applied"], ["before"])\n\n'''
-if addition not in text:
-    if marker not in text:
-        raise SystemExit("test insertion marker missing")
-    tests.write_text(text.replace(marker, addition + marker, 1), encoding="utf-8")
+t = tests.read_text(encoding="utf-8")
+marker = '    def test_legacy_update_detached_checkout_reinstalls_without_pull(self) -> None:\n'
+addition = '''    def test_update_lock_rejects_concurrent_writer(self) -> None:
+        with updater.update_lock():
+            with self.assertRaisesRegex(RuntimeError, "already running"):
+                with updater.update_lock():
+                    pass
+
+    def test_snapshot_restore_restores_migration_state(self) -> None:
+        migration_state = self.state / "state" / "migrations.json"
+        migration_state.parent.mkdir(parents=True, exist_ok=True)
+        migration_state.write_text('{"applied": ["before"]}\n', encoding="utf-8")
+        backup = updater._snapshot("1.7.0")
+        migration_state.write_text('{"applied": ["after"]}\n', encoding="utf-8")
+        updater._restore_snapshot(backup)
+        payload = json.loads(migration_state.read_text(encoding="utf-8"))
+        self.assertEqual(payload["applied"], ["before"])
+
+'''
+if "test_update_lock_rejects_concurrent_writer" not in t:
+    if marker not in t:
+        raise SystemExit("test marker missing")
+    t = t.replace(marker, addition + marker, 1)
+tests.write_text(t, encoding="utf-8")
