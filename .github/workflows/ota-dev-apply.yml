@@ -21,7 +21,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/ota-dev/apply.py
-          rm -f .github/ota-dev/apply.py .github/ota-dev/ota.patch .github/workflows/ota-dev-apply.yml
+          rm -f .github/ota-dev/apply.py .github/ota-dev/ota.patch
+          # The Actions token may not create/update workflow files. Keep workflow
+          # changes out of this verified commit; the GitHub connector applies them
+          # separately after the business-code validation succeeds.
+          git checkout -- .github/workflows/ci.yml .github/workflows/ota-dev-apply.yml
       - name: Python and shell validation
         run: |
           set -euo pipefail
