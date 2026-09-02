@@ -47,7 +47,7 @@ public struct HoverRevealText: View {
             .multilineTextAlignment(alignment)
             .blur(radius: privacyBlur ? 4.5 : 0)
             .contentShape(Rectangle())
-            .onHover(perform: handleHover)
+            .onHover(perform: handleSourceHover)
             .popover(isPresented: $isPresented, arrowEdge: .bottom) {
                 ScrollView(.vertical, showsIndicators: true) {
                     Text(text)
@@ -61,10 +61,11 @@ public struct HoverRevealText: View {
                 }
                 .frame(width: popoverWidth)
                 .frame(maxHeight: 240)
+                .onHover(perform: handlePopoverHover)
             }
     }
 
-    private func handleHover(_ inside: Bool) {
+    private func handleSourceHover(_ inside: Bool) {
         hoverGeneration += 1
         let generation = hoverGeneration
 
@@ -73,11 +74,28 @@ public struct HoverRevealText: View {
             return
         }
 
-        let delay = inside ? 0.22 : 0.16
+        let delay = inside ? 0.22 : 0.25
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard generation == hoverGeneration else { return }
             withAnimation(.easeInOut(duration: 0.12)) {
                 isPresented = inside
+            }
+        }
+    }
+
+    private func handlePopoverHover(_ inside: Bool) {
+        hoverGeneration += 1
+        let generation = hoverGeneration
+
+        if inside {
+            isPresented = true
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            guard generation == hoverGeneration else { return }
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isPresented = false
             }
         }
     }
