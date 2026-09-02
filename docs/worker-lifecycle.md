@@ -21,7 +21,7 @@ Deterministic lifecycle evaluator
     └─ writable replacement fencing
 ```
 
-Strategy Runtime 决定期望资源拓扑和 StagePolicy；FlowPilot 只提供可观察事实，例如 Worker 是否仍在活动、scope 是否已被覆盖、是否已经终止。时间计算、stall/fallback 和 writable replacement 是否允许，由 `scripts/strategies/lifecycle_runtime.py` 确定性计算。
+Strategy Runtime 决定期望资源拓扑和 StagePolicy；FlowPilot 只提供可观察事实，例如 Worker 是否仍在活动、scope 是否已被覆盖、是否已经终止。时间计算、stall/fallback、旧 Worker 是否必须回收以及 writable replacement 是否允许，由 `scripts/strategies/lifecycle_runtime.py` 确定性计算。
 
 该 helper 随 `strategies/` 目录一起被 Unix/Windows 安装器复制到 `~/.codex/codex-flow/strategies/lifecycle_runtime.py`。
 
@@ -102,6 +102,7 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
 state
 action
 reason
+cancel_required
 replacement_allowed
 fence_required
 idle_seconds
@@ -109,7 +110,9 @@ wall_seconds
 fallback_policy
 ```
 
-这样 StagePolicy 是 deterministic 的，状态跃迁和 timeout/fallback 也不再由 Parent 临场重新发明。
+`cancel_required=true` 表示 Worker 仍是非终态，即使 `action` 已允许 `parent_delta`、`continue_partial` 或 isolated `replan`，Scheduler 仍必须请求回收旧 Worker。这样 read-only fallback 不会把超时 Worker 留在后台继续消耗资源；对 writable Worker，`fence_required` 还会进一步约束 replacement。
+
+这样 StagePolicy 是 deterministic 的，状态跃迁、timeout/fallback 和 cancellation requirement 也不再由 Parent 临场重新发明。
 
 ## Writable replacement fencing
 
@@ -134,6 +137,8 @@ replan replacement
 ```text
 旧 Worker 非终态
         ↓
+请求取消旧 Worker（cancel_required=true）
+        ↓
 新 replacement 使用全新 isolated worktree
         ↓
 旧 Worker 输出被 fencing，禁止参与 integration
@@ -146,6 +151,8 @@ replan replacement
 1. 旧 writable Worker 已明确 terminal/cancelled/failed；
 2. replacement 明确使用新的隔离 worktree，并且旧输出不会被集成。
 
+第二种情况下 replacement 可以开始，但旧 Worker 的 cancellation requirement 不会消失。
+
 因此不会出现 stalled Worker A 恢复后与 replacement Worker B 同时修改同一 writable scope 的竞态。
 
 ## Fallback
@@ -157,6 +164,8 @@ Fallback 永远只处理 missing delta：
 - `replan`：只针对剩余 delta 重新 profile/compile。
 - `fail`：报告未解决失败，不静默替换。
 
+对非终态 `stalled` / hard-timeout Worker，fallback 可以继续推进，但 `cancel_required=true` 会同时要求回收旧 Worker。
+
 Worker lifecycle failure 不消耗 `max_repair_cycles`；repair cycle 只用于实现产物本身的缺陷修复。
 
 ## Built-in strategy defaults
@@ -166,7 +175,7 @@ Worker lifecycle failure 不消耗 `max_repair_cycles`；repair cycle 只用于�
 - **quality**：更长 lease、exploration quorum 目标 2、required implementation、required independent review 目标 2，不允许 Parent 静默替代 required reviewer。
 - **speed**：opportunistic exploration、较短 lease、required implementation、quorum review。
 
-这些 strategy preference 都受 Runtime hard ceiling 和 writable fencing 约束。
+这些 strategy preference 都受 Runtime hard ceiling、cancellation requirement 和 writable fencing 约束。
 
 ## 典型场景
 
@@ -182,9 +191,13 @@ Worker lifecycle failure 不消耗 `max_repair_cycles`；repair cycle 只用于�
 
 scope 有等价证据且 policy 允许 supersession：`superseded → request_cancel`。这是基于边际价值取消，不是基于耗时。
 
+### Read-only Worker stall
+
+可以按 `parent_delta` 等 fallback 继续主流程，但 evaluator 同时返回 `cancel_required=true`，要求旧 Worker 回收，避免 hard/idle ceiling 变成只写在文档里的数字。
+
 ### Writable Worker stall
 
-不能直接 `replan → spawn same-scope replacement`。先终止旧 Worker，或者把 replacement 放进新 isolated worktree 并 fence 旧输出。
+不能直接 `replan → spawn same-scope replacement`。先终止旧 Worker，或者把 replacement 放进新 isolated worktree 并 fence 旧输出；无论哪种路径，非终态旧 Worker 都必须请求取消。
 
 ## Runtime invariants
 
@@ -193,6 +206,7 @@ scope 有等价证据且 policy 允许 supersession：`superseded → request_ca
 3. hard timeout 是绝对上限。
 4. supersession 必须基于 scope 等价覆盖，而不是耗时。
 5. Parent fallback 只补 missing delta。
-6. writable replacement 必须满足 `old terminal OR new isolated+fenced`。
-7. lifecycle failure 不消耗 implementation repair cycle。
-8. Strategy-specific lifecycle preference 留在 StrategySpec；hard safety invariants 由 deterministic lifecycle evaluator 统一执行。
+6. 非终态 lifecycle exit 必须显式表达 `cancel_required=true`，不能让超时 Worker 静默留在后台。
+7. writable replacement 必须满足 `old terminal OR new isolated+fenced`。
+8. lifecycle failure 不消耗 implementation repair cycle。
+9. Strategy-specific lifecycle preference 留在 StrategySpec；hard safety invariants 由 deterministic lifecycle evaluator 统一执行。
