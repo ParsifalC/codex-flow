@@ -19,22 +19,24 @@ jobs:
         with:
           ref: feat/ota-update-system
           fetch-depth: 0
-      - name: Adapt final review helper to current UpdateView indentation
+      - name: Adapt final review helper to current UpdateView layout
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
           path = Path('.github/review-fix.py')
           text = path.read_text(encoding='utf-8')
-          for variable in ('restart_button', 'codex_button'):
-              start = text.index(f"{variable} = re.compile(r'''(?ms)")
+
+          replacements = {
+              'restart_button': r'''restart_button = re.compile(r''' + "'''(?ms)^[ \\t]+Button \\{\\n[ \\t]+service\\.restartFlowPilot\\(\\)\\n[ \\t]+\\} label: \\{.*?^[ \\t]+\\.disabled\\(\\n[ \\t]+service\\.isRestartingFlowPilot\\n[ \\t]+\\|\\| service\\.isAcknowledgingRestart\\n[ \\t]+\\|\\| service\\.isInstalling\\n[ \\t]+\\|\\| service\\.isChecking\\n[ \\t]+\\)\\n''')" + r''' ''',
+              'codex_button': r'''codex_button = re.compile(r''' + "'''(?ms)^[ \\t]+Button \\{\\n[ \\t]+service\\.acknowledgeRestart\\(\\)\\n[ \\t]+\\} label: \\{.*?^[ \\t]+\\.disabled\\(\\n[ \\t]+service\\.isAcknowledgingRestart\\n[ \\t]+\\|\\| service\\.isRestartingFlowPilot\\n[ \\t]+\\|\\| service\\.isInstalling\\n[ \\t]+\\|\\| service\\.isChecking\\n[ \\t]+\\)\\n''')" + r''' ''',
+          }
+
+          for variable, replacement in replacements.items():
+              start = text.index(f"{variable} = re.compile(r'''")
               end = text.index("''')", start) + 4
-              block = text[start:end]
-              lines = block.splitlines()
-              lines[0] = lines[0].replace('(?ms)', '(?ms)    ', 1)
-              for index in range(1, len(lines) - 1):
-                  lines[index] = '    ' + lines[index]
-              text = text[:start] + '\n'.join(lines) + text[end:]
+              text = text[:start] + replacement.rstrip() + text[end:]
+
           path.write_text(text, encoding='utf-8')
           PY
       - name: Apply final OTA review fixes
