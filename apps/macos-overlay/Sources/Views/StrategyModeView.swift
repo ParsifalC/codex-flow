@@ -239,11 +239,11 @@ public struct StrategyModeCard: View {
                 Spacer()
                 if let snapshot {
                     if let routing = snapshot.routing, !routing.isEmpty {
-                        Text(routing.uppercased())
+                        Text(localizedRoutingName(routing))
                             .font(.system(size: 6.8, weight: .bold, design: .rounded))
                             .foregroundColor(.white.opacity(0.42))
                     }
-                    Text(snapshot.configured.uppercased())
+                    Text(localizedConfiguredName(snapshot))
                         .font(.system(size: 7.5, weight: .heavy, design: .rounded))
                         .foregroundColor(snapshot.valid ? .cyan : .orange)
                         .padding(.horizontal, 6)
@@ -309,6 +309,20 @@ public struct StrategyModeCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
         )
         .onAppear(perform: refresh)
+    }
+
+    private func localizedConfiguredName(_ snapshot: StrategyModeSnapshot) -> String {
+        snapshot.profiles.first(where: { $0.name == snapshot.configured })?.localizedName
+            ?? snapshot.configured.capitalized
+    }
+
+    private func localizedRoutingName(_ routing: String) -> String {
+        switch routing.lowercased() {
+        case "adaptive": return L("Adaptive", "自适应")
+        case "direct": return L("Direct", "直接")
+        case "delegate": return L("Delegate", "委派")
+        default: return routing.capitalized
+        }
     }
 
     private func strategyButton(_ profile: StrategyProfileInfo, current: String) -> some View {
