@@ -50,7 +50,6 @@ Section "Routing & Skills"
 foreach ($p in @('agents/worker-explorer.toml','agents/worker-implementer.toml','skills/flow-pilot/SKILL.md')) {
     if (Test-Path (Join-Path $CodexHome $p)) { Ok "$p installed" } else { Fail "$p missing" }
 }
-if (-not (Test-Path (Join-Path $CodexHome 'skills/cost-aware-development'))) { Ok 'legacy cost-aware-development skill removed' } else { Warn 'legacy cost-aware-development skill still exists; reinstall recommended' }
 if (Test-Path $Policy) {
     $schema = [regex]::Match((Get-Content $Policy -Raw), '(?m)^schema_version\s*=\s*(\d+)').Groups[1].Value
     if ($schema -eq '3') { Ok 'policy schema v3' } else { Fail "unsupported policy schema: $schema" }

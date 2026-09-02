@@ -84,6 +84,18 @@ def main() -> int:
         if not cmd.startswith("-"):
             return show_run(cmd, as_json="--json" in args[1:])
 
+    has_data = False
+    if not sys.stdin.isatty():
+        try:
+            import select
+            r, _, _ = select.select([sys.stdin], [], [], 0.0)
+            has_data = bool(r)
+        except Exception:
+            has_data = False
+
+    if not has_data:
+        return show_last(as_json=False)
+
     try:
         raw = sys.stdin.read()
         event = json.loads(raw) if raw.strip() else {}

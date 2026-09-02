@@ -228,36 +228,45 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         isDragging = false
         windowController?.cancelDwellTimer()
         windowController?.isInteractingOrDragging = true
+        super.mouseDown(with: event)
     }
     
     override func mouseDragged(with event: NSEvent) {
-        guard let window = self.window else { return }
+        guard let window = self.window else {
+            super.mouseDragged(with: event)
+            return
+        }
         let currentLocation = event.locationInWindow
         let deltaX = currentLocation.x - initialLocation.x
         let deltaY = currentLocation.y - initialLocation.y
-        
-        if abs(deltaX) > 2 || abs(deltaY) > 2 {
+        let dragThreshold: CGFloat = (windowController?.state.isExpanded ?? false) ? 8.0 : 4.0
+        if abs(deltaX) > dragThreshold || abs(deltaY) > dragThreshold {
             isDragging = true
             windowController?.cancelDwellTimer()
             windowController?.isInteractingOrDragging = true
+            
+            var newOrigin = window.frame.origin
+            newOrigin.x += deltaX
+            newOrigin.y += deltaY
+            
+            // Clamp to screen bounds during live drag
+            if let screen = window.screen ?? NSScreen.main {
+                let visible = screen.visibleFrame
+                newOrigin.x = max(visible.minX, min(newOrigin.x, visible.maxX - window.frame.width))
+                newOrigin.y = max(visible.minY, min(newOrigin.y, visible.maxY - window.frame.height))
+            }
+            
+            window.setFrameOrigin(newOrigin)
+        } else {
+            super.mouseDragged(with: event)
         }
-        
-        var newOrigin = window.frame.origin
-        newOrigin.x += deltaX
-        newOrigin.y += deltaY
-        
-        // Clamp to screen bounds during live drag
-        if let screen = window.screen ?? NSScreen.main {
-            let visible = screen.visibleFrame
-            newOrigin.x = max(visible.minX, min(newOrigin.x, visible.maxX - window.frame.width))
-            newOrigin.y = max(visible.minY, min(newOrigin.y, visible.maxY - window.frame.height))
-        }
-        
-        window.setFrameOrigin(newOrigin)
     }
     
     override func mouseUp(with event: NSEvent) {
-        guard let window = self.window else { return }
+        guard let window = self.window else {
+            super.mouseUp(with: event)
+            return
+        }
         
         if isDragging {
             performMagneticSnap(for: window)
@@ -267,12 +276,14 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
             }
         } else {
             windowController?.isInteractingOrDragging = false
-            // Click to toggle expand / collapse
-            if let state = windowController?.state {
-                state.toggle()
+            // Only clicking on the collapsed circular bubble should trigger expand.
+            // When already expanded, interactive clicks belong to SwiftUI tabs/buttons.
+            if let state = windowController?.state, !state.isExpanded {
+                state.expand()
             }
         }
         isDragging = false
+        super.mouseUp(with: event)
     }
     
     private func performMagneticSnap(for window: NSWindow) {

@@ -29,8 +29,6 @@ FlowPilot 负责当前任务的分类、路由、reasoning 强度、Worker deleg
 ~/.codex/skills/flow-pilot/SKILL.md
 ```
 
-从 `0.9.0` 起旧的 `cost-aware-development` Skill 会在安装/升级时移除，避免同一套路由规则被重复加载。
-
 ## 当前任务显式路由
 
 用户可以在当前任务中明确控制是否使用子 Agent，不需要修改任何持久配置：

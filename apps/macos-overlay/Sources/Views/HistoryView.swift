@@ -125,10 +125,11 @@ public struct HistoryView: View {
                 .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .rounded))
                 .foregroundColor(isSelected ? .white : .white.opacity(0.55))
                 .padding(.horizontal, 8)
-                .padding(.vertical, 2.5)
+                .padding(.vertical, 3.5)
+                .contentShape(Capsule())
                 .background(
                     Capsule()
-                        .fill(isSelected ? Color.cyan.opacity(0.3) : Color.clear)
+                        .fill(isSelected ? Color.cyan.opacity(0.3) : Color.white.opacity(0.001))
                 )
         }
         .buttonStyle(.plain)

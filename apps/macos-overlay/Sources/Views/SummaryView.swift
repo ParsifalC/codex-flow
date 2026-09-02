@@ -471,23 +471,25 @@ public struct SummaryView: View {
             ForEach(OverlayTab.allCases) { tab in
                 let isSelected = state.activeTab == tab
                 Button {
-                    state.selectTab(tab)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: tab.iconName)
-                            .font(.system(size: 9.5, weight: isSelected ? .bold : .medium))
-                        Text(tab.rawValue)
-                            .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        state.selectTab(tab)
                     }
-                    .foregroundColor(isSelected ? .white : .white.opacity(0.55))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4.5)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: tab.iconName)
+                            .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                        Text(tab.rawValue)
+                            .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                    }
+                    .foregroundColor(isSelected ? .white : .white.opacity(0.6))
+                    .frame(maxWidth: .infinity, minHeight: 27)
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(isSelected ? Color.cyan.opacity(0.25) : Color.clear)
+                            .fill(isSelected ? Color.cyan.opacity(0.28) : Color.white.opacity(0.001))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .stroke(isSelected ? Color.cyan.opacity(0.4) : Color.clear, lineWidth: 0.8)
+                                    .stroke(isSelected ? Color.cyan.opacity(0.45) : Color.clear, lineWidth: 0.8)
                             )
                     )
                 }
@@ -497,7 +499,7 @@ public struct SummaryView: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.white.opacity(0.05))
+                .fill(Color.white.opacity(0.06))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(Color.white.opacity(0.08), lineWidth: 0.6)

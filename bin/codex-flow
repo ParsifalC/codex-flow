@@ -120,6 +120,9 @@ case "$cmd" in
     telemetry_script="$STATE_DIR/telemetry.py"
     [[ -f "$telemetry_script" ]] || telemetry_script="$(source_dir 2>/dev/null || true)/scripts/telemetry.py"
     [[ -f "$telemetry_script" ]] || fail "telemetry collector not installed; reinstall codex-flow"
+    if [[ $# -eq 0 ]]; then
+      set -- last
+    fi
     exec python3 "$telemetry_script" "$@"
     ;;
   benchmark-local)
@@ -182,19 +185,21 @@ case "$cmd" in
   overlay)
     shift
     src="$(source_dir 2>/dev/null || pwd)"
-    overlay_bin="$STATE_DIR/bin/codex-flow-overlay"
+    overlay_bin="$STATE_DIR/bin/FlowPilot"
+    [[ -x "$overlay_bin" ]] || overlay_bin="$STATE_DIR/bin/codex-flow-overlay"
+    [[ -x "$overlay_bin" ]] || overlay_bin="$src/apps/macos-overlay/bin/FlowPilot"
     [[ -x "$overlay_bin" ]] || overlay_bin="$src/apps/macos-overlay/bin/codex-flow-overlay"
     if [[ ! -x "$overlay_bin" ]]; then
-      if [[ -f "$src/apps/macos-overlay/build.sh" ]]; then
-        bash "$src/apps/macos-overlay/build.sh"
-      fi
+      fail "FlowPilot 原生悬浮窗尚未编译。\n  💡 如需使用，请先在终端执行:\n     bash $src/apps/macos-overlay/build.sh"
     fi
-    [[ -x "$overlay_bin" ]] || fail "codex-flow-overlay binary not found; run apps/macos-overlay/build.sh first"
     sub="${1:-toggle}"
     case "$sub" in
-      start)
+      start|restart)
+        "$overlay_bin" stop >/dev/null 2>&1 || true
+        pkill -f "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot" 2>/dev/null || true
+        sleep 0.2
         nohup "$overlay_bin" start >/dev/null 2>&1 &
-        printf '🚀 Launched codex-flow-overlay in background.\n'
+        printf '🚀 Launched FlowPilot in background (restarted cleanly).\n'
         ;;
       *)
         exec "$overlay_bin" "$@"

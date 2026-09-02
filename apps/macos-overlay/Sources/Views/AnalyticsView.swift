@@ -61,17 +61,20 @@ public struct AnalyticsView: View {
     
     private func dayButton(days: Int, title: String) -> some View {
         Button {
-            state.statsDays = days
-            state.loadStats()
+            withAnimation(.easeInOut(duration: 0.15)) {
+                state.statsDays = days
+                state.loadStats()
+            }
         } label: {
             Text(title)
                 .font(.system(size: 9.5, weight: state.statsDays == days ? .bold : .medium, design: .rounded))
-                .foregroundColor(state.statsDays == days ? .white : .white.opacity(0.5))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2.5)
+                .foregroundColor(state.statsDays == days ? .white : .white.opacity(0.55))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3.5)
+                .contentShape(Capsule())
                 .background(
                     Capsule()
-                        .fill(state.statsDays == days ? Color.cyan.opacity(0.3) : Color.clear)
+                        .fill(state.statsDays == days ? Color.cyan.opacity(0.3) : Color.white.opacity(0.001))
                 )
         }
         .buttonStyle(.plain)

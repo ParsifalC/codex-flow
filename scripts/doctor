@@ -74,7 +74,6 @@ section "Routing & Skills"
 [[ -f "$CODEX_HOME/agents/worker-explorer.toml" ]] && ok "worker-explorer installed" || fail "worker-explorer missing"
 [[ -f "$CODEX_HOME/agents/worker-implementer.toml" ]] && ok "worker-implementer installed" || fail "worker-implementer missing"
 [[ -f "$CODEX_HOME/skills/flow-pilot/SKILL.md" ]] && ok "FlowPilot skill installed" || fail "FlowPilot skill missing"
-[[ ! -e "$CODEX_HOME/skills/cost-aware-development" ]] && ok "legacy cost-aware-development skill removed" || warn "legacy cost-aware-development skill still exists; reinstall recommended"
 
 if [[ -f "$POLICY" ]]; then
   SCHEMA="$(root_value schema_version)"

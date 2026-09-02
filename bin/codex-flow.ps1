@@ -97,8 +97,8 @@ switch ($cmd) {
             $src = Get-SourceDir
             $telemetry = Join-Path $src 'scripts/telemetry.py'
         }
-        if (-not (Test-Path $telemetry)) { throw 'telemetry collector not installed; reinstall codex-flow' }
-        & python3 $telemetry @rest
+        $usageArgs = if ($rest.Count -eq 0) { @('last') } else { $rest }
+        & python3 $telemetry @usageArgs
         exit $LASTEXITCODE
     }
     'benchmark-local' { & python3 (Join-Path (Get-SourceDir) 'scripts/benchmark-local.py') @rest; exit $LASTEXITCODE }

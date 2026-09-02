@@ -35,7 +35,6 @@ Remove-Item (Join-Path $CodexHome 'agents/luna-explorer.toml') -Force -ErrorActi
 Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'codex-flow.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'skills/flow-pilot') -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $CodexHome 'skills/cost-aware-development') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $StateDir -Recurse -Force -ErrorAction SilentlyContinue
 
 # When invoked through codex-flow.cmd, deleting the active batch wrapper before

@@ -29,8 +29,6 @@ Installed skill:
 ~/.codex/skills/flow-pilot/SKILL.md
 ```
 
-Starting with `0.9.0`, installation/upgrades remove the legacy `cost-aware-development` skill so the same routing policy cannot be loaded twice.
-
 ## Per-task routing override
 
 Users can explicitly override subagent routing for the current task without changing persistent configuration.

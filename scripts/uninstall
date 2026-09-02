@@ -21,7 +21,7 @@ fi
 rm -f "$CODEX_HOME/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-implementer.toml"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 rm -f "$CODEX_HOME/codex-flow.toml"
-rm -rf "$CODEX_HOME/skills/flow-pilot" "$CODEX_HOME/skills/cost-aware-development"
+rm -rf "$CODEX_HOME/skills/flow-pilot"
 rm -rf "$STATE_DIR"
 rm -f "$BIN_DIR/codex-flow"
 

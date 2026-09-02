@@ -76,7 +76,6 @@ grep -Fq "codex-flow.bash" "$CODEX_HOME/codex-flow/shell/init.sh"
 [[ -f "$CODEX_HOME/agents/worker-explorer.toml" ]]
 [[ -f "$CODEX_HOME/agents/worker-implementer.toml" ]]
 [[ -f "$CODEX_HOME/skills/flow-pilot/SKILL.md" ]]
-[[ ! -e "$CODEX_HOME/skills/cost-aware-development" ]]
 grep -Fq 'name: flow-pilot' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'model = "user-parent-model"' "$CODEX_HOME/config.toml"
 grep -Fq 'default_subagent_model = "gpt-5.6-luna"' "$CODEX_HOME/config.toml"
@@ -180,7 +179,6 @@ env -u CODEX_FLOW_BIN_DIR codex-flow uninstall
 [[ ! -e "$CODEX_HOME/agents/worker-explorer.toml" ]]
 [[ ! -e "$CODEX_HOME/agents/worker-implementer.toml" ]]
 [[ ! -e "$CODEX_HOME/skills/flow-pilot" ]]
-[[ ! -e "$CODEX_HOME/skills/cost-aware-development" ]]
 ! grep -qF 'codex-flow/telemetry.py' "$CODEX_HOME/hooks.json"
 python3 - "$CODEX_HOME/hooks.json" <<'PY'
 import json, sys

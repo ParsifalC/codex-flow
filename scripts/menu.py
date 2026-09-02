@@ -362,39 +362,30 @@ def get_source_dir() -> Path:
 
 
 def get_overlay_bin() -> Path | None:
-    # 1. Installed location in STATE_DIR
-    state_bin = STATE_DIR / "bin" / "codex-flow-overlay"
-    if state_bin.exists() and os.access(str(state_bin), os.X_OK):
-        return state_bin
-    # 2. Checkout location
     src = get_source_dir()
-    src_bin = src / "apps" / "macos-overlay" / "bin" / "codex-flow-overlay"
-    if src_bin.exists() and os.access(str(src_bin), os.X_OK):
-        return src_bin
-    # 3. Try to build if build.sh exists
-    build_script = src / "apps" / "macos-overlay" / "build.sh"
-    if build_script.exists():
-        try:
-            print(f"\n{style.CYAN}🔨 首次使用，正在编译 macOS 原生悬浮窗组件...{style.RESET}")
-            subprocess.run(["bash", str(build_script)], check=True)
-            if src_bin.exists() and os.access(str(src_bin), os.X_OK):
-                return src_bin
-        except Exception:
-            pass
-    return src_bin if src_bin.exists() else None
+    candidates = [
+        STATE_DIR / "bin" / "FlowPilot",
+        STATE_DIR / "bin" / "codex-flow-overlay",
+        src / "apps" / "macos-overlay" / "bin" / "FlowPilot",
+        src / "apps" / "macos-overlay" / "bin" / "codex-flow-overlay",
+    ]
+    for c in candidates:
+        if c.exists() and os.access(str(c), os.X_OK):
+            return c
+    return None
 
 
 def handle_manage_overlay() -> None:
     if sys.platform != "darwin":
-        print(f"\n{style.YELLOW}⚠️ 原生悬浮窗仅支持 macOS 系统。{style.RESET}")
+        print(f"\n{style.YELLOW}⚠️ FlowPilot 原生悬浮窗仅支持 macOS 系统。{style.RESET}")
         pause_prompt()
         return
 
     overlay_bin = get_overlay_bin()
     if overlay_bin is None or not overlay_bin.exists():
-        print(f"\n{style.RED}❌ 未找到悬浮窗二进制文件。{style.RESET}")
         src = get_source_dir()
-        print(f"{style.DIM}请先在源码目录下执行: bash {src}/apps/macos-overlay/build.sh{style.RESET}")
+        print(f"\n{style.YELLOW}💡 FlowPilot 原生悬浮窗尚未编译。{style.RESET}")
+        print(f"{style.DIM}如需启用，请在终端执行: bash {src}/apps/macos-overlay/build.sh{style.RESET}\n")
         pause_prompt()
         return
 

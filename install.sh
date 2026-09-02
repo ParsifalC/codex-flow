@@ -150,7 +150,6 @@ EOF
 cp "$ROOT_DIR/templates/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-explorer.toml"
 cp "$ROOT_DIR/templates/agents/worker-implementer.toml" "$CODEX_HOME/agents/worker-implementer.toml"
 cp "$ROOT_DIR/templates/skills/flow-pilot/SKILL.md" "$CODEX_HOME/skills/flow-pilot/SKILL.md"
-rm -rf "$CODEX_HOME/skills/cost-aware-development"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 
 printf '%s\n' "$ROOT_DIR" > "$STATE_DIR/source"
@@ -176,9 +175,12 @@ if [[ "$SHELL_NAME" == "bash" || "$SHELL_NAME" == "zsh" ]]; then
   python3 "$STATE_DIR/shell/manage-shell.py" install --state-dir "$STATE_DIR" --shell "$SHELL_NAME" --config-dir "$SHELL_CONFIG_DIR" --bin-dir "$BIN_DIR"
 fi
 
-if [[ "$(uname -s)" == "Darwin" && -f "$ROOT_DIR/apps/macos-overlay/build.sh" ]]; then
+if [[ "$(uname -s)" == "Darwin" && -d "$ROOT_DIR/apps/macos-overlay" ]]; then
   mkdir -p "$STATE_DIR/bin"
-  bash "$ROOT_DIR/apps/macos-overlay/build.sh" || true
+  if [[ -f "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" ]]; then
+    cp "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" "$STATE_DIR/bin/FlowPilot"
+    chmod +x "$STATE_DIR/bin/FlowPilot"
+  fi
   if [[ -f "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" ]]; then
     cp "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" "$STATE_DIR/bin/codex-flow-overlay"
     chmod +x "$STATE_DIR/bin/codex-flow-overlay"
@@ -252,6 +254,13 @@ if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
   fi
 else
   box_line "${C_BOLD}• Telemetry:${C_RESET}  ${C_DIM}○ disabled${C_RESET}"
+fi
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if [[ -f "$STATE_DIR/bin/FlowPilot" || -f "$STATE_DIR/bin/codex-flow-overlay" ]]; then
+    box_line "${C_BOLD}• FlowPilot UI:${C_RESET} ${C_GREEN}● installed${C_RESET} ${C_DIM}(start: codex-flow overlay start)${C_RESET}"
+  else
+    box_line "${C_BOLD}• FlowPilot UI:${C_RESET} ${C_DIM}○ optional (build: bash apps/macos-overlay/build.sh)${C_RESET}"
+  fi
 fi
 printf '  %s╰────────────────────────────────────────────────────────────────────╯%s\n\n' "$C_DIM" "$C_RESET"
 

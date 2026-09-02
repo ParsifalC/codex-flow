@@ -30,7 +30,8 @@ func printUsage() {
       FlowPilot [command] [options]
 
     Commands:
-      start, --daemon           Start the FlowPilot floating daemon (default)
+      start, --daemon           Start/Restart the FlowPilot floating daemon (default)
+      restart                   Restart the running FlowPilot daemon with fresh build
       stop, quit                Stop running FlowPilot daemon
       status                    Check if FlowPilot daemon is currently active
       toggle                    Toggle between circular bubble and expanded summary
@@ -47,12 +48,12 @@ func printUsage() {
 
 let args = Array(CommandLine.arguments.dropFirst())
 
-if args.isEmpty || args[0] == "start" || args[0] == "--daemon" {
-    // Check if already running
+if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "restart" {
+    // If an older instance is already running, cleanly terminate it first so new code runs
     let statusCheck = IPCService.sendCommand("status")
     if statusCheck.success {
-        print("FlowPilot is already running.")
-        exit(0)
+        _ = IPCService.sendCommand("quit")
+        usleep(250_000) // 250ms for socket cleanup
     }
     
     let app = NSApplication.shared
