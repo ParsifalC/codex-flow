@@ -1,0 +1,31 @@
+name: ota-review-fix
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths:
+      - '.github/review-fix.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ota-update-system
+          fetch-depth: 0
+      - name: Apply self-review fixes
+        run: python3 .github/review-fix.py
+      - name: Commit self-review fixes
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm -f .github/review-fix.py .github/workflows/review-fix.yml
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(update): harden OTA transaction after self-review'
+          git push origin HEAD:feat/ota-update-system
