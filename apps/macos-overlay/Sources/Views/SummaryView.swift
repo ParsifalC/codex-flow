@@ -27,12 +27,12 @@ public struct MetricRingView: View {
     }
     
     public var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 7) {
             ZStack {
                 // Background track
                 Circle()
-                    .stroke(Color.white.opacity(0.08), lineWidth: 4.5)
-                    .frame(width: 46, height: 46)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 4.0)
+                    .frame(width: 44, height: 44)
                 
                 // Progress stroke
                 Circle()
@@ -42,44 +42,140 @@ public struct MetricRingView: View {
                             colors: [ringColor, secondaryColor, ringColor],
                             center: .center
                         ),
-                        style: StrokeStyle(lineWidth: 4.5, lineCap: .round)
+                        style: StrokeStyle(lineWidth: 4.0, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 46, height: 46)
-                    .shadow(color: ringColor.opacity(0.5), radius: 3)
+                    .frame(width: 44, height: 44)
+                    .shadow(color: ringColor.opacity(0.4), radius: 3)
                 
                 // Value or icon inside ring
                 if let icon = iconName {
                     Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.white.opacity(0.9))
                 } else {
                     Circle()
                         .fill(Color.white.opacity(0.05))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 30, height: 30)
                 }
             }
             
             VStack(spacing: 1) {
                 Text(title)
-                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 9.0, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.55))
                     .textCase(.uppercase)
                 
                 Text(value)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 11)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 11)
                         .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                 )
+        )
+    }
+}
+
+// MARK: - Quota & Rate Limit Windows Meter
+public struct QuotaWindowsView: View {
+    public var windows: [QuotaWindow]
+    
+    public init(windows: [QuotaWindow]) {
+        self.windows = windows
+    }
+    
+    public var body: some View {
+        if !windows.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    HStack(spacing: 4) {
+                        Image(systemName: "gauge.with.needle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.cyan)
+                        Text("Rate Limits & Account Quota")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.85))
+                    }
+                    
+                    Spacer()
+                    
+                    if let firstReset = windows.compactMap({ $0.formattedResetsAt }).first {
+                        Text(firstReset)
+                            .font(.system(size: 8.5, weight: .regular))
+                            .foregroundColor(.white.opacity(0.45))
+                    }
+                }
+                
+                HStack(spacing: 5) {
+                    ForEach(windows) { window in
+                        quotaWindowPill(window: window)
+                    }
+                }
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 11)
+                    .fill(Color.white.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 11)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+                    )
+            )
+        }
+    }
+    
+    private func quotaWindowPill(window: QuotaWindow) -> some View {
+        let used = window.usedPercent ?? 0.0
+        let rem = window.remainingPercent
+        let color = used > 80 ? Color.orange : (used > 50 ? Color.yellow : Color.cyan)
+        
+        return VStack(alignment: .leading, spacing: 2.5) {
+            HStack {
+                Text(window.label)
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.85))
+                
+                Spacer()
+                
+                Text(String(format: "%.0f%% rem", rem))
+                    .font(.system(size: 8.0, weight: .semibold, design: .rounded))
+                    .foregroundColor(color)
+            }
+            
+            // Progress Bar
+            GeometryReader { geo in
+                let w = geo.size.width
+                let fillW = max(0, min(w, w * CGFloat(used / 100.0)))
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.1))
+                    Capsule()
+                        .fill(color)
+                        .frame(width: fillW)
+                }
+            }
+            .frame(height: 3.5)
+            
+            if let delta = window.deltaPercentagePoints, delta != 0 {
+                Text(String(format: "%+.1f pp", delta))
+                    .font(.system(size: 7.5, weight: .regular))
+                    .foregroundColor(delta > 0 ? .orange.opacity(0.85) : .green.opacity(0.85))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.white.opacity(0.03))
         )
     }
 }
@@ -92,29 +188,31 @@ public struct TokenDistributionBar: View {
         self.usage = usage
     }
     
-    private var prompt: Int { usage.promptTokens ?? 0 }
-    private var completion: Int { usage.completionTokens ?? 0 }
+    private var prompt: Int { usage.effectivePromptTokens }
+    private var completion: Int { usage.effectiveOutputTokens }
     private var cached: Int { usage.effectiveCachedTokens }
+    private var reasoning: Int { usage.effectiveReasoningTokens }
     private var total: Int { max(usage.totalTokens ?? (prompt + completion), 1) }
     
     private var promptOnly: Int { max(0, prompt - cached) }
     
     private var promptOnlyRatio: CGFloat { CGFloat(promptOnly) / CGFloat(total) }
     private var cachedRatio: CGFloat { CGFloat(cached) / CGFloat(total) }
-    private var completionRatio: CGFloat { CGFloat(completion) / CGFloat(total) }
+    private var completionRatio: CGFloat { CGFloat(max(0, completion - reasoning)) / CGFloat(total) }
+    private var reasoningRatio: CGFloat { CGFloat(reasoning) / CGFloat(total) }
     
     public var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             headerRow
             progressBar
             legendRow
         }
-        .padding(10)
+        .padding(9)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 11)
                 .fill(Color.white.opacity(0.04))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 11)
                         .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                 )
         )
@@ -123,13 +221,13 @@ public struct TokenDistributionBar: View {
     private var headerRow: some View {
         HStack {
             Text("Token Progress")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
             
             Spacer()
             
             Text("Total: \(TaskRun.formatTokenCount(usage.totalTokens ?? (prompt + completion)))")
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.6))
         }
     }
@@ -150,14 +248,24 @@ public struct TokenDistributionBar: View {
                         .frame(width: w * cachedRatio)
                 }
                 
-                if completion > 0 {
+                if completion > 0 && reasoning == 0 {
                     Rectangle()
                         .fill(Color(red: 0.22, green: 0.88, blue: 0.58))
                         .frame(width: w * completionRatio)
+                } else if completion > 0 {
+                    Rectangle()
+                        .fill(Color(red: 0.22, green: 0.88, blue: 0.58))
+                        .frame(width: w * completionRatio)
+                    
+                    if reasoning > 0 {
+                        Rectangle()
+                            .fill(Color(red: 0.65, green: 0.45, blue: 0.95))
+                            .frame(width: w * reasoningRatio)
+                    }
                 }
             }
         }
-        .frame(height: 7)
+        .frame(height: 6)
         .clipShape(Capsule())
         .background(Capsule().fill(Color.white.opacity(0.08)))
     }
@@ -192,26 +300,37 @@ public struct TokenDistributionBar: View {
                     pct: cachedPct
                 )
             }
+            
+            if reasoning > 0 {
+                Spacer()
+                let rPct = Int(Double(reasoning) / Double(total) * 100)
+                legendItem(
+                    color: Color(red: 0.65, green: 0.45, blue: 0.95),
+                    label: "Reason",
+                    count: TaskRun.formatTokenCount(reasoning),
+                    pct: rPct
+                )
+            }
         }
         .padding(.top, 1)
     }
     
     private func legendItem(color: Color, label: String, count: String, pct: Int) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Circle()
                 .fill(color)
-                .frame(width: 5.5, height: 5.5)
+                .frame(width: 5, height: 5)
             
             Text(label)
-                .font(.system(size: 9.5, weight: .medium))
+                .font(.system(size: 9, weight: .medium))
                 .foregroundColor(.white.opacity(0.6))
             
             Text("\(pct)%")
-                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .font(.system(size: 9, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.95))
             
             Text("(\(count))")
-                .font(.system(size: 9.0, weight: .regular, design: .rounded))
+                .font(.system(size: 8.5, weight: .regular, design: .rounded))
                 .foregroundColor(.white.opacity(0.5))
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -228,52 +347,36 @@ public struct SummaryView: View {
     }
     
     private var run: TaskRun {
-        return state.latestRun ?? TaskRun.previewSample
+        return state.inspectedRun ?? state.latestRun ?? TaskRun.previewSample
+    }
+    
+    private var isViewingHistoricalTask: Bool {
+        if let inspected = state.inspectedRun, let latest = state.latestRun {
+            return inspected.id != latest.id
+        }
+        return state.inspectedRun != nil
     }
     
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // MARK: 1. Header Bar
-            headerBar
+        VStack(alignment: .leading, spacing: 10) {
+            // MARK: 1. Top Bar (App Title & Window Controls)
+            topBar
             
-            // MARK: 2. Key Performance Indicators (3 Rings)
-            HStack(spacing: 8) {
-                MetricRingView(
-                    title: "Time",
-                    value: run.formattedDuration,
-                    progress: min(1.0, run.durationSeconds / 30.0),
-                    ringColor: Color.cyan,
-                    secondaryColor: Color.indigo
-                )
-                
-                MetricRingView(
-                    title: "Tokens",
-                    value: run.formattedTotalTokens,
-                    progress: min(1.0, Double(run.aggregatedUsage.totalTokens ?? 0) / 100_000.0),
-                    ringColor: Color(red: 0.95, green: 0.35, blue: 0.8),
-                    secondaryColor: Color(red: 0.6, green: 0.2, blue: 0.9)
-                )
-                
-                MetricRingView(
-                    title: "Cost",
-                    value: run.formattedCost,
-                    progress: min(1.0, (run.aggregatedUsage.estimatedCreditsMicros ?? 0) / 100_000.0),
-                    ringColor: Color(red: 0.2, green: 0.85, blue: 0.45),
-                    secondaryColor: Color.teal
-                )
+            // MARK: 2. Glass Segmented Tab Bar
+            tabSegmentedBar
+            
+            // MARK: 3. Dynamic Content
+            switch state.activeTab {
+            case .inspector:
+                inspectorContent
+            case .history:
+                HistoryView(state: state)
+            case .analytics:
+                AnalyticsView(state: state)
             }
-            
-            // MARK: 3. Token Distribution Bar
-            TokenDistributionBar(usage: run.aggregatedUsage)
-            
-            // MARK: 4. Participants (Parent + Workers)
-            participantsSection
-            
-            // MARK: 5. Action Footer
-            actionFooter
         }
-        .padding(14)
-        .frame(width: 376)
+        .padding(13)
+        .frame(width: 380)
         .background(
             RoundedRectangle(cornerRadius: 20)
                 .fill(.ultraThinMaterial)
@@ -309,105 +412,244 @@ public struct SummaryView: View {
         .shadow(color: Color.black.opacity(0.4), radius: 16, x: 0, y: 8)
     }
     
-    // MARK: - Header Bar
-    private var headerBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Row 1: App Title & Status + Window Controls
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [.cyan, .indigo],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
+    // MARK: - Top Bar
+    private var topBar: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [.cyan, .indigo],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
                         )
-                    
-                    Text("FlowPilot Summary")
-                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                }
+                    )
                 
+                Text("FlowPilot")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            
+            if state.activeTab == .inspector {
                 statusBadge
-                
-                Spacer()
-                
-                // Pin Toggle Button
+            }
+            
+            Spacer()
+            
+            // Pin Toggle Button
+            Button {
+                state.isPinned.toggle()
+            } label: {
+                Image(systemName: state.isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(state.isPinned ? .cyan : .white.opacity(0.5))
+                    .frame(width: 22, height: 22)
+                    .background(
+                        Circle()
+                            .fill(state.isPinned ? Color.cyan.opacity(0.2) : Color.white.opacity(0.06))
+                    )
+            }
+            .buttonStyle(.plain)
+            
+            // Collapse Button
+            Button {
+                state.collapse()
+            } label: {
+                Image(systemName: "chevron.up.circle.fill")
+                    .font(.system(size: 13.5))
+                    .foregroundColor(.white.opacity(0.4))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+    
+    // MARK: - Glass Segmented Tab Bar
+    private var tabSegmentedBar: some View {
+        HStack(spacing: 4) {
+            ForEach(OverlayTab.allCases) { tab in
+                let isSelected = state.activeTab == tab
                 Button {
-                    state.isPinned.toggle()
+                    state.selectTab(tab)
                 } label: {
-                    Image(systemName: state.isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(state.isPinned ? .cyan : .white.opacity(0.5))
-                        .frame(width: 22, height: 22)
-                        .background(
-                            Circle()
-                                .fill(state.isPinned ? Color.cyan.opacity(0.2) : Color.white.opacity(0.06))
-                        )
-                }
-                .buttonStyle(.plain)
-                
-                // Collapse Button
-                Button {
-                    state.collapse()
-                } label: {
-                    Image(systemName: "chevron.up.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.4))
-                        .frame(width: 22, height: 22)
+                    HStack(spacing: 4) {
+                        Image(systemName: tab.iconName)
+                            .font(.system(size: 9.5, weight: isSelected ? .bold : .medium))
+                        Text(tab.rawValue)
+                            .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                    }
+                    .foregroundColor(isSelected ? .white : .white.opacity(0.55))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(isSelected ? Color.cyan.opacity(0.25) : Color.clear)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(isSelected ? Color.cyan.opacity(0.4) : Color.clear, lineWidth: 0.8)
+                            )
+                    )
                 }
                 .buttonStyle(.plain)
             }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.6)
+                )
+        )
+    }
+    
+    // MARK: - Inspector Content
+    private var inspectorContent: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            // Historical Task Notice Bar
+            if isViewingHistoricalTask {
+                historicalTaskBanner
+            }
             
-            // Row 2: Project & Branch Badge + Task Preview
-            HStack(spacing: 6) {
-                // Project & Branch Chip
-                HStack(spacing: 4) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.6))
-                    
-                    Text(run.projectName)
-                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.9))
-                        .lineLimit(1)
-                    
-                    if let branch = run.gitBranch {
-                        Text("·")
-                            .foregroundColor(.white.opacity(0.3))
-                        
-                        Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
-                            .font(.system(size: 8))
-                            .foregroundColor(.cyan.opacity(0.8))
-                        
-                        Text(branch)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(.cyan.opacity(0.9))
-                            .lineLimit(1)
-                    }
+            // Project & Branch + Session Preview
+            projectHeaderRow
+            
+            // 3 KPI Rings
+            HStack(spacing: 7) {
+                MetricRingView(
+                    title: "Time",
+                    value: run.formattedDuration,
+                    progress: min(1.0, run.durationSeconds / 30.0),
+                    ringColor: Color.cyan,
+                    secondaryColor: Color.indigo
+                )
+                
+                MetricRingView(
+                    title: "Tokens",
+                    value: run.formattedTotalTokens,
+                    progress: min(1.0, Double(run.aggregatedUsage.totalTokens ?? 0) / 100_000.0),
+                    ringColor: Color(red: 0.95, green: 0.35, blue: 0.8),
+                    secondaryColor: Color(red: 0.6, green: 0.2, blue: 0.9)
+                )
+                
+                MetricRingView(
+                    title: "Cost",
+                    value: run.formattedCost,
+                    progress: min(1.0, (run.aggregatedUsage.estimatedCreditsMicros ?? 0) / 100_000.0),
+                    ringColor: Color(red: 0.2, green: 0.85, blue: 0.45),
+                    secondaryColor: Color.teal
+                )
+            }
+            
+            // Quota & Rate Limit Windows Meter
+            if !run.effectiveQuotaWindows.isEmpty {
+                QuotaWindowsView(windows: run.effectiveQuotaWindows)
+            }
+            
+            // Token Distribution Bar
+            TokenDistributionBar(usage: run.aggregatedUsage)
+            
+            // Participants (Parent + Workers)
+            participantsSection
+            
+            // Action Footer
+            actionFooter
+        }
+    }
+    
+    // MARK: - Historical Task Banner
+    private var historicalTaskBanner: some View {
+        HStack {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 9))
+                .foregroundColor(.cyan)
+            
+            Text("Viewing Historical Task")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundColor(.cyan)
+            
+            Spacer()
+            
+            Button {
+                state.jumpToLive()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 8))
+                    Text("Jump to Live")
+                        .font(.system(size: 9, weight: .bold))
                 }
+                .foregroundColor(.white)
                 .padding(.horizontal, 7)
-                .padding(.vertical, 3)
+                .padding(.vertical, 2.5)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(0.07))
-                        .overlay(
-                            Capsule()
-                                .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
-                        )
+                        .fill(Color.cyan.opacity(0.35))
                 )
-                .fixedSize(horizontal: true, vertical: false)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.cyan.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.cyan.opacity(0.25), lineWidth: 0.6)
+                )
+        )
+    }
+    
+    // MARK: - Project Header Row
+    private var projectHeaderRow: some View {
+        HStack(spacing: 6) {
+            // Project & Branch Chip
+            HStack(spacing: 4) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 8.5))
+                    .foregroundColor(.white.opacity(0.6))
                 
-                // Task Subtitle / Preview
-                if let preview = run.thread?.preview ?? run.summary, !preview.isEmpty {
-                    Text(preview)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(.white.opacity(0.65))
+                Text(run.projectName)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.9))
+                    .lineLimit(1)
+                
+                if let branch = run.gitBranch {
+                    Text("·")
+                        .foregroundColor(.white.opacity(0.3))
+                    
+                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                        .font(.system(size: 7.5))
+                        .foregroundColor(.cyan.opacity(0.8))
+                    
+                    Text(branch)
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(.cyan.opacity(0.9))
                         .lineLimit(1)
-                        .truncationMode(.tail)
                 }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.07))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
+                    )
+            )
+            .fixedSize(horizontal: true, vertical: false)
+            
+            // Task Subtitle / Preview
+            if let preview = run.thread?.preview ?? run.summary, !preview.isEmpty {
+                Text(preview)
+                    .font(.system(size: 10.5, weight: .regular))
+                    .foregroundColor(.white.opacity(0.65))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
     }
@@ -417,15 +659,15 @@ public struct SummaryView: View {
         HStack(spacing: 4) {
             Circle()
                 .fill(statusBadgeColor)
-                .frame(width: 5.5, height: 5.5)
+                .frame(width: 5, height: 5)
                 .shadow(color: statusBadgeColor.opacity(0.8), radius: 2)
             
             Text(statusBadgeText)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .font(.system(size: 8.5, weight: .bold, design: .rounded))
                 .foregroundColor(statusBadgeColor)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2.5)
+        .padding(.horizontal, 5.5)
+        .padding(.vertical, 2)
         .background(
             Capsule()
                 .fill(statusBadgeColor.opacity(0.12))
@@ -456,29 +698,29 @@ public struct SummaryView: View {
     
     // MARK: - Participants Section
     private var participantsSection: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             // Parent Agent
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 3.5) {
+                HStack(spacing: 3) {
                     Image(systemName: "brain.head.profile")
-                        .font(.system(size: 10))
+                        .font(.system(size: 9))
                         .foregroundColor(.indigo.opacity(0.9))
                     Text("Parent Model")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                 }
                 
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     Text(run.parent?.displayModel ?? "gpt-5-pro")
-                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     
                     if let effort = run.parent?.displayEffort {
                         Text(effort)
-                            .font(.system(size: 8.5, weight: .medium))
+                            .font(.system(size: 8, weight: .medium))
                             .foregroundColor(.indigo.opacity(0.9))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 0.5)
                             .background(
                                 Capsule()
                                     .fill(Color.indigo.opacity(0.2))
@@ -488,42 +730,42 @@ public struct SummaryView: View {
                 
                 if let u = run.parent?.effectiveUsage?.totalTokens {
                     Text("\(TaskRun.formatTokenCount(u)) tokens")
-                        .font(.system(size: 9.5, weight: .regular))
+                        .font(.system(size: 9, weight: .regular))
                         .foregroundColor(.white.opacity(0.5))
                 }
             }
-            .padding(8)
+            .padding(7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 9)
                     .fill(Color.white.opacity(0.04))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 9)
                             .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                     )
             )
             
             // Workers Section
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 3.5) {
+                HStack(spacing: 3) {
                     Image(systemName: "person.2.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: 9))
                         .foregroundColor(.teal.opacity(0.9))
                     Text("Workers (\(run.allWorkers.count))")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                 }
                 
                 if run.allWorkers.isEmpty {
                     Text("No subagents")
-                        .font(.system(size: 11, weight: .regular))
+                        .font(.system(size: 10.5, weight: .regular))
                         .foregroundColor(.white.opacity(0.4))
                 } else {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2.5) {
                         ForEach(run.allWorkers.prefix(2)) { worker in
-                            HStack(spacing: 4) {
+                            HStack(spacing: 3) {
                                 Text(worker.name ?? worker.displayModel)
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: 9.5, weight: .medium))
                                     .foregroundColor(.white.opacity(0.85))
                                     .lineLimit(1)
                                 
@@ -531,7 +773,7 @@ public struct SummaryView: View {
                                 
                                 if let tok = worker.effectiveUsage?.totalTokens {
                                     Text(TaskRun.formatTokenCount(tok))
-                                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
                                         .foregroundColor(.teal.opacity(0.9))
                                 }
                             }
@@ -539,13 +781,13 @@ public struct SummaryView: View {
                     }
                 }
             }
-            .padding(8)
+            .padding(7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 9)
                     .fill(Color.white.opacity(0.04))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 9)
                             .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                     )
             )
@@ -554,25 +796,25 @@ public struct SummaryView: View {
     
     // MARK: - Action Footer
     private var actionFooter: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             // Copy Summary Button
             Button {
                 copySummaryToClipboard()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 3.5) {
                     Image(systemName: copiedSummary ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .semibold))
                     Text(copiedSummary ? "Copied!" : "Copy Summary")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                 }
                 .foregroundColor(copiedSummary ? Color(red: 0.2, green: 0.85, blue: 0.45) : .white.opacity(0.85))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4.5)
                 .background(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 7)
                         .fill(copiedSummary ? Color.green.opacity(0.15) : Color.white.opacity(0.06))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: 7)
                                 .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
                         )
                 )
@@ -583,20 +825,20 @@ public struct SummaryView: View {
             Button {
                 openConsole()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 3.5) {
                     Image(systemName: "terminal.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Open Console")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: 9.5, weight: .semibold))
+                    Text("Console")
+                        .font(.system(size: 10, weight: .medium))
                 }
                 .foregroundColor(.white.opacity(0.85))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4.5)
                 .background(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 7)
                         .fill(Color.white.opacity(0.06))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: 7)
                                 .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
                         )
                 )
@@ -605,12 +847,12 @@ public struct SummaryView: View {
             
             Spacer()
             
-            // Relative update time
-            Text("Just updated")
-                .font(.system(size: 9.5, weight: .regular))
+            // Relative date / update time
+            Text(run.formattedDate)
+                .font(.system(size: 9, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
         }
-        .padding(.top, 2)
+        .padding(.top, 1)
     }
     
     private func copySummaryToClipboard() {

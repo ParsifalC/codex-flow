@@ -24,20 +24,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 func printUsage() {
     print("""
-    codex-flow-overlay - Native macOS Floating Window for FlowPilot / Codex Telemetry
+    FlowPilot - Native macOS Assistant & Telemetry Widget
 
     Usage:
-      codex-flow-overlay [command]
+      FlowPilot [command] [options]
 
     Commands:
-      start, --daemon    Start the floating overlay daemon (default)
-      stop, quit         Stop running overlay daemon
-      status             Check if overlay daemon is currently active
-      toggle             Toggle between circular bubble and expanded summary
-      expand             Expand summary window
-      collapse           Collapse to circular bubble
-      update <path|json> Push a telemetry run update and expand
-      help, -h           Show this help message
+      start, --daemon           Start the FlowPilot floating daemon (default)
+      stop, quit                Stop running FlowPilot daemon
+      status                    Check if FlowPilot daemon is currently active
+      toggle                    Toggle between circular bubble and expanded summary
+      expand                    Expand summary window
+      collapse                  Collapse to circular bubble
+      tab <inspector|hist|stat> Switch active tab in expanded view
+      show <#|id|session>       Inspect specific task in FlowPilot
+      stats [days]              Open analytics dashboard with N days (default: 30)
+      history, list             Open history task timeline
+      update [path|json]        Push telemetry run update and expand
+      help, -h                  Show this help message
     """)
 }
 
@@ -47,7 +51,7 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" {
     // Check if already running
     let statusCheck = IPCService.sendCommand("status")
     if statusCheck.success {
-        print("codex-flow-overlay is already running.")
+        print("FlowPilot is already running.")
         exit(0)
     }
     
@@ -61,10 +65,10 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" {
     case "status":
         let res = IPCService.sendCommand("status")
         if res.success {
-            print("● Overlay is RUNNING: \(res.response)")
+            print("● FlowPilot is RUNNING: \(res.response)")
             exit(0)
         } else {
-            print("○ Overlay is NOT running.")
+            print("○ FlowPilot is NOT running.")
             exit(1)
         }
     case "toggle":
@@ -77,6 +81,25 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" {
         exit(res.success ? 0 : 1)
     case "collapse":
         let res = IPCService.sendCommand("collapse")
+        print(res.response)
+        exit(res.success ? 0 : 1)
+    case "tab":
+        let target = args.dropFirst().joined(separator: " ")
+        let res = IPCService.sendCommand("tab \(target)")
+        print(res.response)
+        exit(res.success ? 0 : 1)
+    case "show":
+        let target = args.dropFirst().joined(separator: " ")
+        let res = IPCService.sendCommand("show \(target)")
+        print(res.response)
+        exit(res.success ? 0 : 1)
+    case "stats", "summary":
+        let target = args.dropFirst().joined(separator: " ")
+        let res = IPCService.sendCommand("stats \(target)")
+        print(res.response)
+        exit(res.success ? 0 : 1)
+    case "history", "list":
+        let res = IPCService.sendCommand("history")
         print(res.response)
         exit(res.success ? 0 : 1)
     case "stop", "quit":

@@ -1,5 +1,21 @@
 import Foundation
 
+public enum OverlayTab: String, CaseIterable, Identifiable {
+    case inspector = "Inspector"
+    case history = "History"
+    case analytics = "Analytics"
+    
+    public var id: String { rawValue }
+    
+    public var iconName: String {
+        switch self {
+        case .inspector: return "bolt.fill"
+        case .history: return "clock.arrow.circlepath"
+        case .analytics: return "chart.bar.xaxis"
+        }
+    }
+}
+
 public struct GitInfo: Codable {
     public var branch: String?
     public var commit: String?
@@ -27,44 +43,77 @@ public struct ThreadInfo: Codable {
 public struct TokenUsage: Codable {
     public var totalTokens: Int?
     public var promptTokens: Int?
+    public var inputTokens: Int?
     public var completionTokens: Int?
+    public var outputTokens: Int?
     public var cachedPromptTokens: Int?
+    public var cachedInputTokens: Int?
     public var cacheReadInputTokens: Int?
     public var cacheCreationInputTokens: Int?
+    public var reasoningOutputTokens: Int?
     public var estimatedCreditsMicros: Double?
     
     enum CodingKeys: String, CodingKey {
         case totalTokens = "total_tokens"
         case promptTokens = "prompt_tokens"
+        case inputTokens = "input_tokens"
         case completionTokens = "completion_tokens"
+        case outputTokens = "output_tokens"
         case cachedPromptTokens = "cached_prompt_tokens"
+        case cachedInputTokens = "cached_input_tokens"
         case cacheReadInputTokens = "cache_read_input_tokens"
         case cacheCreationInputTokens = "cache_creation_input_tokens"
+        case reasoningOutputTokens = "reasoning_output_tokens"
         case estimatedCreditsMicros = "estimated_credits_micros"
     }
     
     public init(
         totalTokens: Int? = nil,
         promptTokens: Int? = nil,
+        inputTokens: Int? = nil,
         completionTokens: Int? = nil,
+        outputTokens: Int? = nil,
         cachedPromptTokens: Int? = nil,
+        cachedInputTokens: Int? = nil,
         cacheReadInputTokens: Int? = nil,
         cacheCreationInputTokens: Int? = nil,
+        reasoningOutputTokens: Int? = nil,
         estimatedCreditsMicros: Double? = nil
     ) {
         self.totalTokens = totalTokens
         self.promptTokens = promptTokens
+        self.inputTokens = inputTokens
         self.completionTokens = completionTokens
+        self.outputTokens = outputTokens
         self.cachedPromptTokens = cachedPromptTokens
+        self.cachedInputTokens = cachedInputTokens
         self.cacheReadInputTokens = cacheReadInputTokens
         self.cacheCreationInputTokens = cacheCreationInputTokens
+        self.reasoningOutputTokens = reasoningOutputTokens
         self.estimatedCreditsMicros = estimatedCreditsMicros
+    }
+    
+    public var effectivePromptTokens: Int {
+        if let p = promptTokens, p > 0 { return p }
+        if let i = inputTokens, i > 0 { return i }
+        return 0
+    }
+    
+    public var effectiveOutputTokens: Int {
+        if let c = completionTokens, c > 0 { return c }
+        if let o = outputTokens, o > 0 { return o }
+        return 0
     }
     
     public var effectiveCachedTokens: Int {
         if let c = cachedPromptTokens, c > 0 { return c }
+        if let ci = cachedInputTokens, ci > 0 { return ci }
         if let r = cacheReadInputTokens, r > 0 { return r }
         return 0
+    }
+    
+    public var effectiveReasoningTokens: Int {
+        return reasoningOutputTokens ?? 0
     }
 }
 
@@ -122,7 +171,86 @@ public struct ParticipantInfo: Codable, Identifiable {
     }
 }
 
-public struct TaskRun: Codable {
+public struct QuotaWindow: Codable, Identifiable {
+    public var id: String { "\(slot ?? "primary")_\(windowDurationMins ?? 0)" }
+    public var slot: String?
+    public var usedPercent: Double?
+    public var windowDurationMins: Int?
+    public var resetsAt: Double?
+    public var deltaPercentagePoints: Double?
+    
+    enum CodingKeys: String, CodingKey {
+        case slot
+        case usedPercent = "used_percent"
+        case windowDurationMins = "window_duration_mins"
+        case resetsAt = "resets_at"
+        case deltaPercentagePoints = "delta_percentage_points"
+    }
+    
+    public init(
+        slot: String? = nil,
+        usedPercent: Double? = nil,
+        windowDurationMins: Int? = nil,
+        resetsAt: Double? = nil,
+        deltaPercentagePoints: Double? = nil
+    ) {
+        self.slot = slot
+        self.usedPercent = usedPercent
+        self.windowDurationMins = windowDurationMins
+        self.resetsAt = resetsAt
+        self.deltaPercentagePoints = deltaPercentagePoints
+    }
+    
+    public var label: String {
+        guard let mins = windowDurationMins else {
+            return slot?.capitalized ?? "Window"
+        }
+        if mins < 60 {
+            return "\(mins)m"
+        } else if mins < 1440 {
+            let hours = mins / 60
+            return "\(hours)h"
+        } else {
+            let days = mins / 1440
+            return "\(days)d"
+        }
+    }
+    
+    public var remainingPercent: Double {
+        guard let used = usedPercent else { return 100.0 }
+        return max(0.0, 100.0 - used)
+    }
+    
+    public var formattedResetsAt: String? {
+        guard let r = resetsAt, r > 0 else { return nil }
+        let date = Date(timeIntervalSince1970: r > 1_000_000_000_000 ? r / 1000.0 : r)
+        let now = Date()
+        let interval = date.timeIntervalSince(now)
+        if interval > 0 && interval < 86400 {
+            let mins = Int(interval) / 60
+            if mins < 60 {
+                return "resets in \(mins)m"
+            } else {
+                let hours = mins / 60
+                let remMins = mins % 60
+                return "resets in \(hours)h \(remMins)m"
+            }
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return "resets at \(formatter.string(from: date))"
+    }
+}
+
+public struct TaskRun: Codable, Identifiable {
+    public var id: String {
+        if let s = sessionId, let t = turnId {
+            return "\(s)--\(t)"
+        }
+        return fileStem ?? UUID().uuidString
+    }
+    
+    public var fileStem: String?
     public var sessionId: String?
     public var turnId: String?
     public var startedAtMs: Double?
@@ -134,6 +262,8 @@ public struct TaskRun: Codable {
     public var parent: ParticipantInfo?
     public var workersDict: [String: ParticipantInfo]?
     public var workersList: [ParticipantInfo]?
+    public var quotaBefore: [QuotaWindow]?
+    public var quotaChangeDuringRun: [QuotaWindow]?
     
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -146,6 +276,8 @@ public struct TaskRun: Codable {
         case summary
         case parent
         case workers
+        case quotaBefore = "quota_before"
+        case quotaChangeDuringRun = "quota_change_during_run"
     }
     
     public init(from decoder: Decoder) throws {
@@ -170,6 +302,8 @@ public struct TaskRun: Codable {
         cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         parent = try container.decodeIfPresent(ParticipantInfo.self, forKey: .parent)
+        quotaBefore = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaBefore)
+        quotaChangeDuringRun = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaChangeDuringRun)
         
         if let dict = try? container.decode([String: ParticipantInfo].self, forKey: .workers) {
             workersDict = dict
@@ -191,6 +325,8 @@ public struct TaskRun: Codable {
         try container.encodeIfPresent(summary, forKey: .summary)
         try container.encodeIfPresent(parent, forKey: .parent)
         try container.encodeIfPresent(workersDict, forKey: .workers)
+        try container.encodeIfPresent(quotaBefore, forKey: .quotaBefore)
+        try container.encodeIfPresent(quotaChangeDuringRun, forKey: .quotaChangeDuringRun)
     }
     
     public init(
@@ -203,7 +339,10 @@ public struct TaskRun: Codable {
         cwd: String? = nil,
         summary: String? = nil,
         parent: ParticipantInfo? = nil,
-        workers: [ParticipantInfo]? = nil
+        workers: [ParticipantInfo]? = nil,
+        quotaBefore: [QuotaWindow]? = nil,
+        quotaChangeDuringRun: [QuotaWindow]? = nil,
+        fileStem: String? = nil
     ) {
         self.sessionId = sessionId
         self.turnId = turnId
@@ -215,6 +354,9 @@ public struct TaskRun: Codable {
         self.summary = summary
         self.parent = parent
         self.workersList = workers
+        self.quotaBefore = quotaBefore
+        self.quotaChangeDuringRun = quotaChangeDuringRun
+        self.fileStem = fileStem
     }
     
     // MARK: - Computed Properties
@@ -234,7 +376,7 @@ public struct TaskRun: Codable {
     }
     
     public var sessionTitle: String {
-        return thread?.preview ?? thread?.name ?? sessionId ?? "FlowPilot Task"
+        return thread?.preview ?? thread?.name ?? summary ?? sessionId ?? "FlowPilot Task"
     }
     
     public var isRunning: Bool {
@@ -277,8 +419,29 @@ public struct TaskRun: Codable {
         }
     }
     
+    public var formattedDate: String {
+        guard let s = startedAtMs else { return "--:--" }
+        let date = Date(timeIntervalSince1970: s / 1000.0)
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        if calendar.isDateInToday(date) {
+            formatter.dateFormat = "HH:mm"
+            return "Today \(formatter.string(from: date))"
+        } else {
+            formatter.dateFormat = "MM-dd HH:mm"
+            return formatter.string(from: date)
+        }
+    }
+    
     public var allWorkers: [ParticipantInfo] {
         return workersList ?? (workersDict != nil ? Array(workersDict!.values) : [])
+    }
+    
+    public var effectiveQuotaWindows: [QuotaWindow] {
+        if let current = quotaChangeDuringRun, !current.isEmpty {
+            return current
+        }
+        return quotaBefore ?? []
     }
     
     public var aggregatedUsage: TokenUsage {
@@ -286,15 +449,17 @@ public struct TaskRun: Codable {
         var prompt = 0
         var completion = 0
         var cached = 0
+        var reasoning = 0
         var credits: Double = 0
         
         let allParticipants = [parent].compactMap { $0 } + allWorkers
         for p in allParticipants {
             if let u = p.effectiveUsage {
-                total += u.totalTokens ?? 0
-                prompt += u.promptTokens ?? 0
-                completion += u.completionTokens ?? 0
+                total += u.totalTokens ?? (u.effectivePromptTokens + u.effectiveOutputTokens)
+                prompt += u.effectivePromptTokens
+                completion += u.effectiveOutputTokens
                 cached += u.effectiveCachedTokens
+                reasoning += u.effectiveReasoningTokens
                 credits += u.estimatedCreditsMicros ?? 0
             }
         }
@@ -304,6 +469,7 @@ public struct TaskRun: Codable {
             promptTokens: prompt > 0 ? prompt : nil,
             completionTokens: completion > 0 ? completion : nil,
             cachedPromptTokens: cached > 0 ? cached : nil,
+            reasoningOutputTokens: reasoning > 0 ? reasoning : nil,
             estimatedCreditsMicros: credits > 0 ? credits : nil
         )
     }
@@ -346,7 +512,7 @@ public struct TaskRun: Codable {
                 gitInfo: GitInfo(branch: "main")
             ),
             cwd: "/Users/parsifal/Repo/SkillHub/codex-flow",
-            summary: "成功实现 macOS 原生悬浮窗与 Summary UI，支持光标悬停 1 秒平滑弹性展开、动态环形指标与多 Agent 拓扑展示。",
+            summary: "成功实现 macOS 原生悬浮窗与 Summary UI，支持光标悬停平滑展开、动态环形指标、Quota 配额监控与多 Agent 拓扑展示。",
             parent: ParticipantInfo(
                 name: "Parent Agent",
                 agentType: "orchestrator",
@@ -358,6 +524,7 @@ public struct TaskRun: Codable {
                     promptTokens: 8500,
                     completionTokens: 5700,
                     cachedPromptTokens: 3200,
+                    reasoningOutputTokens: 2100,
                     estimatedCreditsMicros: 18000
                 )
             ),
@@ -373,6 +540,7 @@ public struct TaskRun: Codable {
                         promptTokens: 14000,
                         completionTokens: 12100,
                         cachedPromptTokens: 8200,
+                        reasoningOutputTokens: 3800,
                         estimatedCreditsMicros: 14000
                     )
                 ),
@@ -387,10 +555,144 @@ public struct TaskRun: Codable {
                         promptTokens: 9800,
                         completionTokens: 8300,
                         cachedPromptTokens: 4500,
+                        reasoningOutputTokens: 2400,
                         estimatedCreditsMicros: 10000
                     )
                 )
+            ],
+            quotaBefore: [
+                QuotaWindow(slot: "primary", usedPercent: 12.0, windowDurationMins: 5, resetsAt: Date().addingTimeInterval(180).timeIntervalSince1970),
+                QuotaWindow(slot: "secondary", usedPercent: 34.0, windowDurationMins: 60, resetsAt: Date().addingTimeInterval(2400).timeIntervalSince1970)
+            ],
+            quotaChangeDuringRun: [
+                QuotaWindow(slot: "primary", usedPercent: 18.0, windowDurationMins: 5, resetsAt: Date().addingTimeInterval(180).timeIntervalSince1970, deltaPercentagePoints: 6.0),
+                QuotaWindow(slot: "secondary", usedPercent: 39.0, windowDurationMins: 60, resetsAt: Date().addingTimeInterval(2400).timeIntervalSince1970, deltaPercentagePoints: 5.0)
             ]
         )
+    }
+}
+
+// MARK: - Analytics & Stats Data Models
+
+public struct ModelStats: Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var calls: Int
+    public var tokens: Int
+    public var roles: [String]
+    
+    public init(name: String, calls: Int, tokens: Int, roles: [String]) {
+        self.name = name
+        self.calls = calls
+        self.tokens = tokens
+        self.roles = roles
+    }
+}
+
+public struct ProjectStats: Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var runs: Int
+    public var delegated: Int
+    public var tokens: Int
+    public var durationMs: Double
+    
+    public init(name: String, runs: Int, delegated: Int, tokens: Int, durationMs: Double) {
+        self.name = name
+        self.runs = runs
+        self.delegated = delegated
+        self.tokens = tokens
+        self.durationMs = durationMs
+    }
+    
+    public var formattedDuration: String {
+        let secs = durationMs / 1000.0
+        if secs < 60 {
+            return String(format: "%.0fs", secs)
+        } else if secs < 3600 {
+            return String(format: "%.1fm", secs / 60.0)
+        } else {
+            return String(format: "%.1fh", secs / 3600.0)
+        }
+    }
+}
+
+public struct TelemetryStats {
+    public var days: Int
+    public var projectFilter: String?
+    public var totalRuns: Int
+    public var delegatedRuns: Int
+    public var directRuns: Int
+    public var totalDurationMs: Double
+    public var totalTokens: Int
+    public var parentTokens: Int
+    public var workerTokens: Int
+    public var cachedInputTokens: Int
+    public var inputTokens: Int
+    public var outputTokens: Int
+    public var reasoningOutputTokens: Int
+    public var cacheRatio: Double
+    public var workerOffloadRatio: Double
+    public var estimatedCreditsMicros: Double?
+    public var models: [ModelStats]
+    public var projects: [ProjectStats]
+    
+    public init(
+        days: Int = 30,
+        projectFilter: String? = nil,
+        totalRuns: Int = 0,
+        delegatedRuns: Int = 0,
+        directRuns: Int = 0,
+        totalDurationMs: Double = 0,
+        totalTokens: Int = 0,
+        parentTokens: Int = 0,
+        workerTokens: Int = 0,
+        cachedInputTokens: Int = 0,
+        inputTokens: Int = 0,
+        outputTokens: Int = 0,
+        reasoningOutputTokens: Int = 0,
+        cacheRatio: Double = 0,
+        workerOffloadRatio: Double = 0,
+        estimatedCreditsMicros: Double? = nil,
+        models: [ModelStats] = [],
+        projects: [ProjectStats] = []
+    ) {
+        self.days = days
+        self.projectFilter = projectFilter
+        self.totalRuns = totalRuns
+        self.delegatedRuns = delegatedRuns
+        self.directRuns = directRuns
+        self.totalDurationMs = totalDurationMs
+        self.totalTokens = totalTokens
+        self.parentTokens = parentTokens
+        self.workerTokens = workerTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.reasoningOutputTokens = reasoningOutputTokens
+        self.cacheRatio = cacheRatio
+        self.workerOffloadRatio = workerOffloadRatio
+        self.estimatedCreditsMicros = estimatedCreditsMicros
+        self.models = models
+        self.projects = projects
+    }
+    
+    public var formattedTotalDuration: String {
+        let secs = totalDurationMs / 1000.0
+        if secs < 60 {
+            return String(format: "%.0fs", secs)
+        } else if secs < 3600 {
+            return String(format: "%.1fm", secs / 60.0)
+        } else {
+            let hours = secs / 3600.0
+            return String(format: "%.1fh", hours)
+        }
+    }
+    
+    public var formattedCost: String {
+        if let micros = estimatedCreditsMicros, micros > 0 {
+            return String(format: "$%.3f", micros / 1_000_000.0)
+        }
+        return "--"
     }
 }

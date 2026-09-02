@@ -17,6 +17,16 @@ public class OverlayState: ObservableObject {
     @Published public var dockEdge: DockEdge = .right
     @Published public var latestRun: TaskRun? = nil
     
+    // Tab & Explorer State
+    @Published public var activeTab: OverlayTab = .inspector
+    @Published public var inspectedRun: TaskRun? = nil
+    @Published public var historyRuns: [TaskRun] = []
+    @Published public var statsData: TelemetryStats? = nil
+    @Published public var statsDays: Int = 30
+    @Published public var selectedProject: String? = nil
+    @Published public var isTodayOnly: Bool = false
+    @Published public var searchQuery: String = ""
+    
     public weak var windowController: OverlayWindowController?
     
     public init() {}
@@ -48,10 +58,70 @@ public class OverlayState: ObservableObject {
         }
     }
     
+    public func selectTab(_ tab: OverlayTab) {
+        DispatchQueue.main.async {
+            self.activeTab = tab
+            if tab == .history {
+                self.loadHistory()
+            } else if tab == .analytics {
+                self.loadStats()
+            }
+            self.windowController?.updateWindowFrame(animated: true)
+        }
+    }
+    
+    public func inspect(run: TaskRun) {
+        DispatchQueue.main.async {
+            self.inspectedRun = run
+            self.activeTab = .inspector
+            self.windowController?.updateWindowFrame(animated: true)
+        }
+    }
+    
+    public func jumpToLive() {
+        DispatchQueue.main.async {
+            self.inspectedRun = nil
+            self.activeTab = .inspector
+            self.windowController?.updateWindowFrame(animated: true)
+        }
+    }
+    
+    public func loadHistory() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let runs = TelemetryQueryEngine.shared.fetchHistory(
+                limit: 60,
+                project: self.selectedProject,
+                todayOnly: self.isTodayOnly,
+                search: self.searchQuery
+            )
+            DispatchQueue.main.async {
+                self.historyRuns = runs
+            }
+        }
+    }
+    
+    public func loadStats() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let stats = TelemetryQueryEngine.shared.computeStats(
+                days: self.statsDays,
+                project: self.selectedProject
+            )
+            DispatchQueue.main.async {
+                self.statsData = stats
+            }
+        }
+    }
+    
     public func update(run: TaskRun) {
         DispatchQueue.main.async {
             self.latestRun = run
             self.isTaskRunning = run.isRunning
+            // Refresh history/stats if in those tabs
+            if self.activeTab == .history {
+                self.loadHistory()
+            } else if self.activeTab == .analytics {
+                self.loadStats()
+            }
             // Update window frame size if expanded to accommodate new data
             if self.isExpanded {
                 self.windowController?.updateWindowFrame(animated: true)
@@ -72,7 +142,7 @@ public struct OverlayRootView: View {
         ZStack(alignment: .topTrailing) {
             if state.isExpanded {
                 SummaryView(state: state)
-                    .frame(width: 376)
+                    .frame(width: 380)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing)),
@@ -299,7 +369,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         menu.addItem(NSMenuItem.separator())
         
         let consoleItem = NSMenuItem(
-            title: "Open Codex Console",
+            title: "Open FlowPilot Console",
             action: #selector(openConsole),
             keyEquivalent: "t"
         )
@@ -317,7 +387,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         menu.addItem(NSMenuItem.separator())
         
         let quitItem = NSMenuItem(
-            title: "Quit Floating Widget",
+            title: "Quit FlowPilot",
             action: #selector(quitApp),
             keyEquivalent: "q"
         )
@@ -371,7 +441,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var collapseTimer: Timer?
     private var tuckTimer: Timer?
     private let bubbleSize = NSSize(width: 76, height: 76)
-    private let summarySize = NSSize(width: 376, height: 420)
+    private let summarySize = NSSize(width: 380, height: 460)
     
     public init(state: OverlayState) {
         self.state = state

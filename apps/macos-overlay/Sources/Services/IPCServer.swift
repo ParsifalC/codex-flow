@@ -99,7 +99,7 @@ public class IPCService {
         
         private func handleCommand(_ cmd: String) -> String {
             if cmd == "status" {
-                return "{\"running\": true, \"isExpanded\": \(state.isExpanded), \"isPinned\": \(state.isPinned)}\n"
+                return "{\"running\": true, \"isExpanded\": \(state.isExpanded), \"isPinned\": \(state.isPinned), \"activeTab\": \"\(state.activeTab.rawValue)\"}\n"
             } else if cmd == "toggle" {
                 state.toggle()
                 return "{\"ok\": true, \"action\": \"toggle\", \"isExpanded\": \(state.isExpanded)}\n"
@@ -109,6 +109,41 @@ public class IPCService {
             } else if cmd == "collapse" {
                 state.collapse()
                 return "{\"ok\": true, \"action\": \"collapse\"}\n"
+            } else if cmd.hasPrefix("tab") {
+                let target = cmd.dropFirst("tab".count).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if target.contains("hist") {
+                    state.selectTab(.history)
+                    state.expand()
+                    return "{\"ok\": true, \"tab\": \"History\"}\n"
+                } else if target.contains("stat") || target.contains("analyt") {
+                    state.selectTab(.analytics)
+                    state.expand()
+                    return "{\"ok\": true, \"tab\": \"Analytics\"}\n"
+                } else {
+                    state.selectTab(.inspector)
+                    state.expand()
+                    return "{\"ok\": true, \"tab\": \"Inspector\"}\n"
+                }
+            } else if cmd.hasPrefix("show") {
+                let target = cmd.dropFirst("show".count).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let run = TelemetryQueryEngine.shared.fetchRun(identifier: target) {
+                    state.inspect(run: run)
+                    state.expand()
+                    return "{\"ok\": true, \"inspected\": \"\(run.sessionTitle)\"}\n"
+                }
+                return "{\"ok\": false, \"error\": \"run not found for '\(target)'\"}\n"
+            } else if cmd.hasPrefix("stats") {
+                let parts = cmd.dropFirst("stats".count).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let d = Int(parts), d > 0 {
+                    state.statsDays = d
+                }
+                state.selectTab(.analytics)
+                state.expand()
+                return "{\"ok\": true, \"action\": \"showing_stats\", \"days\": \(state.statsDays)}\n"
+            } else if cmd.hasPrefix("history") || cmd.hasPrefix("list") {
+                state.selectTab(.history)
+                state.expand()
+                return "{\"ok\": true, \"action\": \"showing_history\"}\n"
             } else if cmd.hasPrefix("update") {
                 let payload = cmd.dropFirst("update".count).trimmingCharacters(in: .whitespacesAndNewlines)
                 if payload.isEmpty {
