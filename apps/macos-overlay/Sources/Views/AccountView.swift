@@ -1,324 +1,6 @@
 import SwiftUI
 import Foundation
 
-// MARK: - Deterministic account snapshot from Codex app-server
-
-public struct AccountQuotaWindow: Identifiable {
-    public let id: String
-    public let durationMinutes: Int?
-    public let usedPercent: Double?
-    public let resetsAt: Date?
-
-    public var remainingPercent: Double? {
-        guard let usedPercent else { return nil }
-        return max(0, min(100, 100 - usedPercent))
-    }
-
-    public var displayName: String {
-        guard let mins = durationMinutes else { return L("Usage window", "额度窗口") }
-        switch mins {
-        case 300:
-            return L("5 hour limit", "5 小时额度")
-        case 10080:
-            return L("Weekly limit", "每周额度")
-        default:
-            if mins < 60 { return "\(mins)m" }
-            if mins < 1440 { return "\(mins / 60)h" }
-            return "\(mins / 1440)d"
-        }
-    }
-
-    public var compactName: String {
-        guard let mins = durationMinutes else { return "—" }
-        if mins == 300 { return "5h" }
-        if mins == 10080 { return L("Weekly", "每周") }
-        if mins < 60 { return "\(mins)m" }
-        if mins < 1440 { return "\(mins / 60)h" }
-        return "\(mins / 1440)d"
-    }
-}
-
-public struct AccountResetCredit: Identifiable {
-    public let id: String
-    public let status: String?
-    public let expiresAt: Date?
-    public let title: String?
-}
-
-public struct AccountSnapshot {
-    public let accountType: String?
-    public let email: String?
-    public let planType: String?
-    public let requiresOpenAIAuth: Bool?
-    public let quotaWindows: [AccountQuotaWindow]
-    /// Backend `rateLimitResetCredits.availableCount`: available reset credits,
-    /// not a historical count of resets already consumed.
-    public let resetCreditCount: Int?
-    public let resetCredits: [AccountResetCredit]
-    public let hasCredits: Bool?
-    public let unlimitedCredits: Bool?
-    public let creditsBalance: String?
-    public let spendControlReached: Bool?
-    public let rateLimitReachedType: String?
-    public let fetchedAt: Date
-
-    public var fiveHourWindow: AccountQuotaWindow? {
-        quotaWindows.first { $0.durationMinutes == 300 }
-    }
-
-    public var weeklyWindow: AccountQuotaWindow? {
-        quotaWindows.first { $0.durationMinutes == 10080 }
-    }
-
-    public var orderedWindows: [AccountQuotaWindow] {
-        var result: [AccountQuotaWindow] = []
-        if let fiveHourWindow { result.append(fiveHourWindow) }
-        if let weeklyWindow { result.append(weeklyWindow) }
-        let knownIds = Set(result.map(\.id))
-        result.append(contentsOf: quotaWindows.filter { !knownIds.contains($0.id) }.sorted {
-            ($0.durationMinutes ?? Int.max) < ($1.durationMinutes ?? Int.max)
-        })
-        return result
-    }
-
-    public var nearestResetCreditExpiry: Date? {
-        resetCredits.compactMap(\.expiresAt).filter { $0 > Date() }.min()
-    }
-}
-
-private final class AppServerRPC {
-    private struct Pending {
-        let semaphore: DispatchSemaphore
-        var result: [String: Any]?
-    }
-
-    private let process = Process()
-    private let input = Pipe()
-    private let output = Pipe()
-    private let lock = NSLock()
-    private var nextId = 1
-    private var pending: [Int: Pending] = [:]
-    private var buffer = Data()
-    private var started = false
-
-    init() throws {
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["codex", "app-server"]
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            self?.receive(data)
-        }
-
-        try process.run()
-        started = true
-    }
-
-    deinit {
-        close()
-    }
-
-    func initialize() -> Bool {
-        let response = request(
-            method: "initialize",
-            params: [
-                "clientInfo": [
-                    "name": "codex-flow",
-                    "title": "FlowPilot Account",
-                    "version": "1"
-                ],
-                "capabilities": ["experimentalApi": true]
-            ],
-            timeout: 4.0
-        )
-        guard response != nil else { return false }
-        notify(method: "initialized", params: nil)
-        return true
-    }
-
-    func request(method: String, params: [String: Any]?, timeout: TimeInterval = 4.0) -> [String: Any]? {
-        lock.lock()
-        let id = nextId
-        nextId += 1
-        let semaphore = DispatchSemaphore(value: 0)
-        pending[id] = Pending(semaphore: semaphore, result: nil)
-        lock.unlock()
-
-        var payload: [String: Any] = ["id": id, "method": method]
-        if let params { payload["params"] = params }
-        guard send(payload) else {
-            lock.lock()
-            pending.removeValue(forKey: id)
-            lock.unlock()
-            return nil
-        }
-
-        guard semaphore.wait(timeout: .now() + timeout) == .success else {
-            lock.lock()
-            pending.removeValue(forKey: id)
-            lock.unlock()
-            return nil
-        }
-
-        lock.lock()
-        let result = pending.removeValue(forKey: id)?.result
-        lock.unlock()
-        return result
-    }
-
-    func notify(method: String, params: [String: Any]?) {
-        var payload: [String: Any] = ["method": method]
-        if let params { payload["params"] = params }
-        _ = send(payload)
-    }
-
-    func close() {
-        guard started else { return }
-        started = false
-        output.fileHandleForReading.readabilityHandler = nil
-        if process.isRunning {
-            process.terminate()
-        }
-    }
-
-    private func send(_ object: [String: Any]) -> Bool {
-        guard JSONSerialization.isValidJSONObject(object),
-              var data = try? JSONSerialization.data(withJSONObject: object) else { return false }
-        data.append(0x0A)
-        do {
-            try input.fileHandleForWriting.write(contentsOf: data)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    private func receive(_ data: Data) {
-        lock.lock()
-        buffer.append(data)
-        let newline = Data([0x0A])
-        var lines: [Data] = []
-        while let range = buffer.range(of: newline) {
-            lines.append(buffer.subdata(in: buffer.startIndex..<range.lowerBound))
-            buffer.removeSubrange(buffer.startIndex...range.lowerBound)
-        }
-        lock.unlock()
-
-        for line in lines where !line.isEmpty {
-            guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  let idNumber = object["id"] as? NSNumber else { continue }
-            let id = idNumber.intValue
-            let result = object["result"] as? [String: Any]
-
-            lock.lock()
-            if var item = pending[id] {
-                item.result = result
-                pending[id] = item
-                item.semaphore.signal()
-            }
-            lock.unlock()
-        }
-    }
-}
-
-public enum AccountSnapshotService {
-    public static func load() throws -> AccountSnapshot {
-        let rpc = try AppServerRPC()
-        defer { rpc.close() }
-
-        guard rpc.initialize() else {
-            throw NSError(domain: "FlowPilot.Account", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: L("Codex app-server did not respond.", "Codex app-server 未响应。")
-            ])
-        }
-
-        let accountResponse = rpc.request(method: "account/read", params: ["refreshToken": false])
-        let limitsResponse = rpc.request(method: "account/rateLimits/read", params: nil)
-
-        guard accountResponse != nil || limitsResponse != nil else {
-            throw NSError(domain: "FlowPilot.Account", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: L("Account data is unavailable from Codex.", "Codex 暂未返回账户数据。")
-            ])
-        }
-
-        let account = accountResponse?["account"] as? [String: Any]
-        let requiresAuth = (accountResponse?["requiresOpenaiAuth"] as? NSNumber)?.boolValue
-
-        let fallbackSnapshot = limitsResponse?["rateLimits"] as? [String: Any]
-        let byId = limitsResponse?["rateLimitsByLimitId"] as? [String: Any]
-        let codexSnapshot = (byId?["codex"] as? [String: Any]) ?? fallbackSnapshot ?? [:]
-
-        var windows: [AccountQuotaWindow] = []
-        for slot in ["primary", "secondary"] {
-            guard let raw = codexSnapshot[slot] as? [String: Any] else { continue }
-            let duration = intValue(raw["windowDurationMins"] ?? raw["windowMinutes"])
-            let used = doubleValue(raw["usedPercent"])
-            let reset = dateValue(raw["resetsAt"])
-            windows.append(AccountQuotaWindow(
-                id: "\(slot)-\(duration ?? 0)",
-                durationMinutes: duration,
-                usedPercent: used,
-                resetsAt: reset
-            ))
-        }
-
-        let resetSummary = limitsResponse?["rateLimitResetCredits"] as? [String: Any]
-        let resetCount = intValue(resetSummary?["availableCount"])
-        let rawCredits = resetSummary?["credits"] as? [[String: Any]] ?? []
-        let resetCredits = rawCredits.compactMap { raw -> AccountResetCredit? in
-            guard let id = raw["id"] as? String else { return nil }
-            return AccountResetCredit(
-                id: id,
-                status: raw["status"] as? String,
-                expiresAt: dateValue(raw["expiresAt"]),
-                title: raw["title"] as? String
-            )
-        }
-
-        let credits = codexSnapshot["credits"] as? [String: Any]
-        let plan = (account?["planType"] as? String) ?? (codexSnapshot["planType"] as? String)
-
-        return AccountSnapshot(
-            accountType: account?["type"] as? String,
-            email: account?["email"] as? String,
-            planType: plan,
-            requiresOpenAIAuth: requiresAuth,
-            quotaWindows: windows,
-            resetCreditCount: resetCount,
-            resetCredits: resetCredits,
-            hasCredits: (credits?["hasCredits"] as? NSNumber)?.boolValue,
-            unlimitedCredits: (credits?["unlimited"] as? NSNumber)?.boolValue,
-            creditsBalance: credits?["balance"] as? String,
-            spendControlReached: (codexSnapshot["spendControlReached"] as? NSNumber)?.boolValue,
-            rateLimitReachedType: codexSnapshot["rateLimitReachedType"] as? String,
-            fetchedAt: Date()
-        )
-    }
-
-    private static func intValue(_ value: Any?) -> Int? {
-        if let number = value as? NSNumber { return number.intValue }
-        if let value = value as? String { return Int(value) }
-        return nil
-    }
-
-    private static func doubleValue(_ value: Any?) -> Double? {
-        if let number = value as? NSNumber { return number.doubleValue }
-        if let value = value as? String { return Double(value) }
-        return nil
-    }
-
-    private static func dateValue(_ value: Any?) -> Date? {
-        guard let raw = doubleValue(value), raw > 0 else { return nil }
-        return Date(timeIntervalSince1970: raw > 1_000_000_000_000 ? raw / 1000.0 : raw)
-    }
-}
-
-// MARK: - Account UI
-
 public struct AccountView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
@@ -336,6 +18,7 @@ public struct AccountView: View {
     public var body: some View {
         let content = VStack(spacing: 9) {
             accountHeader
+            StrategyModeCard()
 
             if isLoading && snapshot == nil {
                 loadingState
@@ -360,9 +43,7 @@ public struct AccountView: View {
                 .frame(maxHeight: 390)
             }
         }
-        .onAppear {
-            refresh()
-        }
+        .onAppear(perform: refresh)
     }
 
     private var accountHeader: some View {
@@ -374,7 +55,7 @@ public struct AccountView: View {
                 Text(L("Account & Limits", "账户与额度"))
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
-                Text(L("Live data from Codex app-server", "数据直接来自 Codex app-server"))
+                Text(L("Account data from Codex · strategy from FlowPilot policy", "账户数据来自 Codex · 策略来自 FlowPilot 配置"))
                     .font(.system(size: 8.5, weight: .regular))
                     .foregroundColor(.white.opacity(0.45))
             }
@@ -395,13 +76,12 @@ public struct AccountView: View {
 
     private var loadingState: some View {
         VStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
+            ProgressView().controlSize(.small)
             Text(L("Reading account status…", "正在读取账户状态…"))
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.55))
         }
-        .frame(maxWidth: .infinity, minHeight: 180)
+        .frame(maxWidth: .infinity, minHeight: 120)
     }
 
     private var unavailableState: some View {
@@ -419,7 +99,7 @@ public struct AccountView: View {
                 .multilineTextAlignment(.center)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 180)
+        .frame(maxWidth: .infinity, minHeight: 120)
         .background(cardBackground)
     }
 
@@ -447,7 +127,7 @@ public struct AccountView: View {
                 if let email = value.email, !email.isEmpty {
                     HoverRevealText(
                         email,
-                        font: .system(size: 8.5, weight: .regular),
+                        font: .system(size: 8.5),
                         foregroundColor: .white.opacity(0.48),
                         lineLimit: 1,
                         privacyBlur: state.isPrivacyMode,
@@ -500,28 +180,23 @@ public struct AccountView: View {
                     .font(.system(size: 9, weight: .heavy, design: .monospaced))
                     .foregroundColor(accent)
                     .frame(width: 48, alignment: .leading)
-
                 Text(window.displayName)
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundColor(.white.opacity(0.72))
-
                 Spacer()
-
                 if let remaining {
                     Text(String(format: L("%.0f%% left", "剩余 %.0f%%"), remaining))
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(accent)
                 } else {
-                    Text("—")
-                        .foregroundColor(.white.opacity(0.35))
+                    Text("—").foregroundColor(.white.opacity(0.35))
                 }
             }
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.08))
-                    Capsule()
-                        .fill(accent)
+                    Capsule().fill(accent)
                         .frame(width: proxy.size.width * CGFloat(used / 100.0))
                 }
             }
@@ -549,7 +224,7 @@ public struct AccountView: View {
                     .foregroundColor(.white.opacity(0.42))
                 Text(value.resetCreditCount.map(String.init) ?? "—")
                     .font(.system(size: 15, weight: .heavy, design: .rounded))
-                    .foregroundColor(value.resetCreditCount ?? 0 > 0 ? .cyan : .white.opacity(0.8))
+                    .foregroundColor((value.resetCreditCount ?? 0) > 0 ? .cyan : .white.opacity(0.8))
             }
 
             Divider().frame(height: 30).overlay(Color.white.opacity(0.08))
@@ -562,7 +237,6 @@ public struct AccountView: View {
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.75))
             }
-
             Spacer()
         }
         .padding(9)
@@ -573,7 +247,7 @@ public struct AccountView: View {
         VStack(spacing: 5) {
             factRow(L("Credits", "Credits"), creditsDisplay(value))
             factRow(L("Rate limit state", "限额状态"), rateLimitStateDisplay(value))
-            factRow(L("Spend control", "消费控制"), spendControlDisplay(value.spendControlReached))
+            factRow(L("Spend control", "消费控制"), booleanStatus(value.spendControlReached, trueText: L("Reached", "已触发"), falseText: L("Normal", "正常")))
             factRow(L("OpenAI auth", "OpenAI 认证"), booleanStatus(value.requiresOpenAIAuth, trueText: L("Required", "需要"), falseText: L("Not required", "不需要")))
             factRow(L("Last refreshed", "最后刷新"), formatAccountDate(value.fetchedAt))
         }
@@ -666,22 +340,8 @@ public struct AccountView: View {
         return state.replacingOccurrences(of: "_", with: " ")
     }
 
-    private func spendControlDisplay(_ value: Bool?) -> String {
-        booleanStatus(value, trueText: L("Reached", "已触发"), falseText: L("Normal", "正常"))
-    }
-
     private func booleanStatus(_ value: Bool?, trueText: String, falseText: String) -> String {
         guard let value else { return L("Not reported", "未返回") }
         return value ? trueText : falseText
     }
-}
-
-public func formatAccountDate(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale.current
-    formatter.timeZone = TimeZone.current
-    let currentYear = Calendar.current.component(.year, from: Date())
-    let targetYear = Calendar.current.component(.year, from: date)
-    formatter.dateFormat = currentYear == targetYear ? "MM-dd HH:mm" : "yyyy-MM-dd HH:mm"
-    return formatter.string(from: date)
 }
