@@ -4,7 +4,7 @@
 
 **智能、高效、自适应的 Codex 多 Agent 协同编排引擎**
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg?style=flat-square)](VERSION)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg?style=flat-square)](VERSION)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-快速安装)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.md)
