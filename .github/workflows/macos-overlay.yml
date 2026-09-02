@@ -24,39 +24,72 @@ jobs:
           export CODEX_HOME="$RUNNER_TEMP/flowpilot-smoke-codex-home"
           mkdir -p "$CODEX_HOME"
           BIN="$GITHUB_WORKSPACE/apps/macos-overlay/bin/FlowPilot"
-          LOG="$RUNNER_TEMP/flowpilot-smoke.log"
+          LOG1="$RUNNER_TEMP/flowpilot-smoke-1.log"
+          LOG2="$RUNNER_TEMP/flowpilot-smoke-2.log"
+
+          status_pid() {
+            local json
+            json="$("$BIN" status --json 2>/dev/null || true)"
+            printf '%s\n' "$json" | sed -nE 's/.*"pid"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p'
+          }
+
+          wait_for_pid() {
+            local expected="$1"
+            for _ in {1..50}; do
+              if [[ "$(status_pid)" == "$expected" ]]; then
+                return 0
+              fi
+              sleep 0.1
+            done
+            return 1
+          }
 
           "$BIN" autostart status --json
-          "$BIN" start >"$LOG" 2>&1 &
-          START_PID=$!
 
-          running=0
+          "$BIN" start >"$LOG1" 2>&1 &
+          START1_PID=$!
+          if ! wait_for_pid "$START1_PID"; then
+            echo "First FlowPilot instance failed to own IPC" >&2
+            cat "$LOG1" >&2 || true
+            kill "$START1_PID" 2>/dev/null || true
+            exit 1
+          fi
+
+          # Starting again exercises the real single-instance restart path. The
+          # status endpoint must transition to the new PID rather than allowing
+          # the old instance to create a false-positive startup result.
+          "$BIN" start >"$LOG2" 2>&1 &
+          START2_PID=$!
+          if ! wait_for_pid "$START2_PID"; then
+            echo "Replacement FlowPilot instance failed to take IPC ownership" >&2
+            echo "--- first instance log ---" >&2
+            cat "$LOG1" >&2 || true
+            echo "--- replacement log ---" >&2
+            cat "$LOG2" >&2 || true
+            kill "$START1_PID" "$START2_PID" 2>/dev/null || true
+            exit 1
+          fi
+
           for _ in {1..30}; do
-            if "$BIN" status >/dev/null 2>&1; then
-              running=1
+            if ! kill -0 "$START1_PID" 2>/dev/null; then
               break
             fi
-            if ! kill -0 "$START_PID" 2>/dev/null; then
-              break
-            fi
-            sleep 0.2
+            sleep 0.1
           done
-
-          if [[ "$running" != "1" ]]; then
-            echo "FlowPilot failed to become reachable over IPC" >&2
-            cat "$LOG" >&2 || true
-            wait "$START_PID" || true
+          if kill -0 "$START1_PID" 2>/dev/null; then
+            echo "Previous FlowPilot instance survived restart handover" >&2
+            kill "$START1_PID" "$START2_PID" 2>/dev/null || true
             exit 1
           fi
 
           "$BIN" stop >/dev/null 2>&1 || true
-          for _ in {1..20}; do
-            if ! kill -0 "$START_PID" 2>/dev/null; then
+          for _ in {1..30}; do
+            if ! kill -0 "$START2_PID" 2>/dev/null; then
               exit 0
             fi
             sleep 0.1
           done
 
-          echo "FlowPilot did not terminate after stop" >&2
-          kill "$START_PID" 2>/dev/null || true
+          echo "FlowPilot replacement did not terminate after stop" >&2
+          kill "$START2_PID" 2>/dev/null || true
           exit 1
