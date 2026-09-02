@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 
 function New-Utf8NoBomEncoding { return New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false }
 function Read-Utf8NoBom([string]$Path) { return [System.IO.File]::ReadAllText($Path, (New-Utf8NoBomEncoding)) }
@@ -72,6 +72,13 @@ switch ($cmd) {
         exit $LASTEXITCODE
     }
     'usage' {
+        $telemetry = Get-ScriptPath 'telemetry.py'
+        if (-not $telemetry) { throw (L 'telemetry collector not installed; reinstall codex-flow' '遥测组件未安装，请重新安装 codex-flow') }
+        [string[]]$usageArgs = if ($rest.Count -eq 0) { @('last') } else { $rest }
+        & python3 $telemetry @usageArgs
+        exit $LASTEXITCODE
+    }
+    'telemetry' {
         $telemetry = Get-ScriptPath 'telemetry.py'
         if (-not $telemetry) { throw (L 'telemetry collector not installed; reinstall codex-flow' '遥测组件未安装，请重新安装 codex-flow') }
         [string[]]$usageArgs = if ($rest.Count -eq 0) { @('last') } else { $rest }
