@@ -109,6 +109,23 @@ codex-flow usage stats -d 30
 codex-flow usage stats -p my-project -d 7
 ```
 
+### 5. 历史遥测数据回填与修复
+针对已有的历史运行记录（`~/.codex/codex-flow/telemetry/runs/*.json`），批量补齐可恢复字段（Skills、Tools、执行轨迹、命令日志、任务总结及元数据富化）：
+
+```bash
+# 演练预览（仅扫描与统计，不修改任何文件）
+codex-flow telemetry repair --dry-run
+
+# 执行正式回填修复（幂等执行，仅补缺失字段，原子写入）
+codex-flow telemetry repair
+```
+
+**可恢复性判定原则**：
+- **不覆盖**：仅回填缺失字段，绝不覆盖已有有效数据。
+- **不猜测**：Quota Delta 仅在 `quota_before` 与 `quota_after` 均已保存时计算回填；若缺少任意一侧则视为信息已丢失，不估算、不倒推。
+- **幂等性**：重复执行时显示 `repaired: 0`。
+- **状态同步**：若修复的 run 对应当前的最新任务，同步原子更新 `last.json`。
+
 ---
 
 ## 日志存储与生命周期

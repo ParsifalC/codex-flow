@@ -24,9 +24,12 @@ from telemetry_core import (
     extract_transcript_insights,
     fmt_duration_ms,
     fmt_tokens,
+    format_repair_summary,
     iter_run_files,
     numeric_ms,
     read_json_object,
+    repair_history,
+    repair_run,
     run_context,
     show_last,
     show_list,
@@ -229,6 +232,13 @@ def main() -> int:
                 else:
                     i += 1
             return show_stats(project=project, days=days, as_json=as_json)
+        if cmd == "repair":
+            dry_run = "--dry-run" in args[1:]
+            as_json = "--json" in args[1:]
+            stats = repair_history(dry_run=dry_run, verbose=not as_json)
+            if as_json:
+                print(json.dumps(stats, indent=2))
+            return 0
         if not cmd.startswith("-"):
             return show_run(cmd, as_json="--json" in args[1:])
 

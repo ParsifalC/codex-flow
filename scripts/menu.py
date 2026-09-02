@@ -212,6 +212,7 @@ def handle_show_history() -> None:
         print(f"  [{style.CYAN}p{style.RESET}] {T('Filter by project', '按项目名称过滤')} ({T('current', '当前')}: {current_project})")
         print(f"  [{style.CYAN}t{style.RESET}] {T('Toggle today only', '切换仅看今天')} ({T('current', '当前')}: {T('yes', '是') if today else T('no', '否')})")
         print(f"  [{style.CYAN}s{style.RESET}] {T('Project aggregate stats', '查看项目聚合统计')} (Stats)")
+        print(f"  [{style.CYAN}x{style.RESET}] {T('Repair history telemetry', '回填修复历史遥测')} (Repair)")
         print(f"  [{style.CYAN}r{style.RESET}] {T('Refresh', '刷新列表')}")
         print(f"  [{style.CYAN}0{style.RESET}] {T('Back to main menu', '返回主菜单')}")
         try:
@@ -221,6 +222,9 @@ def handle_show_history() -> None:
         if choice in ("0", "q", "exit", "back"):
             break
         if choice == "r":
+            continue
+        if choice.lower() in ("x", "repair"):
+            handle_repair_history()
             continue
         if choice == "t":
             today = not today
@@ -484,6 +488,30 @@ def handle_manage_overlay() -> None:
             pause_prompt()
 
 
+def handle_repair_history() -> None:
+    print(f"\n{style.BOLD}🛠️  {T('Telemetry History Repair & Backfill', '历史遥测数据修复与回填')}:{style.RESET}")
+    print(f"  [{style.CYAN}1{style.RESET}] 🔍 {T('Dry-Run (scan and stats without modifying files)', '演练模式 (仅扫描统计，不修改任何文件)')}")
+    print(f"  [{style.CYAN}2{style.RESET}] ✍️  {T('Repair (backfill missing fields and write atomically)', '正式回填 (补齐缺失字段并原子写入)')}")
+    print(f"  [{style.CYAN}0{style.RESET}] 🔙 {T('Back to main menu', '返回主菜单')}")
+    try:
+        choice = input(f"\n{style.CYAN}{T('Select mode [1-2/0]', '请选择模式 [1-2/0]')}: {style.RESET}").strip()
+    except (KeyboardInterrupt, EOFError):
+        return
+    if choice in ("0", "q", "exit", "back", ""):
+        return
+    if choice == "1":
+        print()
+        telemetry.repair_history(dry_run=True, verbose=True)
+        pause_prompt()
+    elif choice == "2":
+        print()
+        telemetry.repair_history(dry_run=False, verbose=True)
+        pause_prompt()
+    else:
+        print(f"{style.RED}❌ {T('Invalid option', '无效选项')}{style.RESET}")
+        pause_prompt()
+
+
 def main_menu() -> int:
     version = get_version()
     while True:
@@ -497,12 +525,13 @@ def main_menu() -> int:
             ("6", T("🩺 Diagnostics", "🩺 运行系统诊断检查"), "doctor"),
             ("7", T("⚡ Local quick Benchmark", "⚡ 本地快速 Benchmark"), "benchmark-local quick"),
             ("8", T("🔄 Check and pull updates", "🔄 检查与拉取更新"), "update"),
+            ("9", T("🛠️ Repair telemetry history", "🛠️ 修复历史遥测数据"), "telemetry repair"),
         ]
         for key, label, command in items:
             print(f"  [{style.CYAN}{key}{style.RESET}] {label} {style.DIM}({command}){style.RESET}")
         print(f"  [{style.CYAN}0{style.RESET}] 🚪 {T('Exit', '退出')}\n")
         try:
-            choice = input(f"{style.CYAN}{T('Enter option [0-8]', '请输入选项 [0-8]')}: {style.RESET}").strip()
+            choice = input(f"{style.CYAN}{T('Enter option [0-9]', '请输入选项 [0-9]')}: {style.RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n" + T("👋 Exited codex-flow console.", "👋 已退出 codex-flow 控制台。"))
             return 0
@@ -518,12 +547,13 @@ def main_menu() -> int:
             "6": handle_run_doctor,
             "7": handle_run_benchmark,
             "8": handle_update,
+            "9": handle_repair_history,
         }
         handler = handlers.get(choice)
         if handler:
             handler()
         else:
-            print(f"{style.RED}❌ {T('Invalid option; enter 0-8', '无效选项，请输入 0-8')}{style.RESET}")
+            print(f"{style.RED}❌ {T('Invalid option; enter 0-9', '无效选项，请输入 0-9')}{style.RESET}")
             pause_prompt()
     return 0
 

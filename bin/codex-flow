@@ -76,7 +76,7 @@ case "$cmd" in
     [[ -f "$strategy_script" ]] || fail "$(cf_t 'strategy runtime is missing; reinstall codex-flow' '策略运行时缺失，请重新安装 codex-flow')"
     exec python3 "$strategy_script" --policy "$POLICY" "$@"
     ;;
-  usage)
+  usage|telemetry)
     shift
     telemetry_script="$(script_path telemetry.py 2>/dev/null || true)"
     [[ -f "$telemetry_script" ]] || fail "$(cf_t 'telemetry collector not installed; reinstall codex-flow' '遥测组件未安装，请重新安装 codex-flow')"
