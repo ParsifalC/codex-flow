@@ -55,6 +55,25 @@ public struct StrategyModeSnapshot {
     public let profiles: [StrategyProfileInfo]
 }
 
+private final class StrategyCommandCapture {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func string() -> String {
+        lock.lock()
+        let snapshot = data
+        lock.unlock()
+        return String(data: snapshot, encoding: .utf8) ?? ""
+    }
+}
+
 public enum StrategyModeService {
     public static func load() throws -> StrategyModeSnapshot {
         // `strategy show` deliberately returns 2 when the stored value is invalid.
@@ -134,13 +153,47 @@ public enum StrategyModeService {
             process.arguments = ["codex-flow"] + arguments
         }
 
+        let stdoutCapture = StrategyCommandCapture()
+        let stderrCapture = StrategyCommandCapture()
+        let stdoutEOF = DispatchSemaphore(value: 0)
+        let stderrEOF = DispatchSemaphore(value: 0)
+
         process.standardOutput = output
         process.standardError = error
+        output.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                stdoutEOF.signal()
+            } else {
+                stdoutCapture.append(data)
+            }
+        }
+        error.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                stderrEOF.signal()
+            } else {
+                stderrCapture.append(data)
+            }
+        }
+        defer {
+            output.fileHandleForReading.readabilityHandler = nil
+            error.fileHandleForReading.readabilityHandler = nil
+        }
+
         try process.run()
         process.waitUntilExit()
 
-        let stdout = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderr = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        // stdout/stderr are drained concurrently while the process runs, so a
+        // verbose child cannot fill a pipe and deadlock waitUntilExit(). Give
+        // the EOF callbacks a bounded moment to flush their final chunks.
+        _ = stdoutEOF.wait(timeout: .now() + 1.0)
+        _ = stderrEOF.wait(timeout: .now() + 1.0)
+
+        let stdout = stdoutCapture.string()
+        let stderr = stderrCapture.string()
         guard acceptedExitCodes.contains(process.terminationStatus) else {
             let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             throw serviceError(detail.isEmpty
@@ -338,7 +391,8 @@ public struct StrategyModeCard: View {
                     snapshot = verified
                     applyingProfile = nil
                     isError = false
-                    message = L("Global strategy switched to \(profile).", "全局策略已切换为 \(profile)。")
+                    let displayName = verified.profiles.first(where: { $0.name == profile })?.localizedName ?? profile
+                    message = L("Global strategy switched to \(displayName).", "全局策略已切换为 \(displayName)。")
                 }
             } catch {
                 DispatchQueue.main.async {
