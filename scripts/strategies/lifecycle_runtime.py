@@ -4,8 +4,8 @@
 This module is copied automatically with the strategy package by both Unix and
 Windows installers. It turns observable Worker facts plus an ExecutionPlan
 StagePolicy into a deterministic lifecycle decision. Semantic scope overlap
-remains a Parent responsibility; timing/state transitions and writable
-replacement fencing do not.
+remains a Parent responsibility; timing/state transitions, cancellation
+requirements, and writable replacement fencing do not.
 """
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
-TERMINAL_STATES = {"completed", "failed", "cancelled"}
 FALLBACK_ACTIONS = {
     "continue_partial": "continue_partial",
     "parent_delta": "parent_delta",
@@ -48,13 +47,16 @@ class LifecyclePolicy:
         missing = required.difference(value)
         if missing:
             raise ValueError(f"stage policy missing fields: {sorted(missing)}")
+        for key in ("cancel_if_superseded", "cancel_stragglers_after_quorum"):
+            if not isinstance(value[key], bool):
+                raise ValueError(f"{key} must be boolean")
         policy = cls(
             join_policy=str(value["join_policy"]),
             min_successful_workers=int(value["min_successful_workers"]),
             idle_timeout_seconds=float(value["idle_timeout_seconds"]),
             hard_timeout_seconds=float(value["hard_timeout_seconds"]),
-            cancel_if_superseded=bool(value["cancel_if_superseded"]),
-            cancel_stragglers_after_quorum=bool(value["cancel_stragglers_after_quorum"]),
+            cancel_if_superseded=value["cancel_if_superseded"],
+            cancel_stragglers_after_quorum=value["cancel_stragglers_after_quorum"],
             fallback_policy=str(value["fallback_policy"]),
         )
         policy.validate()
@@ -105,6 +107,8 @@ class WorkerObservation:
             raise ValueError("now cannot precede started_at")
         if self.terminal_success and self.terminal_failure:
             raise ValueError("worker cannot be both terminal-success and terminal-failure")
+        if self.cancel_confirmed and (self.terminal_success or self.terminal_failure):
+            raise ValueError("cancel_confirmed cannot be combined with another terminal state")
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,7 @@ class LifecycleDecision:
     state: str
     action: str
     reason: str
+    cancel_required: bool
     replacement_allowed: bool
     fence_required: bool
     idle_seconds: float
@@ -131,6 +136,7 @@ def _fallback_decision(
     terminal: bool,
 ) -> LifecycleDecision:
     fallback = FALLBACK_ACTIONS[policy.fallback_policy]
+    cancel_required = not terminal
     fence_required = (
         observation.stage == "implementation"
         and observation.writable
@@ -149,10 +155,13 @@ def _fallback_decision(
         replacement_allowed = fallback == "replan" and (terminal or observation.replacement_isolated)
         if fence_required and observation.replacement_isolated and not terminal:
             reason += "; replacement is explicitly isolated and old output is fenced from integration"
+    if cancel_required:
+        reason += "; non-terminal Worker cancellation is required"
     return LifecycleDecision(
         state=state,
         action=action,
         reason=reason,
+        cancel_required=cancel_required,
         replacement_allowed=replacement_allowed,
         fence_required=fence_required,
         idle_seconds=max(0.0, observation.now - observation.last_progress_at),
@@ -174,6 +183,7 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
             state="completed",
             action="consume_result",
             reason="worker reported terminal success",
+            cancel_required=False,
             replacement_allowed=False,
             fence_required=False,
             idle_seconds=idle,
@@ -203,7 +213,8 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
         return LifecycleDecision(
             state="superseded",
             action="request_cancel",
-            reason="bounded scope is already covered with equivalent evidence",
+            reason="bounded scope is already covered with equivalent evidence; non-terminal Worker cancellation is required",
+            cancel_required=True,
             replacement_allowed=False,
             fence_required=observation.stage == "implementation" and observation.writable,
             idle_seconds=idle,
@@ -233,6 +244,7 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
         state="progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running",
         action="continue",
         reason="worker remains non-terminal with an active progress lease",
+        cancel_required=False,
         replacement_allowed=False,
         fence_required=False,
         idle_seconds=idle,
