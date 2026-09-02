@@ -36,7 +36,7 @@ manifest="$TMP_DIR/codex-flow-update.json"
 say "→ Resolving latest codex-flow release for $platform"
 curl -fL --retry 3 --connect-timeout 15 "$manifest_url" -o "$manifest"
 
-readarray -t artifact_info < <(python3 - "$manifest" "$platform" <<'PY'
+IFS=$'\t' read -r version artifact_url expected_sha archive_format < <(python3 - "$manifest" "$platform" <<'PY'
 import json, sys
 from pathlib import Path
 manifest_path, platform = Path(sys.argv[1]), sys.argv[2]
@@ -49,18 +49,16 @@ if not artifact:
 for key in ("url", "sha256", "format"):
     if not artifact.get(key):
         raise SystemExit(f"artifact is missing {key}")
-print(data.get("version") or "unknown")
-print(artifact["url"])
-print(artifact["sha256"].lower())
-print(artifact["format"])
+print("\t".join((
+    data.get("version") or "unknown",
+    artifact["url"],
+    artifact["sha256"].lower(),
+    artifact["format"],
+)))
 PY
 )
 
-[[ ${#artifact_info[@]} -eq 4 ]] || fail "invalid release manifest"
-version="${artifact_info[0]}"
-artifact_url="${artifact_info[1]}"
-expected_sha="${artifact_info[2]}"
-archive_format="${artifact_info[3]}"
+[[ -n "${version:-}" && -n "${artifact_url:-}" && -n "${expected_sha:-}" && -n "${archive_format:-}" ]] || fail "invalid release manifest"
 
 case "$archive_format" in
   tar.gz) archive="$TMP_DIR/codex-flow.tar.gz" ;;
