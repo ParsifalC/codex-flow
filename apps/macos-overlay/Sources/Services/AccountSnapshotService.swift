@@ -336,11 +336,5 @@ public enum AccountSnapshotService {
 }
 
 public func formatAccountDate(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale.current
-    formatter.timeZone = TimeZone.current
-    let currentYear = Calendar.current.component(.year, from: Date())
-    let targetYear = Calendar.current.component(.year, from: date)
-    formatter.dateFormat = currentYear == targetYear ? "MM-dd HH:mm" : "yyyy-MM-dd HH:mm"
-    return formatter.string(from: date)
+    formatLocalDateTime(date)
 }
