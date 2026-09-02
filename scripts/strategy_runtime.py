@@ -12,14 +12,14 @@ import argparse
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable
 
 from strategies import all_specs as all_strategy_specs
 from strategies import get as get_strategy
 from strategies import names as strategy_names
-from strategies.base import WorkerBudget
+from strategies.base import StagePolicy, WorkerBudget
 
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 DEFAULT_POLICY = CODEX_HOME / "codex-flow.toml"
@@ -37,6 +37,12 @@ QUALITY_INTENTS = ("normal", "strong", "absolute")
 REVIEW_MODES = ("auto", "standard", "strict")
 FANOUT_MODES = ("auto", "conservative", "aggressive")
 EFFORT_RANK = {name: idx for idx, name in enumerate(EFFORTS)}
+
+# Lifecycle preferences belong to strategies, but no strategy may wait forever.
+# These hard ceilings are deliberately not user-tunable in v1; later telemetry can
+# inform configurable/predictive limits without weakening the safety boundary.
+RUNTIME_MAX_WORKER_IDLE_SECONDS = 600
+RUNTIME_MAX_WORKER_WALL_SECONDS = 3600
 
 
 def _release_defaults_path() -> Path:
@@ -195,6 +201,9 @@ class ExecutionPlan:
     implementation_workers: int
     reviewer_workers: int
     planned_worker_count: int
+    exploration_stage: StagePolicy | None
+    implementation_stage: StagePolicy | None
+    review_stage: StagePolicy | None
     review_mode: str
     max_repair_cycles: int
     max_concurrent_threads: int
@@ -533,6 +542,51 @@ def _fit_total_worker_budget(
     return exploration_workers, implementation_workers, reviewer_workers
 
 
+def _bounded_stage_policy(
+    spec,
+    task: TaskProfile,
+    stage: str,
+    worker_count: int,
+    modifiers: Modifiers,
+) -> StagePolicy | None:
+    """Normalize one strategy lifecycle policy against actual topology and Runtime ceilings."""
+    if worker_count <= 0:
+        return None
+
+    policy = spec.lifecycle(task, stage)
+    policy.validate()
+
+    hard_timeout = min(policy.hard_timeout_seconds, RUNTIME_MAX_WORKER_WALL_SECONDS)
+    idle_timeout = min(policy.idle_timeout_seconds, RUNTIME_MAX_WORKER_IDLE_SECONDS, hard_timeout)
+    if policy.join_policy == "opportunistic":
+        minimum = 0
+    else:
+        minimum = max(1, min(worker_count, policy.min_successful_workers))
+
+    bounded = replace(
+        policy,
+        min_successful_workers=minimum,
+        idle_timeout_seconds=idle_timeout,
+        hard_timeout_seconds=hard_timeout,
+    )
+
+    # strict is a generic modifier contract: requested independent review must
+    # actually reach a terminal result instead of being silently replaced by
+    # Parent review or quorum-based straggler cancellation.
+    if stage == "review" and modifiers.review == "strict":
+        bounded = replace(
+            bounded,
+            join_policy="required",
+            min_successful_workers=worker_count,
+            cancel_if_superseded=False,
+            cancel_stragglers_after_quorum=False,
+            fallback_policy="replan",
+        )
+
+    bounded.validate()
+    return bounded
+
+
 def compile_plan(
     task: TaskProfile,
     *,
@@ -700,9 +754,13 @@ def compile_plan(
             reviewer_model = None
             reviewer_reasoning = None
 
+    exploration_stage = _bounded_stage_policy(spec, task, "exploration", exploration_workers, modifiers)
+    implementation_stage = _bounded_stage_policy(spec, task, "implementation", implementation_workers, modifiers)
+    review_stage = _bounded_stage_policy(spec, task, "review", reviewer_workers, modifiers)
+
     planned_worker_count = exploration_workers + implementation_workers + reviewer_workers
     return ExecutionPlan(
-        schema_version=7,
+        schema_version=8,
         strategy=strategy,
         routing=route,
         review_modifier=modifiers.review,
@@ -725,6 +783,9 @@ def compile_plan(
         implementation_workers=implementation_workers,
         reviewer_workers=reviewer_workers,
         planned_worker_count=planned_worker_count,
+        exploration_stage=exploration_stage,
+        implementation_stage=implementation_stage,
+        review_stage=review_stage,
         review_mode=review_mode,
         max_repair_cycles=repair_cycles,
         max_concurrent_threads=concurrency,

@@ -1,7 +1,7 @@
 """Correctness- and verification-first strategy."""
 from __future__ import annotations
 
-from .base import WorkerBudget, StrategySpec, small_low_risk_is_direct, standard_effort
+from .base import StagePolicy, StrategySpec, WorkerBudget, small_low_risk_is_direct, standard_effort
 
 
 def adaptive_route(task) -> str:
@@ -80,6 +80,16 @@ def notes(task) -> tuple[str, ...]:
     return ()
 
 
+def lifecycle(_task, stage: str) -> StagePolicy:
+    if stage == "exploration":
+        return StagePolicy("quorum", 2, 300, 2400, True, False, "parent_delta")
+    if stage == "implementation":
+        return StagePolicy("required", 1, 300, 3600, False, False, "replan")
+    if stage == "review":
+        return StagePolicy("required", 2, 300, 3000, False, False, "replan")
+    raise ValueError(f"invalid lifecycle stage: {stage}")
+
+
 STRATEGY = StrategySpec(
     name="quality",
     description="maximize correctness through deep reasoning, scalable verification, and role-scoped parent-class capability",
@@ -91,5 +101,6 @@ STRATEGY = StrategySpec(
     exploration_bonus=exploration_bonus,
     reviewer_bonus=reviewer_bonus,
     notes=notes,
+    lifecycle=lifecycle,
     allow_parallel_write=True,
 )

@@ -1,7 +1,7 @@
 """Balanced quality/quota/latency strategy."""
 from __future__ import annotations
 
-from .base import WorkerBudget, StrategySpec, never, small_low_risk_is_direct, standard_effort
+from .base import StagePolicy, StrategySpec, WorkerBudget, never, small_low_risk_is_direct, standard_effort
 
 
 def adaptive_route(task) -> str:
@@ -18,6 +18,16 @@ def worker_budget(task) -> WorkerBudget:
     return WorkerBudget(2, 2, 1, 4, "medium")
 
 
+def lifecycle(_task, stage: str) -> StagePolicy:
+    if stage == "exploration":
+        return StagePolicy("quorum", 1, 180, 1200, True, True, "parent_delta")
+    if stage == "implementation":
+        return StagePolicy("required", 1, 240, 2400, False, False, "replan")
+    if stage == "review":
+        return StagePolicy("required", 1, 180, 1800, True, False, "parent_delta")
+    raise ValueError(f"invalid lifecycle stage: {stage}")
+
+
 STRATEGY = StrategySpec(
     name="balanced",
     description="balance quality, quota consumption, and latency with moderate safe worker fan-out",
@@ -25,6 +35,7 @@ STRATEGY = StrategySpec(
     effort=standard_effort,
     worker_budget=worker_budget,
     independent_review=never,
+    lifecycle=lifecycle,
     allow_parallel_write=True,
     quota_sensitive=True,
 )

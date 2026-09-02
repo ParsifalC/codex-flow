@@ -1,6 +1,6 @@
 ---
 name: flow-pilot
-description: Profile non-trivial technical work, compile a deterministic ExecutionPlan through the codex-flow strategy runtime, then execute parent/worker/review/repair exactly from that plan while honoring current-task and repository policy.
+description: Profile non-trivial technical work, compile a deterministic ExecutionPlan through the codex-flow strategy runtime, then execute parent/worker/review/repair and asynchronous worker lifecycle exactly from that plan while honoring current-task and repository policy.
 ---
 
 # FlowPilot Strategy Runtime
@@ -11,7 +11,7 @@ The invariant is:
 
 > **FlowPilot profiles. `strategy_runtime.py` + the strategy registry decide. FlowPilot executes the returned plan.**
 
-Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, worker counts, review mode, fan-out, or repair budget in this skill. The installed planner and built-in strategy registry are the single source of truth for those decisions.
+Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, worker counts, review mode, fan-out, lifecycle/join policy, cancellation policy, fallback policy, or repair budget in this skill. The installed planner and built-in strategy registry are the single source of truth for those decisions.
 
 Default compatibility remains `strategy = efficient` plus `routing = adaptive`.
 
@@ -136,10 +136,11 @@ The planner automatically:
 - loads the selected built-in strategy from the installed strategy registry;
 - resolves a strategy-specific `worker_budget` envelope;
 - computes workstream-aware explorer / implementer / reviewer counts inside that budget;
+- resolves strategy-owned StagePolicy for exploration / implementation / review;
 - gives delegated Worker roles at least one higher reasoning tier than Parent when the effort ladder permits it;
 - lets only the selected strategy consume strategy-specific TaskProfile semantics such as `quality_intent`;
 - lets `quality` promote high-value Implementer/Reviewer capability for strong/absolute intent while ordinary Explorers remain efficient-worker-first unless technical risk itself is critical;
-- applies hard runtime thread/repair ceilings and writable-isolation checks;
+- applies hard runtime thread/repair/lifecycle ceilings and writable-isolation checks;
 - reads reliable app-server quota state when available and normalizes it before strategy logic;
 - emits one ExecutionPlan without extra LLM calls.
 
@@ -147,7 +148,7 @@ If the helper or strategy registry is unavailable, treat that as an installation
 
 ## 3. ExecutionPlan is the hard strategy/runtime boundary
 
-Current contract (schema v7):
+Current contract (schema v8):
 
 ```text
 ExecutionPlan
@@ -179,6 +180,16 @@ ExecutionPlan
   implementation_workers
   reviewer_workers
   planned_worker_count
+  exploration_stage | none
+  implementation_stage | none
+  review_stage | none
+    join_policy: opportunistic | quorum | required
+    min_successful_workers
+    idle_timeout_seconds
+    hard_timeout_seconds
+    cancel_if_superseded
+    cancel_stragglers_after_quorum
+    fallback_policy: continue_partial | parent_delta | replan | fail
   review_mode
   max_repair_cycles
   max_concurrent_threads
@@ -189,7 +200,7 @@ ExecutionPlan
   notes
 ```
 
-Once compiled, execute this plan. Do not reinterpret the strategy name or `quality_intent` to change topology or resource selection.
+Once compiled, execute this plan. Do not reinterpret the strategy name or `quality_intent` to change topology, resource selection, or lifecycle behavior.
 
 Examples of prohibited duplication:
 
@@ -201,10 +212,12 @@ Examples of prohibited duplication:
 - do not independently change review rigor from a modifier or strategy name after compilation;
 - do not lower or raise parent/explorer/implementer/reviewer reasoning from a table in this skill;
 - do not substitute role capability/model choices that are absent from the plan;
+- do not invent lifecycle timeout/retry/cancellation rules from the strategy name;
+- do not terminate a non-terminal Worker merely because one or more `wait()` calls returned without a final result;
 - do not expand repair cycles beyond the plan;
 - do not replace `direct` with delegation because delegation seems useful.
 
-The planner may emit capability/model intent that the active Codex build cannot override per spawn. In that case use the installed baseline supported by the runtime, preserve topology/review/repair, and report the limitation rather than pretending the requested override was applied.
+The planner may emit capability/model intent that the active Codex build cannot override per spawn. In that case use the installed baseline supported by the runtime, preserve topology/review/lifecycle/repair, and report the limitation rather than pretending the requested override was applied.
 
 ## 4. Parent owns semantic decisions
 
@@ -224,26 +237,106 @@ Model capability and reasoning effort are independent axes. `Luna max` is not tr
 
 Read-only exploration requested by the plan may supply evidence, but it does not own final architecture decisions.
 
-## 5. Execute exploration exactly from the plan
+## 5. Async Worker lifecycle and scope tracking
 
-If `exploration_workers == 0`, perform targeted discovery in the parent context.
+Lifecycle is part of ExecutionPlan, not an ad-hoc Parent heuristic.
 
-If greater than zero, delegate that many bounded read-only investigations to distinct questions such as call sites, tests, workflows/config, compatibility, or competing root-cause hypotheses. The planner may request several explorers when uncertainty/scope or the selected strategy's demand policy justify them; do not collapse them to one merely out of habit.
+For every planned Worker, assign a stable bounded `scope_id` before spawn. The scope must identify the evidence/workstream that Worker owns. Do not create duplicate scopes unless independent duplicate verification is an explicit acceptance need.
+
+Track Workers using these semantic states when the active runtime exposes enough evidence:
+
+```text
+queued
+running
+progressing
+completed
+stalled
+failed
+superseded
+cancelled
+```
+
+State rules:
+
+- `progressing`: the Worker has recent observable activity, including a completed tool/command/search/file-read event, a new evidence message, or an explicitly visible in-flight operation.
+- `stalled`: no observable progress for at least `idle_timeout_seconds` and no visible in-flight work.
+- `failed`: the Agent/tool/runtime reports a terminal error.
+- `superseded`: the same bounded scope has already been covered with equivalent evidence by Parent or another execution path, and that stage has `cancel_if_superseded=true`.
+- `cancelled`: cancellation has actually been requested/applied after a policy-authorized reason.
+
+`idle_timeout_seconds` is a renewable **progress lease**, not a completion deadline. New observable progress renews the lease. `hard_timeout_seconds` is the absolute wall-clock ceiling from Worker start.
+
+**A `wait()` timeout is never a Worker timeout.** A high-reasoning Worker can be healthy and slow. Repeated `wait()` calls returning without a terminal result do not by themselves justify `stalled`, `failed`, or cancellation.
+
+If the active Codex runtime does not expose sufficient intermediate activity to measure idle time reliably, do not guess. Keep a non-terminal Worker as `running`/`progressing` unless there is explicit failure, clear stall evidence, supersession, or the hard timeout is reached.
+
+Parent execution is fork/join, not fork/block:
+
+1. spawn planned Workers;
+2. continue Parent work that does not overlap their `scope_id`s;
+3. consume completed Worker evidence opportunistically;
+4. only perform a lifecycle join when Parent reaches a dependency on that stage;
+5. never redo a Worker's entire scope merely because it has not returned yet.
+
+### Join policies
+
+`opportunistic`:
+- do not block Parent specifically for Worker results;
+- consume completed evidence if available;
+- fallback may continue with partial evidence.
+
+`quorum`:
+- at the join point, require at least `min_successful_workers` terminal successful results unless affected Workers have been validly superseded;
+- reaching numeric quorum does **not** make every remaining distinct scope worthless;
+- `cancel_stragglers_after_quorum=true` only authorizes cancellation when a straggler no longer owns unique acceptance-relevant evidence.
+
+`required`:
+- every non-superseded assigned scope must be covered before the stage is considered satisfied;
+- the stage must also meet `min_successful_workers` unless a new plan changes that requirement;
+- do not silently replace required independent review with Parent self-review when `cancel_if_superseded=false`.
+
+### Supersession
+
+Supersession is overlap-aware cancellation, not a timeout shortcut.
+
+Examples:
+
+- a PR-metadata Explorer is still running, but Parent already obtained the same PR metadata and checks: the Worker may become `superseded` when policy allows;
+- a Runtime reviewer is still actively reading/running tests while Parent works on unrelated branding/build tasks: its scope is **not** superseded and it must not be cancelled merely for running longer than expected.
+
+### Fallback policies
+
+Fallback always operates on the missing delta, never by restarting the whole stage:
+
+- `continue_partial`: proceed when current evidence already satisfies acceptance needs;
+- `parent_delta`: Parent covers only uncovered scope/evidence;
+- `replan`: update TaskProfile if needed and compile a new plan for the remaining delta;
+- `fail`: surface the unresolved stage failure instead of silently replacing it.
+
+Worker lifecycle failure/stall does **not** consume `max_repair_cycles`. Repair cycles are for defects in implementation output, not scheduler/infrastructure latency.
+
+## 6. Execute exploration exactly from the plan
+
+If `exploration_workers == 0`, perform targeted discovery in the parent context; `exploration_stage` must be `none`.
+
+If greater than zero, delegate that many bounded read-only investigations to distinct questions such as call sites, tests, workflows/config, compatibility, or competing root-cause hypotheses. Assign each Explorer a distinct `scope_id`. The planner may request several explorers when uncertainty/scope or the selected strategy's demand policy justify them; do not collapse them to one merely out of habit.
 
 Prefer `worker-explorer` when supported. Do not duplicate investigations. Respect `max_concurrent_threads` as the per-stage hard concurrency ceiling. Apply `explorer_capability_policy`, `explorer_model`, and `explorer_reasoning` exactly when the active Codex runtime supports per-spawn overrides; otherwise use the installed Worker baseline and report the limitation if material.
 
-## 6. Compact handoff for delegated implementation
+Execute exploration join/cancellation/fallback only from `exploration_stage`. In particular, do not kill a Luna `xhigh/max` Explorer merely because it has taken multiple Parent wait intervals while continuing to read files, run commands, or produce other observable progress.
+
+## 7. Compact handoff for delegated implementation
 
 For each planned implementation worker, hand off only:
 
-- Goal
-- Root cause/design decision
-- Isolated scope
-- Relevant files/components
-- Steps
-- Constraints/non-goals
-- Acceptance criteria
-- Required validation
+- `scope_id` / isolated writable scope;
+- Goal;
+- Root cause/design decision;
+- Relevant files/components;
+- Steps;
+- Constraints/non-goals;
+- Acceptance criteria;
+- Required validation.
 
 Prefer fresh/no-history child context when supported.
 
@@ -251,10 +344,13 @@ If the plan requests multiple implementation workers, verify the TaskProfile evi
 
 Prefer `worker-implementer` for planned implementation workers. Apply `implementer_capability_policy`, `implementer_model`, and `implementer_reasoning` exactly when supported by the runtime. If a requested per-spawn override is unsupported, fall back to the installed Worker baseline and report the limitation rather than re-planning resource policy locally.
 
-## 7. Worker implements and proves
+Implementation normally uses a required lifecycle. Do not cancel a progressing writable Worker merely to have Parent recreate the same patch. On implementation failure/stall, follow `implementation_stage.fallback_policy`; `replan` means recompile from the remaining writable delta.
+
+## 8. Worker implements and proves
 
 Workers make only scoped changes, run narrow validation first, fix failures caused by their patch, and return evidence:
 
+- scope id;
 - changed files;
 - concise implementation summary;
 - validation commands/results;
@@ -263,48 +359,54 @@ Workers make only scoped changes, run narrow validation first, fix failures caus
 
 Evidence beats verbose logs.
 
-## 8. Review exactly according to the plan
+## 9. Review exactly according to the plan
 
 Parent review always checks the relevant diff, affected call sites, validation evidence, acceptance criteria, architecture consistency, and regression risk.
 
-- `review_mode=parent`: parent review only; `reviewer_workers == 0` and all `reviewer_*` fields are `none`.
-- `review_mode=independent+parent`: spawn exactly `reviewer_workers` independent reviewers, each using `reviewer_capability_policy`, `reviewer_model`, and `reviewer_reasoning`, then perform parent final verification.
+- `review_mode=parent`: parent review only; `reviewer_workers == 0`, `review_stage == none`, and all `reviewer_*` fields are `none`.
+- `review_mode=independent+parent`: spawn exactly `reviewer_workers` independent reviewers, each using `reviewer_capability_policy`, `reviewer_model`, and `reviewer_reasoning`, then execute the `review_stage` join before parent final verification.
 
-When more than one reviewer is requested, give them non-duplicative review objectives (for example correctness/regressions vs. acceptance/architecture) rather than asking identical questions.
+When more than one reviewer is requested, give them non-duplicative bounded `scope_id`s (for example correctness/regressions vs. acceptance/architecture, or Runtime semantics vs. installation/platform integration) rather than asking identical questions.
 
 Prefer the dedicated read-only `worker-reviewer` role for independent review. Reviewers must inspect the patch adversarially and report findings; they must not silently turn themselves into implementers.
+
+If two deep reviewers own complementary scopes and are still progressing, do not terminate them solely because Parent has completed unrelated work or because multiple waits returned. At the join point, apply `review_stage` exactly. Parent self-review should cover only a missing delta authorized by fallback, not restart both review scopes from zero.
 
 If the active runtime cannot apply the requested reviewer model/capability/reasoning override, use the installed Worker baseline and report the limitation. Do not select a replacement reviewer policy from the strategy name or `quality_intent`.
 
 Direct mode still requires parent self-review.
 
-Do not infer review depth or reviewer resources from the strategy or modifier name after the plan has been compiled.
+Do not infer review depth, reviewer resources, or lifecycle from the strategy/modifier name after the plan has been compiled.
 
-## 9. Repair from bounded delta tasks
+## 10. Repair from bounded delta tasks
 
-On failure, send the smallest useful repair delta: exact defect, impact, required correction, relevant symbol/file, and validation.
+On implementation defect, send the smallest useful repair delta: exact defect, impact, required correction, relevant symbol/file, and validation.
 
 Never exceed `max_repair_cycles` from ExecutionPlan.
 
 If repair fails or new evidence materially changes the task, update TaskProfile and compile a **new** ExecutionPlan. Do not mutate the old plan ad hoc.
 
-## 10. Quota and telemetry discipline
+Do not count Worker stall/failure/supersession as an implementation repair cycle.
+
+## 11. Quota and telemetry discipline
 
 Quota must never be guessed. The planner reads app-server rate-limit state when available; unavailable state becomes `unknown`.
 
-Telemetry remains observational and deterministic. Never call a model solely to estimate tokens, quota, or produce a usage summary.
+Telemetry remains observational and deterministic. Never call a model solely to estimate tokens, quota, duration, or produce a usage summary.
 
 Quota pressure may reduce speculative fan-out or repair budget for quota-sensitive strategies, but configured reasoning/quality floors and the Worker-over-Parent reasoning invariant must not be silently lowered. `quality` is correctness-first; strong/absolute quality intent is allowed to retain Parent-class capability on high-value roles under quota pressure. Safety ceilings still apply.
 
-## 11. Context and concurrency discipline
+Lifecycle v1 uses deterministic strategy policies and Runtime hard ceilings. Do not invent historical latency predictions. Future telemetry-driven latency adaptation may be added only as explicit planner logic.
 
-Prefer targeted search, concise excerpts, diff-scoped review, and small validation output. Avoid full-repo dumps, duplicated agents, rereading unchanged files, or parent reimplementation of worker work.
+## 12. Context and concurrency discipline
+
+Prefer targeted search, concise excerpts, diff-scoped review, and small validation output. Avoid full-repo dumps, duplicated agents, rereading unchanged files, parent reimplementation of Worker work, or cancelling useful Worker work only to recreate it in Parent.
 
 `max_concurrent_threads` is a **per-stage concurrency ceiling**, not the total number of Workers in the plan. `planned_worker_count` may exceed it because exploration, implementation, and review are separate stages.
 
 Parallel work must be independent. Writable fan-out requires isolated non-overlapping scopes/worktrees already represented by `writable_workstreams`.
 
-## 12. Re-plan checkpoints
+## 13. Re-plan checkpoints
 
 Re-profile and invoke the planner again when:
 
@@ -313,6 +415,7 @@ Re-profile and invoke the planner again when:
 - the root cause is disproven;
 - a cross-module dependency appears;
 - writable workstream isolation changes;
+- a required stage chooses `fallback_policy=replan` after failure/stall;
 - repair cycles fail;
 - reliable quota/runtime state materially changes.
 
@@ -330,4 +433,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-The deterministic planner and strategy registry, not this skill, define the concrete execution behavior for that compatibility profile.
+Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry, not this skill, define their concrete values.

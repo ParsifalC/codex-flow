@@ -1,7 +1,7 @@
 """Quota-efficient strategy."""
 from __future__ import annotations
 
-from .base import WorkerBudget, StrategySpec, never, small_low_risk_is_direct, standard_effort
+from .base import StagePolicy, StrategySpec, WorkerBudget, never, small_low_risk_is_direct, standard_effort
 
 
 def adaptive_route(task) -> str:
@@ -18,6 +18,16 @@ def worker_budget(task) -> WorkerBudget:
     return WorkerBudget(1, 1, 1, 2, "low")
 
 
+def lifecycle(_task, stage: str) -> StagePolicy:
+    if stage == "exploration":
+        return StagePolicy("quorum", 1, 120, 900, True, True, "parent_delta")
+    if stage == "implementation":
+        return StagePolicy("required", 1, 180, 1800, False, False, "replan")
+    if stage == "review":
+        return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
+    raise ValueError(f"invalid lifecycle stage: {stage}")
+
+
 STRATEGY = StrategySpec(
     name="efficient",
     description="minimize expensive parent usage and total waste while offloading deep execution to efficient workers",
@@ -25,5 +35,6 @@ STRATEGY = StrategySpec(
     effort=standard_effort,
     worker_budget=worker_budget,
     independent_review=never,
+    lifecycle=lifecycle,
     quota_sensitive=True,
 )
