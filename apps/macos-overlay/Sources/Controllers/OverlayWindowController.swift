@@ -21,6 +21,8 @@ public class OverlayState: ObservableObject {
     @Published public var activeTab: OverlayTab = .inspector
     @Published public var inspectedRun: TaskRun? = nil
     @Published public var historyRuns: [TaskRun] = []
+    @Published public var historyChats: [ChatSession] = []
+    @Published public var expandedChatIds: Set<String> = []
     @Published public var statsData: TelemetryStats? = nil
     @Published public var statsDays: Int = 30
     @Published public var selectedProject: String? = nil
@@ -91,16 +93,54 @@ public class OverlayState: ObservableObject {
         }
     }
     
+    public func toggleChatExpansion(_ id: String) {
+        if expandedChatIds.contains(id) {
+            expandedChatIds.remove(id)
+        } else {
+            expandedChatIds.insert(id)
+        }
+        self.windowController?.updateWindowFrame(animated: true)
+    }
+    
+    public func isChatExpanded(_ id: String) -> Bool {
+        return expandedChatIds.contains(id)
+    }
+    
+    public func expandAllChats() {
+        let allIds = historyChats.map { $0.sessionId }
+        expandedChatIds = Set(allIds)
+        self.windowController?.updateWindowFrame(animated: true)
+    }
+    
+    public func collapseAllChats() {
+        expandedChatIds.removeAll()
+        self.windowController?.updateWindowFrame(animated: true)
+    }
+    
     public func loadHistory() {
+        let proj = self.selectedProject
+        let today = self.isTodayOnly
+        let search = self.searchQuery
         DispatchQueue.global(qos: .userInitiated).async {
+            let chats = TelemetryQueryEngine.shared.fetchChatHistory(
+                limit: 60,
+                project: proj,
+                todayOnly: today,
+                search: search
+            )
             let runs = TelemetryQueryEngine.shared.fetchHistory(
                 limit: 60,
-                project: self.selectedProject,
-                todayOnly: self.isTodayOnly,
-                search: self.searchQuery
+                project: proj,
+                todayOnly: today,
+                search: search
             )
             DispatchQueue.main.async {
+                self.historyChats = chats
                 self.historyRuns = runs
+                // Auto-expand first chat if none expanded and chats available
+                if self.expandedChatIds.isEmpty, let first = chats.first {
+                    self.expandedChatIds.insert(first.sessionId)
+                }
             }
         }
     }

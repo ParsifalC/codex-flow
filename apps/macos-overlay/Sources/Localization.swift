@@ -157,3 +157,11 @@ public extension TaskRun {
         return formatter.string(from: date)
     }
 }
+
+public extension ChatSession {
+    var localizedRunsSummary: String {
+        let count = runs.count
+        return count == 1 ? L("1 session", "1 次会话") : L("\(count) sessions", "\(count) 轮会话")
+    }
+}
+

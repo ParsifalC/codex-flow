@@ -79,7 +79,7 @@ public class TelemetryQueryEngine {
         return runs.first
     }
     
-    // MARK: - Query & Filter History
+    // MARK: - Query & Filter History (Session / Run Level)
     
     public func fetchHistory(
         limit: Int = 100,
@@ -124,6 +124,140 @@ public class TelemetryQueryEngine {
             return Array(runs.prefix(limit))
         }
         return runs
+    }
+    
+    // MARK: - Query & Filter Chat Groups (Dimension 2: Chat Level)
+    
+    public func fetchChatHistory(
+        limit: Int = 50,
+        project: String? = nil,
+        todayOnly: Bool = false,
+        search: String? = nil
+    ) -> [ChatSession] {
+        let allRuns = loadAllRuns()
+        if allRuns.isEmpty {
+            return []
+        }
+        
+        // 1. Group runs by session_id (or fallback fileStem)
+        var groups: [String: [TaskRun]] = [:]
+        var groupOrder: [String] = []
+        
+        for run in allRuns {
+            let key = run.sessionId ?? run.fileStem ?? UUID().uuidString
+            if groups[key] == nil {
+                groups[key] = []
+                groupOrder.append(key)
+            }
+            groups[key]!.append(run)
+        }
+        
+        // 2. Materialize ChatSession objects
+        var chats: [ChatSession] = []
+        for key in groupOrder {
+            guard let groupRuns = groups[key], !groupRuns.isEmpty else { continue }
+            
+            // Sort runs in this chat descending by timestamp (newest first)
+            let sortedRuns = groupRuns.sorted { r1, r2 in
+                let t1 = r1.finishedAtMs ?? r1.startedAtMs ?? 0
+                let t2 = r2.finishedAtMs ?? r2.startedAtMs ?? 0
+                return t1 > t2
+            }
+            
+            let latestRun = sortedRuns.first!
+            let oldestRun = sortedRuns.last!
+            
+            // Derive best project & branch
+            let proj = latestRun.projectName
+            let branch = sortedRuns.compactMap { $0.gitBranch }.first
+            let cwd = latestRun.cwd ?? latestRun.thread?.cwd
+            
+            // Derive best title / prompt from oldest or latest thread preview
+            let title = sortedRuns.compactMap { r -> String? in
+                if let p = r.thread?.preview, !p.isEmpty { return p }
+                if let n = r.thread?.name, !n.isEmpty { return n }
+                if let s = r.summary, !s.isEmpty { return s }
+                return nil
+            }.first ?? latestRun.sessionTitle
+            
+            let summary = sortedRuns.compactMap { $0.summary }.first
+            let startedAt = oldestRun.startedAtMs
+            let finishedAt = latestRun.finishedAtMs
+            let lastActive = sortedRuns.map { $0.finishedAtMs ?? $0.startedAtMs ?? 0 }.max() ?? 0
+            
+            let chat = ChatSession(
+                sessionId: key,
+                projectName: proj,
+                gitBranch: branch,
+                cwd: cwd,
+                title: title,
+                summary: summary,
+                startedAtMs: startedAt,
+                finishedAtMs: finishedAt,
+                lastActiveAtMs: lastActive,
+                runs: sortedRuns
+            )
+            chats.append(chat)
+        }
+        
+        // 3. Filter by Today
+        if todayOnly {
+            let calendar = Calendar.current
+            let startOfToday = calendar.startOfDay(for: Date()).timeIntervalSince1970 * 1000
+            chats = chats.filter { chat in
+                chat.lastActiveAtMs >= startOfToday
+            }
+        }
+        
+        // 4. Filter by Project
+        if let proj = project, !proj.isEmpty, proj.lowercased() != "all" {
+            let pNorm = proj.lowercased()
+            chats = chats.filter { chat in
+                let cProj = chat.projectName.lowercased()
+                let cwd = (chat.cwd ?? "").lowercased()
+                return cProj.contains(pNorm) || cwd.contains(pNorm)
+            }
+        }
+        
+        // 5. Filter by Search Query
+        if let query = search?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
+            let qNorm = query.lowercased()
+            chats = chats.filter { chat in
+                if chat.title.lowercased().contains(qNorm) { return true }
+                if chat.projectName.lowercased().contains(qNorm) { return true }
+                if (chat.gitBranch ?? "").lowercased().contains(qNorm) { return true }
+                if chat.sessionId.lowercased().contains(qNorm) { return true }
+                if let sum = chat.summary, sum.lowercased().contains(qNorm) { return true }
+                
+                // Also search across each run within the chat
+                for r in chat.runs {
+                    if r.sessionTitle.lowercased().contains(qNorm) { return true }
+                    if (r.summary ?? "").lowercased().contains(qNorm) { return true }
+                    if (r.turnId ?? "").lowercased().contains(qNorm) { return true }
+                    if (r.parent?.displayModel ?? "").lowercased().contains(qNorm) { return true }
+                    for w in r.allWorkers {
+                        if (w.name ?? "").lowercased().contains(qNorm) { return true }
+                        if (w.model ?? "").lowercased().contains(qNorm) { return true }
+                    }
+                }
+                return false
+            }
+        }
+        
+        // 6. Sort descending by last active time
+        chats.sort { $0.lastActiveAtMs > $1.lastActiveAtMs }
+        
+        if limit > 0 && chats.count > limit {
+            return Array(chats.prefix(limit))
+        }
+        return chats
+    }
+    
+    public func fetchChat(sessionId: String) -> ChatSession? {
+        let sid = sessionId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if sid.isEmpty { return nil }
+        let chats = fetchChatHistory(limit: 500)
+        return chats.first { $0.sessionId.lowercased() == sid || $0.sessionId.lowercased().contains(sid) }
     }
     
     public func fetchRun(identifier: String) -> TaskRun? {

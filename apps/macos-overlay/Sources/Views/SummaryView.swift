@@ -862,26 +862,29 @@ public struct SummaryView: View {
                 }
             }
             
-            // 2. Recent Tasks
-            let historyRuns = TelemetryQueryEngine.shared.fetchHistory(limit: 20)
-            if !historyRuns.isEmpty {
-                Section(L("Recent Runs & Tasks", "最近任务")) {
-                    ForEach(Array(historyRuns.enumerated()), id: \.element.id) { index, hRun in
+            // 2. Recent Chats & Tasks
+            let historyChats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 15)
+            if !historyChats.isEmpty {
+                Section(L("Recent Chats & Tasks", "最近对话任务")) {
+                    ForEach(Array(historyChats.enumerated()), id: \.element.id) { index, hChat in
                         Button {
-                            if hRun.id == state.latestRun?.id {
-                                state.jumpToLive()
-                            } else {
-                                state.inspect(run: hRun)
+                            if let latest = hChat.latestRun {
+                                if latest.id == state.latestRun?.id {
+                                    state.jumpToLive()
+                                } else {
+                                    state.inspect(run: latest)
+                                }
                             }
                         } label: {
-                            let isCurrent = (currentRun?.id == hRun.id)
+                            let isCurrent = (currentRun?.sessionId == hChat.sessionId)
                             let check = isCurrent ? "✓ " : ""
-                            let branch = hRun.gitBranch.map { " (\($0))" } ?? ""
-                            let preview = (hRun.thread?.preview ?? hRun.summary ?? hRun.sessionTitle)
+                            let branch = hChat.gitBranch.map { " (\($0))" } ?? ""
+                            let preview = (hChat.title)
                                 .replacingOccurrences(of: "\n", with: " ")
                                 .trimmingCharacters(in: .whitespaces)
-                            let shortPreview = preview.count > 28 ? String(preview.prefix(28)) + "..." : preview
-                            let title = "#\(index + 1) \(hRun.projectName)\(branch) · \(hRun.localizedFormattedDate) - \(shortPreview)"
+                            let shortPreview = preview.count > 24 ? String(preview.prefix(24)) + "..." : preview
+                            let countLabel = hChat.runs.count > 1 ? " (\(hChat.runs.count)s)" : ""
+                            let title = "#\(index + 1) \(hChat.projectName)\(branch)\(countLabel) · \(hChat.localizedFormattedDate) - \(shortPreview)"
                             Text("\(check)\(title)")
                         }
                     }

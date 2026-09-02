@@ -589,6 +589,150 @@ public struct TaskRun: Codable, Identifiable {
     }
 }
 
+// MARK: - Chat Session Aggregate (Dimension 2: Chat)
+public struct ChatSession: Identifiable {
+    public var id: String { sessionId }
+    public var sessionId: String
+    public var projectName: String
+    public var gitBranch: String?
+    public var cwd: String?
+    public var title: String
+    public var summary: String?
+    public var startedAtMs: Double?
+    public var finishedAtMs: Double?
+    public var lastActiveAtMs: Double
+    public var runs: [TaskRun] // all session runs in this chat, sorted newest first
+    
+    public init(
+        sessionId: String,
+        projectName: String,
+        gitBranch: String? = nil,
+        cwd: String? = nil,
+        title: String,
+        summary: String? = nil,
+        startedAtMs: Double? = nil,
+        finishedAtMs: Double? = nil,
+        lastActiveAtMs: Double? = nil,
+        runs: [TaskRun] = []
+    ) {
+        self.sessionId = sessionId
+        self.projectName = projectName
+        self.gitBranch = gitBranch
+        self.cwd = cwd
+        self.title = title
+        self.summary = summary
+        self.startedAtMs = startedAtMs
+        self.finishedAtMs = finishedAtMs
+        self.lastActiveAtMs = lastActiveAtMs ?? finishedAtMs ?? startedAtMs ?? 0
+        self.runs = runs
+    }
+    
+    // MARK: - Aggregated Metrics
+    
+    public var totalRunsCount: Int {
+        return runs.count
+    }
+    
+    public var isRunning: Bool {
+        return runs.contains { $0.isRunning }
+    }
+    
+    public var isError: Bool {
+        return runs.contains { $0.isError }
+    }
+    
+    public var isSuccess: Bool {
+        return !isRunning && !isError && !runs.isEmpty
+    }
+    
+    public var totalDurationSeconds: Double {
+        return runs.reduce(0.0) { $0 + $1.durationSeconds }
+    }
+    
+    public var formattedDuration: String {
+        let d = totalDurationSeconds
+        if d < 1.0 {
+            return String(format: "%.0f ms", d * 1000)
+        } else if d < 60.0 {
+            return String(format: "%.1f s", d)
+        } else {
+            let mins = Int(d) / 60
+            let secs = Int(d) % 60
+            return "\(mins)m \(secs)s"
+        }
+    }
+    
+    public var aggregatedUsage: TokenUsage {
+        var total = 0
+        var prompt = 0
+        var completion = 0
+        var cached = 0
+        var reasoning = 0
+        var credits: Double = 0
+        
+        for run in runs {
+            let u = run.aggregatedUsage
+            total += u.totalTokens ?? 0
+            prompt += u.effectivePromptTokens
+            completion += u.effectiveOutputTokens
+            cached += u.effectiveCachedTokens
+            reasoning += u.effectiveReasoningTokens
+            credits += u.estimatedCreditsMicros ?? 0
+        }
+        
+        return TokenUsage(
+            totalTokens: total > 0 ? total : nil,
+            promptTokens: prompt > 0 ? prompt : nil,
+            completionTokens: completion > 0 ? completion : nil,
+            cachedPromptTokens: cached > 0 ? cached : nil,
+            reasoningOutputTokens: reasoning > 0 ? reasoning : nil,
+            estimatedCreditsMicros: credits > 0 ? credits : nil
+        )
+    }
+    
+    public var totalTokens: Int {
+        return aggregatedUsage.totalTokens ?? 0
+    }
+    
+    public var formattedTotalTokens: String {
+        return TaskRun.formatTokenCount(totalTokens)
+    }
+    
+    public var formattedCost: String {
+        if let creditsMicros = aggregatedUsage.estimatedCreditsMicros, creditsMicros > 0 {
+            let dollars = creditsMicros / 1_000_000.0
+            return String(format: "$%.3f", dollars)
+        }
+        return "--"
+    }
+    
+    public var maxWorkerCount: Int {
+        return runs.map { $0.allWorkers.count }.max() ?? 0
+    }
+    
+    public var totalWorkersCount: Int {
+        return runs.reduce(0) { $0 + $1.allWorkers.count }
+    }
+    
+    public var latestRun: TaskRun? {
+        return runs.first
+    }
+    
+    public var localizedFormattedDate: String {
+        guard lastActiveAtMs > 0 else { return "--:--" }
+        let date = Date(timeIntervalSince1970: lastActiveAtMs / 1000.0)
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        if calendar.isDateInToday(date) {
+            formatter.dateFormat = "HH:mm"
+            return L("Today \(formatter.string(from: date))", "今天 \(formatter.string(from: date))")
+        } else {
+            formatter.dateFormat = "MM-dd HH:mm"
+            return formatter.string(from: date)
+        }
+    }
+}
+
 // MARK: - Analytics & Stats Data Models
 
 public struct ModelStats: Identifiable {

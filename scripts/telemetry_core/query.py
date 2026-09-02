@@ -68,6 +68,54 @@ def list_runs(
     return [item[2] for item in runs[:limit]]
 
 
+def list_chats(
+    limit: int = 10,
+    project: str | None = None,
+    today: bool = False,
+) -> list[dict[str, Any]]:
+    runs = list_runs(limit=1000, project=project, today=today)
+    groups: dict[str, list[dict[str, Any]]] = {}
+    group_order: list[str] = []
+    for r in runs:
+        sid = str(r.get("session_id") or r.get("cwd") or "unknown")
+        if sid not in groups:
+            groups[sid] = []
+            group_order.append(sid)
+        groups[sid].append(r)
+    
+    chats: list[dict[str, Any]] = []
+    for sid in group_order:
+        rlist = groups[sid]
+        latest = rlist[0]
+        session, proj, branch = run_context(latest)
+        total_toks = 0
+        total_duration = 0
+        for r in rlist:
+            st = numeric_ms(r.get("started_at_ms")) or 0
+            fn = numeric_ms(r.get("finished_at_ms")) or 0
+            if fn > st:
+                total_duration += (fn - st)
+            parent = r.get("parent") or {}
+            pu = parent.get("usage_delta") if isinstance(parent, dict) else None
+            usages = [pu]
+            usages.extend((w.get("usage") if isinstance(w, dict) else None) for w in (r.get("workers") or {}).values())
+            tok = aggregate_usage_value(usages, "total_tokens") or 0
+            total_toks += tok
+        
+        chats.append({
+            "session_id": sid,
+            "project": proj,
+            "branch": branch,
+            "title": session,
+            "runs_count": len(rlist),
+            "total_tokens": total_toks,
+            "total_duration_ms": total_duration,
+            "latest_run": latest,
+            "runs": rlist,
+        })
+    return chats[:limit]
+
+
 def resolve_run_target(
     target: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
