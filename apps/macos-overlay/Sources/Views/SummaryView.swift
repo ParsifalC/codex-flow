@@ -595,16 +595,6 @@ public struct SummaryView: View {
                 )
             }
             
-            // 2. Execution Trajectory Timeline Section
-            if run.hasTrajectory {
-                TrajectoryTimelineSectionView(run: run, isExpanded: $isTrajectoryExpanded)
-            }
-            
-            // 3. Execution Logs Drawer Section
-            if run.hasLogs {
-                LogsSectionView(run: run, isExpanded: $isLogsExpanded)
-            }
-            
             // Quota & Rate Limit Windows Meter
             if !run.effectiveQuotaWindows.isEmpty {
                 QuotaWindowsView(windows: run.effectiveQuotaWindows)
@@ -622,9 +612,19 @@ public struct SummaryView: View {
             // Token Distribution Bar
             TokenDistributionBar(usage: run.aggregatedUsage)
             
-            // 4. Skills & MCP Tools Badges Section (Bottom)
+            // Skills & MCP Tools Badges Section
             if run.hasSkillsOrTools {
                 SkillsAndToolsSectionView(run: run, isExpanded: $isSkillsExpanded)
+            }
+            
+            // Execution Trajectory Timeline Section
+            if run.hasTrajectory {
+                TrajectoryTimelineSectionView(run: run, isExpanded: $isTrajectoryExpanded)
+            }
+            
+            // Execution Logs Drawer Section
+            if run.hasLogs {
+                LogsSectionView(run: run, isExpanded: $isLogsExpanded)
             }
             
             // Action Footer
