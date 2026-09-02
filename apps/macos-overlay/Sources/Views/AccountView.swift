@@ -19,6 +19,7 @@ public struct AccountView: View {
         let content = VStack(spacing: 9) {
             accountHeader
             StrategyModeCard()
+            AutostartCard()
 
             if isLoading && snapshot == nil {
                 loadingState
