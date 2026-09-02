@@ -1,0 +1,33 @@
+name: ota-fix-apply
+
+on:
+  push:
+    branches: [feat/ota-update-system]
+    paths:
+      - '.github/ota-fix/**'
+      - '.github/workflows/ota-fix-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ota-update-system
+      - name: Apply compatibility fixes
+        run: python3 .github/ota-fix/apply.py
+      - name: Validate changed Python
+        run: |
+          python3 -m py_compile scripts/updater.py tests/test_updater.py
+          python3 -m unittest tests.test_updater
+      - name: Commit fixes and remove one-shot helper
+        run: |
+          git config user.name 'codex-flow-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm -f .github/ota-fix/apply.py .github/workflows/ota-fix-apply.yml
+          git add install.ps1 scripts/updater.py tests/test_updater.py
+          git commit -m 'fix: harden OTA Windows bootstrap compatibility'
+          git push origin HEAD:feat/ota-update-system
