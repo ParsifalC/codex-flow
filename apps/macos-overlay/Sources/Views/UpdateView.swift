@@ -81,28 +81,56 @@ public struct FlowPilotUpdateView: View {
                             .font(.system(size: 9))
                             .foregroundColor(.orange)
                         Text(L(
-                            "The update is installed. Fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
-                            "更新已经安装。请完整重启 Codex，以激活新的 FlowPilot 策略和 Hook 快照。"
+                            "The new files are installed. Restart FlowPilot to load the new app binary, and fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
+                            "新文件已经安装。请重启 FlowPilot 载入新的 App 程序，并完整重启 Codex 以激活新的 FlowPilot 策略和 Hook 快照。"
                         ))
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.secondary)
                     }
 
-                    Button {
-                        service.acknowledgeRestart()
-                    } label: {
-                        HStack(spacing: 4) {
-                            if service.isAcknowledgingRestart {
-                                ProgressView().controlSize(.mini)
-                            } else {
-                                Image(systemName: "checkmark.circle")
+                    HStack(spacing: 6) {
+                        Button {
+                            service.restartFlowPilot()
+                        } label: {
+                            HStack(spacing: 4) {
+                                if service.isRestartingFlowPilot {
+                                    ProgressView().controlSize(.mini)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                Text(L("Restart FlowPilot", "重启 FlowPilot"))
                             }
-                            Text(L("I've restarted Codex", "我已重启 Codex"))
+                            .font(.system(size: 9.5, weight: .semibold))
                         }
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .buttonStyle(.borderedProminent)
+                        .disabled(
+                            service.isRestartingFlowPilot
+                            || service.isAcknowledgingRestart
+                            || service.isInstalling
+                            || service.isChecking
+                        )
+
+                        Button {
+                            service.acknowledgeRestart()
+                        } label: {
+                            HStack(spacing: 4) {
+                                if service.isAcknowledgingRestart {
+                                    ProgressView().controlSize(.mini)
+                                } else {
+                                    Image(systemName: "checkmark.circle")
+                                }
+                                Text(L("I've restarted Codex", "我已重启 Codex"))
+                            }
+                            .font(.system(size: 9.5, weight: .semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            service.isAcknowledgingRestart
+                            || service.isRestartingFlowPilot
+                            || service.isInstalling
+                            || service.isChecking
+                        )
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(service.isAcknowledgingRestart || service.isInstalling || service.isChecking)
                 }
             }
 
@@ -122,7 +150,12 @@ public struct FlowPilotUpdateView: View {
                     .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.bordered)
-                .disabled(service.isChecking || service.isInstalling || service.isAcknowledgingRestart)
+                .disabled(
+                    service.isChecking
+                    || service.isInstalling
+                    || service.isAcknowledgingRestart
+                    || service.isRestartingFlowPilot
+                )
 
                 Button {
                     service.installUpdate()
@@ -143,6 +176,7 @@ public struct FlowPilotUpdateView: View {
                     service.isInstalling
                     || service.isChecking
                     || service.isAcknowledgingRestart
+                    || service.isRestartingFlowPilot
                     || service.snapshot.updateAvailable != true
                     || service.snapshot.artifactAvailable == false
                 )
