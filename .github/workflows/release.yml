@@ -107,7 +107,7 @@ jobs:
           set -euo pipefail
           tag='${{ steps.release.outputs.tag }}'
           if gh release view "$tag" >/dev/null 2>&1; then
-            draft="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/$tag" --jq .draft)"
+            draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
             if [[ "$draft" != true ]]; then
               echo "release $tag is already published and immutable; bump VERSION instead of replacing OTA assets" >&2
               exit 2
@@ -152,9 +152,12 @@ jobs:
           set -euo pipefail
           tag='${{ steps.release.outputs.tag }}'
           channel='${{ steps.release.outputs.channel }}'
-          release_id="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/$tag" --jq .id)"
           prerelease=false
           if [[ "$channel" != stable ]]; then prerelease=true; fi
-          gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/releases/$release_id" \
-            -F draft=false \
-            -F prerelease="$prerelease" >/dev/null
+          gh release edit "$tag" --draft=false --prerelease="$prerelease"
+          is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
+          is_prerelease="$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)"
+          if [[ "$is_draft" != false || "$is_prerelease" != "$prerelease" ]]; then
+            echo "release $tag publication state did not match requested draft/prerelease flags" >&2
+            exit 2
+          fi
