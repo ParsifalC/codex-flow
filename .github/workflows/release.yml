@@ -4,11 +4,10 @@ on:
   push:
     tags:
       - 'v*'
-      - 'nightly-*'
   workflow_dispatch:
     inputs:
       channel:
-        description: Release channel
+        description: Release channel (must match VERSION semantics)
         required: true
         default: stable
         type: choice
@@ -67,31 +66,32 @@ jobs:
         run: |
           set -euo pipefail
           version="$(tr -d '\r\n' < VERSION)"
+          tag="v$version"
+          lower_version="$(printf '%s' "$version" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$lower_version" == *nightly* ]]; then
+            channel=nightly
+          elif [[ "$version" == *-* ]]; then
+            channel=beta
+          else
+            channel=stable
+          fi
+
           if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
-            tag="$GITHUB_REF_NAME"
-            if [[ "$tag" == nightly-* ]]; then
-              channel=nightly
-            elif [[ "$tag" == *-* ]]; then
-              channel=beta
-            else
-              channel=stable
+            if [[ "$GITHUB_REF_NAME" != "$tag" ]]; then
+              echo "release tag $GITHUB_REF_NAME must match VERSION ($tag)" >&2
+              exit 2
             fi
           else
-            channel='${{ inputs.channel || 'stable' }}'
-            case "$channel" in
-              stable) tag="v$version" ;;
-              beta) tag="v${version}-beta.${GITHUB_RUN_NUMBER}" ;;
-              nightly) tag="nightly-$(date -u +%Y%m%d%H%M)-${GITHUB_RUN_NUMBER}" ;;
-              *) echo "unsupported channel: $channel" >&2; exit 2 ;;
-            esac
+            requested='${{ inputs.channel || 'stable' }}'
+            if [[ "$requested" != "$channel" ]]; then
+              echo "requested channel $requested does not match VERSION $version ($channel)" >&2
+              echo "Use a stable VERSION (x.y.z), beta VERSION (x.y.z-beta.N/rc.N), or nightly VERSION containing nightly." >&2
+              exit 2
+            fi
           fi
+
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          if [[ "$channel" == stable ]]; then
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          fi
       - name: Create or update GitHub Release
         shell: bash
         run: |
