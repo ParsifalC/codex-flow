@@ -24,8 +24,8 @@ else:
 
 
 JSONRPC_VERSION = "2.0"
-SERVER_NAME = "flowpilot-telemetry"
-SERVER_VERSION = "1.4.0"
+SERVER_NAME = "chatgpt-codex-flow"
+SERVER_VERSION = "1.5.0"
 MAX_REQUEST_BYTES = 1024 * 1024
 
 
