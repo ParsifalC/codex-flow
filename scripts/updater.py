@@ -583,6 +583,8 @@ def safe_extract(archive: Path, destination: Path) -> None:
             _safe_target(destination, member.name)
             if member.issym() or member.islnk():
                 raise RuntimeError(f"release archive may not contain links: {member.name}")
+            if not (member.isfile() or member.isdir()):
+                raise RuntimeError(f"release archive contains unsupported special member: {member.name}")
         tf.extractall(destination)
 
 
@@ -652,6 +654,7 @@ def _snapshot(current: str) -> Path:
     backup.mkdir(parents=True, exist_ok=True)
     targets = {
         "policy": _policy_path(),
+        "config": _codex_home() / "config.toml",
         "version": _state_dir() / "version",
         "source": _state_dir() / "source",
         "defaults": _state_dir() / "defaults.toml",
@@ -714,6 +717,9 @@ def _restore_snapshot(backup: Path) -> None:
     policy = backup / "policy"
     if policy.exists():
         _atomic_copy(policy, _policy_path())
+    config = backup / "config"
+    if config.exists():
+        _atomic_copy(config, _codex_home() / "config.toml")
     for name in ("version", "source", "defaults"):
         src = backup / name
         dst_name = "defaults.toml" if name == "defaults" else name
@@ -783,6 +789,29 @@ def _run_migrations(package_root: Path) -> list[str]:
     return sorted(applied)
 
 
+def _reconcile_runtime_config(package_root: Path) -> None:
+    reconciler = package_root / "scripts" / "update_runtime_config.py"
+    defaults = package_root / "policy" / "defaults.toml"
+    if not reconciler.exists():
+        raise RuntimeError("release package is missing runtime config reconciler")
+    if not defaults.exists():
+        raise RuntimeError("release package is missing policy defaults")
+    subprocess.run(
+        [
+            sys.executable,
+            str(reconciler),
+            "--config",
+            str(_codex_home() / "config.toml"),
+            "--policy",
+            str(_policy_path()),
+            "--defaults",
+            str(defaults),
+        ],
+        check=True,
+        env=os.environ.copy(),
+    )
+
+
 def _sync_managed_runtime(package_root: Path) -> None:
     state = _state_dir()
     state.mkdir(parents=True, exist_ok=True)
@@ -837,14 +866,24 @@ def _sync_managed_runtime(package_root: Path) -> None:
                 _atomic_copy(src, state / "bin" / name, executable=True)
 
     # Hooks keep their stable state-dir target, so replacing telemetry.py does not
-    # require re-authorization. Reconcile the hook only when telemetry is enabled.
+    # require re-authorization. Reconcile both enabled and disabled states so a
+    # previously-installed managed hook cannot survive after telemetry is disabled.
     manage_hooks = state / "manage-hooks.py"
-    if manage_hooks.exists() and _read_policy_bool("telemetry", "enabled", True):
+    if manage_hooks.exists():
         hooks = _codex_home() / "hooks.json"
-        subprocess.run(
-            [sys.executable, str(manage_hooks), "install", "--hooks", str(hooks), "--script", str(state / "telemetry.py")],
-            check=True,
-        )
+        if _read_policy_bool("telemetry", "enabled", True):
+            command = [
+                sys.executable,
+                str(manage_hooks),
+                "install",
+                "--hooks",
+                str(hooks),
+                "--script",
+                str(state / "telemetry.py"),
+            ]
+        else:
+            command = [sys.executable, str(manage_hooks), "uninstall", "--hooks", str(hooks)]
+        subprocess.run(command, check=True)
 
 
 def _run_health_check() -> None:
@@ -883,7 +922,24 @@ def _ensure_current_version_package(version: str) -> Path | None:
             source = candidate
     try:
         if source is not None:
-            for name in ("VERSION", "install.sh", "install.ps1", "bin", "scripts", "templates", "completions", "policy"):
+            package_items = [
+                "VERSION",
+                "LICENSE",
+                "README.md",
+                "README.en.md",
+                "install.sh",
+                "install.ps1",
+                "bin",
+                "scripts",
+                "templates",
+                "completions",
+                "policy",
+                "benchmark",
+                "apps/chatgpt-mcp",
+            ]
+            if platform.system().lower() == "darwin":
+                package_items.append("apps/macos-overlay")
+            for name in package_items:
                 src = source / name
                 dst = staging / name
                 if src.is_dir():
@@ -891,9 +947,6 @@ def _ensure_current_version_package(version: str) -> Path | None:
                 elif src.is_file():
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
-            overlay = source / "apps" / "macos-overlay" / "bin"
-            if overlay.exists():
-                shutil.copytree(overlay, staging / "apps" / "macos-overlay" / "bin")
         else:
             (staging / "VERSION").write_text(version + "\n", encoding="utf-8")
             scripts = staging / "scripts"
@@ -946,6 +999,7 @@ def _install_package(package_root: Path, version: str, manifest: dict[str, Any])
     shutil.copytree(package_root, staged_version)
     try:
         applied_migrations = _run_migrations(staged_version)
+        _reconcile_runtime_config(staged_version)
         _sync_managed_runtime(staged_version)
         _run_health_check()
         atomic_write_json(_migration_state_path(), {"applied": applied_migrations})
@@ -1046,11 +1100,15 @@ def _rollback_unlocked() -> UpdateState:
         None,
     )
     try:
+        restored_exact_snapshot = False
         if history_entry:
             historical_backup = Path(str(history_entry["backup"]))
             if historical_backup.exists():
                 _restore_snapshot(historical_backup)
-        _sync_managed_runtime(package_root)
+                restored_exact_snapshot = True
+        if not restored_exact_snapshot:
+            _reconcile_runtime_config(package_root)
+            _sync_managed_runtime(package_root)
         _run_health_check()
         atomic_write_text(state_dir / "version", previous + "\n")
         atomic_write_text(state_dir / "current-version", previous + "\n")
@@ -1147,6 +1205,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true", help="ignore cached check interval")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--ack-restart",
+        action="store_true",
+        help="clear restart-required reminder after Codex has been fully restarted",
+    )
     parser.add_argument("--no-legacy-fallback", action="store_true")
     return parser
 
@@ -1154,6 +1217,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Iterable[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     _update_dir().mkdir(parents=True, exist_ok=True)
+    if args.ack_restart:
+        state = load_state()
+        state.restart_required = False
+        save_state(state)
+        if not args.quiet:
+            print("✓ Restart reminder cleared after Codex restart.")
+        return 0
     if args.command == "rollback":
         try:
             state = rollback()

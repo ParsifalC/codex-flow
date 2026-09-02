@@ -19,6 +19,11 @@ updater = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = updater
 SPEC.loader.exec_module(updater)
 
+PKG_SPEC = importlib.util.spec_from_file_location("codex_flow_packager", ROOT / "scripts" / "package-release.py")
+assert PKG_SPEC and PKG_SPEC.loader
+packager = importlib.util.module_from_spec(PKG_SPEC)
+PKG_SPEC.loader.exec_module(packager)
+
 
 class UpdaterTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -39,6 +44,13 @@ class UpdaterTest(unittest.TestCase):
             "notify_cli = true\n"
             "notify_app = true\n"
             "auto_install = false\n",
+            encoding="utf-8",
+        )
+        (self.codex_home / "config.toml").write_text(
+            "# user sentinel
+[unrelated]
+keep_me = true
+",
             encoding="utf-8",
         )
         self.bin_dir = self.root / "bin"
@@ -143,7 +155,11 @@ class UpdaterTest(unittest.TestCase):
         launcher.write_text("@echo off\r\n" if os.name == "nt" else "#!/usr/bin/env bash\necho ota-fixture\n", encoding="utf-8")
         if os.name != "nt":
             launcher.chmod(0o755)
-        (release_root / "policy" / "defaults.toml").write_text("schema_version = 4\n", encoding="utf-8")
+        (release_root / "policy" / "defaults.toml").write_text('[models]\nworker_model = "fixture-worker"\n\n[reasoning.worker]\nminimum = "xhigh"\n\n[runtime]\nmax_concurrent_threads = 4\n', encoding="utf-8")
+        (release_root / "scripts" / "update_runtime_config.py").write_text(
+            (ROOT / "scripts" / "update_runtime_config.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
         archive = self.root / "codex-flow-1.8.0-test.tar.gz"
         with tarfile.open(archive, "w:gz") as tf:
@@ -164,7 +180,11 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual((self.state / "previous-version").read_text(encoding="utf-8").strip(), "1.7.0")
         self.assertTrue((self.state / "versions" / "1.8.0" / "VERSION").exists())
         self.assertTrue((self.bin_dir / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")).exists())
-
+        config_text = (self.codex_home / "config.toml").read_text(encoding="utf-8")
+        self.assertIn("keep_me = true", config_text)
+        self.assertIn('default_subagent_model = "fixture-worker"', config_text)
+        policy_text = (self.codex_home / "codex-flow.toml").read_text(encoding="utf-8")
+        self.assertIn('resolved_model = "fixture-worker"', policy_text)
 
     def test_install_lock_rejects_concurrent_writer(self) -> None:
         with updater.install_lock():
@@ -193,7 +213,11 @@ class UpdaterTest(unittest.TestCase):
         (package / "scripts" / "migrations").mkdir(parents=True)
         (package / "scripts" / "updater.py").write_text("# new updater\n", encoding="utf-8")
         (package / "policy").mkdir(parents=True)
-        (package / "policy" / "defaults.toml").write_text("schema_version = 4\n", encoding="utf-8")
+        (package / "policy" / "defaults.toml").write_text('[models]\nworker_model = "fixture-worker"\n\n[reasoning.worker]\nminimum = "xhigh"\n\n[runtime]\nmax_concurrent_threads = 4\n', encoding="utf-8")
+        (package / "scripts" / "update_runtime_config.py").write_text(
+            (ROOT / "scripts" / "update_runtime_config.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
         (package / "VERSION").write_text("1.8.0\n", encoding="utf-8")
         migration = package / "scripts" / "migrations" / "9999_test_failure.py"
         migration.write_text(
@@ -224,6 +248,32 @@ class UpdaterTest(unittest.TestCase):
         self.assertFalse(any("pull" in command for command in commands))
         self.assertTrue(any(("install.ps1" in " ".join(command)) or ("install.sh" in " ".join(command)) for command in commands))
 
+
+    def test_safe_extract_rejects_tar_special_member(self) -> None:
+        archive = self.root / "special.tar"
+        with tarfile.open(archive, "w") as tf:
+            info = tarfile.TarInfo("payload.fifo")
+            info.type = tarfile.FIFOTYPE
+            tf.addfile(info)
+        with self.assertRaisesRegex(RuntimeError, "special member"):
+            updater.safe_extract(archive, self.root / "special-extract")
+
+    def test_restart_reminder_requires_explicit_acknowledgement(self) -> None:
+        state = updater.load_state()
+        state.restart_required = True
+        updater.save_state(state)
+        self.assertEqual(updater.main(["--ack-restart", "--quiet"]), 0)
+        self.assertFalse(updater.load_state().restart_required)
+
+    def test_release_package_keeps_runtime_dependencies(self) -> None:
+        linux = {path.relative_to(ROOT).as_posix() for path in packager.iter_files("linux-x86_64")}
+        self.assertIn("benchmark/corpus.json", linux)
+        self.assertIn("apps/chatgpt-mcp/server.py", linux)
+        self.assertNotIn("apps/macos-overlay/build.sh", linux)
+        mac = {path.relative_to(ROOT).as_posix() for path in packager.iter_files("darwin-arm64")}
+        self.assertIn("apps/macos-overlay/build.sh", mac)
+        self.assertIn("apps/macos-overlay/Sources/main.swift", mac)
+        self.assertIn("apps/macos-overlay/bin/FlowPilot", mac)
 
 if __name__ == "__main__":
     unittest.main()
