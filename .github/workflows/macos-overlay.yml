@@ -1,0 +1,19 @@
+name: macos-overlay
+
+on:
+  push:
+    paths:
+      - 'apps/macos-overlay/**'
+      - '.github/workflows/macos-overlay.yml'
+  pull_request:
+    paths:
+      - 'apps/macos-overlay/**'
+      - '.github/workflows/macos-overlay.yml'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native overlay
+        run: bash apps/macos-overlay/build.sh
