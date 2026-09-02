@@ -80,6 +80,14 @@ public class IPCService {
             }
             
             guard clientSocket >= 0 else { return }
+            var noSigPipe: Int32 = 1
+            _ = setsockopt(
+                clientSocket,
+                SOL_SOCKET,
+                SO_NOSIGPIPE,
+                &noSigPipe,
+                socklen_t(MemoryLayout<Int32>.size)
+            )
             
             var buffer = [UInt8](repeating: 0, count: 4096)
             let bytesRead = read(clientSocket, &buffer, buffer.count)
@@ -151,7 +159,8 @@ public class IPCService {
                     let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
                     let lastUrl = URL(fileURLWithPath: codexHome).appendingPathComponent("codex-flow").appendingPathComponent("telemetry").appendingPathComponent("last.json")
                     if let data = try? Data(contentsOf: lastUrl),
-                       let run = try? JSONDecoder().decode(TaskRun.self, from: data) {
+                       var run = try? JSONDecoder().decode(TaskRun.self, from: data) {
+                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
                         state.update(run: run)
                         state.expand()
                         return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
@@ -160,12 +169,14 @@ public class IPCService {
                     return "{\"ok\": true, \"action\": \"expanded\"}\n"
                 } else {
                     if let fileData = try? Data(contentsOf: URL(fileURLWithPath: payload)),
-                       let run = try? JSONDecoder().decode(TaskRun.self, from: fileData) {
+                       var run = try? JSONDecoder().decode(TaskRun.self, from: fileData) {
+                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
                         state.update(run: run)
                         state.expand()
                         return "{\"ok\": true, \"updatedFrom\": \"file\"}\n"
                     } else if let json = payload.data(using: .utf8),
-                              let run = try? JSONDecoder().decode(TaskRun.self, from: json) {
+                              var run = try? JSONDecoder().decode(TaskRun.self, from: json) {
+                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
                         state.update(run: run)
                         state.expand()
                         return "{\"ok\": true, \"updatedFrom\": \"json\"}\n"
@@ -198,6 +209,14 @@ public class IPCService {
             return (false, L("Failed to create client socket.", "创建客户端 socket 失败。"))
         }
         defer { close(clientSocket) }
+        var noSigPipe: Int32 = 1
+        _ = setsockopt(
+            clientSocket,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSigPipe,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
         
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
