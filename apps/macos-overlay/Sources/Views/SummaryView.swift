@@ -718,7 +718,7 @@ public struct SummaryView: View {
     
     // MARK: - Historical Task Banner
     private var historicalTaskBanner: some View {
-        HStack {
+        HStack(spacing: 5) {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 9))
                 .foregroundColor(.cyan)
@@ -727,7 +727,30 @@ public struct SummaryView: View {
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundColor(.cyan)
             
-            Spacer()
+            Spacer(minLength: 4)
+            
+            // Switch Task Menu
+            taskPickerMenu(
+                label: HStack(spacing: 3) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 8))
+                    Text("Select Run")
+                        .font(.system(size: 8.5, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6.5))
+                }
+                .foregroundColor(.white.opacity(0.85))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.1))
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+                        )
+                )
+            )
             
             Button {
                 state.jumpToLive()
@@ -763,40 +786,47 @@ public struct SummaryView: View {
     // MARK: - Project Header Row
     private func projectHeaderRow(run: TaskRun) -> some View {
         HStack(spacing: 6) {
-            // Project & Branch Chip
-            HStack(spacing: 4) {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 8.5))
-                    .foregroundColor(.white.opacity(0.6))
-                
-                Text(run.projectName)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(1)
-                
-                if let branch = run.gitBranch {
-                    Text("·")
-                        .foregroundColor(.white.opacity(0.3))
+            // Project & Branch Chip with interactive switcher menu
+            taskPickerMenu(
+                label: HStack(spacing: 4) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(.white.opacity(0.65))
                     
-                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
-                        .font(.system(size: 7.5))
-                        .foregroundColor(.cyan.opacity(0.8))
-                    
-                    Text(branch)
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(.cyan.opacity(0.9))
+                    Text(run.projectName)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.95))
                         .lineLimit(1)
+                    
+                    if let branch = run.gitBranch {
+                        Text("·")
+                            .foregroundColor(.white.opacity(0.35))
+                        
+                        Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                            .font(.system(size: 7.5))
+                            .foregroundColor(.cyan.opacity(0.85))
+                        
+                        Text(branch)
+                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(.cyan.opacity(0.95))
+                            .lineLimit(1)
+                    }
+                    
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7.0, weight: .bold))
+                        .foregroundColor(.white.opacity(0.5))
+                        .padding(.leading, 1)
                 }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2.5)
-            .background(
-                Capsule()
-                    .fill(Color.white.opacity(0.07))
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
-                    )
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                        )
+                )
             )
             .layoutPriority(1)
             
@@ -810,6 +840,79 @@ public struct SummaryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+    
+    // MARK: - Task Picker Dropdown Menu
+    private func taskPickerMenu<LabelContent: View>(label: LabelContent) -> some View {
+        Menu {
+            // 1. Live Task Option
+            if let latest = state.latestRun {
+                Section("Live Session") {
+                    Button {
+                        state.jumpToLive()
+                    } label: {
+                        let isLiveActive = (state.inspectedRun == nil || state.inspectedRun?.id == latest.id)
+                        let check = isLiveActive ? "✓ " : ""
+                        let branch = latest.gitBranch.map { " (\($0))" } ?? ""
+                        Text("\(check)⚡ Live: \(latest.projectName)\(branch) · \(latest.formattedDate)")
+                    }
+                }
+            }
+            
+            // 2. Recent Tasks
+            let historyRuns = TelemetryQueryEngine.shared.fetchHistory(limit: 20)
+            if !historyRuns.isEmpty {
+                Section("Recent Runs & Tasks") {
+                    ForEach(Array(historyRuns.enumerated()), id: \.element.id) { index, hRun in
+                        Button {
+                            if hRun.id == state.latestRun?.id {
+                                state.jumpToLive()
+                            } else {
+                                state.inspect(run: hRun)
+                            }
+                        } label: {
+                            let isCurrent = (currentRun?.id == hRun.id)
+                            let check = isCurrent ? "✓ " : ""
+                            let branch = hRun.gitBranch.map { " (\($0))" } ?? ""
+                            let preview = (hRun.thread?.preview ?? hRun.summary ?? hRun.sessionTitle)
+                                .replacingOccurrences(of: "\n", with: " ")
+                                .trimmingCharacters(in: .whitespaces)
+                            let shortPreview = preview.count > 28 ? String(preview.prefix(28)) + "..." : preview
+                            let title = "#\(index + 1) \(hRun.projectName)\(branch) · \(hRun.formattedDate) - \(shortPreview)"
+                            Text("\(check)\(title)")
+                        }
+                    }
+                }
+            }
+            
+            // 3. Project Quick Filter
+            let projects = TelemetryQueryEngine.shared.allProjects()
+            if projects.count > 1 {
+                Section("Filter History by Project") {
+                    ForEach(projects, id: \.self) { proj in
+                        Button {
+                            state.selectedProject = proj
+                            state.selectTab(.history)
+                        } label: {
+                            Text("📁 \(proj)...")
+                        }
+                    }
+                }
+            }
+            
+            Divider()
+            
+            // 4. Open History Tab
+            Button {
+                state.selectTab(.history)
+            } label: {
+                Label("Browse All in History...", systemImage: "clock.arrow.circlepath")
+            }
+        } label: {
+            label
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
     }
     
     // MARK: - Status Badge

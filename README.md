@@ -1,446 +1,172 @@
-# codex-flow
+<div align="center">
 
-**简体中文** | [English](README.en.md)
+# ⚡️ codex-flow
 
-为 Codex 提供低摩擦、能力感知的多 Agent 智能编排默认策略。默认编排 Skill 名为 **FlowPilot**（`flow-pilot`）。
+**智能、高效、自适应的 Codex 多 Agent 协同编排引擎**
 
-**让高能力模型负责决策，让更经济的 Worker 负责执行；只有任务确实需要时，才提高推理强度。**
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg?style=flat-square)](VERSION)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-快速安装)
+[![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.md)
+[![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.md)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
-`codex-flow` 按模型能力和任务复杂度路由，不永久绑定某个模型名称，也不固定使用某个 reasoning level；同时用确定性 telemetry 记录一次任务里 Parent / Worker 的参与情况、token/credits 和账户额度窗口变化，统计本身不调用模型。
+<br />
 
-## 默认策略
+<img src="docs/assets/promo/flowpilot_promo_banner.png" alt="codex-flow Banner" width="100%" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15);" />
 
-```text
-SMALL      -> 合格的 Parent 直接完成
-ROUTINE    -> Parent 规划(high) -> Worker 实施(high) -> Parent 验收(high)
-COMPLEX    -> Parent 规划(high/xhigh) -> Worker 实施(high/xhigh) -> Parent 验收(high/xhigh)
-CRITICAL   -> 质量优先；只有确有必要时才升级到 xhigh/max
-```
+<br /><br />
 
-Parent 是否合格由策略决定，而不是由模型名称决定。默认优先使用当前最新的高能力模型，Parent 最低 reasoning 为 `high`，具体模型下限可配置；Worker 独立选择当前更具成本效率、适合编码的模型。因此 `gpt-5.6-sol/xhigh` 可以是一个组合，但绝不是硬性要求。
+[**English Documentation**](README.en.md) · [**深入配置**](docs/configuration.md) · [**遥测机制**](docs/telemetry.md) · [**原生悬浮窗**](docs/overlay.md) · [**基准评测**](docs/benchmark.md)
 
-## FlowPilot
+<br />
 
-FlowPilot 负责当前任务的分类、路由、reasoning 强度、Worker delegation、review 和有限 repair。它会在任务开始时分类，并在范围、不确定性、风险或独立工作流明显增加时重新分类，避免受初始判断束缚。它不是一个固定模型，也不只是“省 token”的规则；目标是在满足质量门槛的前提下选择足够的能力和并行度。
+> **“ 让高能力模型负责规划决策，让更经济的 Worker 负责落地执行；只有任务确实需要时，才提高推理强度。”**
 
-安装后 Skill 位于：
+</div>
 
-```text
-~/.codex/skills/flow-pilot/SKILL.md
-```
+---
 
-## 当前任务显式路由
+## ✨ 核心亮点
 
-用户可以在当前任务中明确控制是否使用子 Agent，不需要修改任何持久配置：
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🧠 动态自适应路由 (FlowPilot)</h3>
+      <p>不与固定模型强绑定。自动识别任务复杂度（<code>SMALL</code> / <code>ROUTINE</code> / <code>COMPLEX</code> / <code>CRITICAL</code>），按需分发子任务并自适应调节推理深度。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>⚡️ 确定性零开销遥测</h3>
+      <p>纯 Python 本地 Token 差值归因 + 实时账户 Quota 配额感知。<b>统计过程 0 次额外 LLM 调用</b>，任务结束即刻输出清晰消耗卡片。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🪟 macOS 原生灵动悬浮窗</h3>
+      <p>SwiftUI + AppKit 纯原生构建。闲置微胶囊吸附 + 展开式毛玻璃仪表盘，提供实时巡检、历史回溯与 30 天效能看板。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🎯 零摩擦交互与显式控制</h3>
+      <p>开箱即用。在对话中随心使用 <code>direct</code>（直出）、<code>delegate</code>（委派）或自然语言控制当前任务编排，不污染全局配置。</p>
+    </td>
+  </tr>
+</table>
 
-```text
-direct     -> 当前任务不使用子 Agent
-delegate   -> 当前任务明确优先交给子 Agent 执行
-adaptive   -> 当前任务使用 FlowPilot 默认自动路由
-```
+---
 
-也支持意图明确的自然语言，例如：
+## 🚀 快速安装
 
-```text
-不要使用子 agent，直接完成
-这次直接做
-跳过 worker
-不用 delegation
-
-使用子 agent
-这次交给 worker 实现
-
-按默认策略
-自动决定是否使用子 agent
-```
-
-当前任务中的显式路由指令优先于 codex-flow 默认策略和持久配置，但**只对当前任务生效**，不会写回用户配置。如果同一任务里出现互相冲突的明确指令，以最后一条明确指令为准。
-
-`direct` 只关闭 delegation，不会关闭任务分类、reasoning 自适应、验证、验收标准、有限修复和 review。流程只是从：
-
-```text
-Parent -> Worker -> Parent review
-```
-
-变成：
-
-```text
-Parent -> implementation -> self-review
-```
-
-## 安装
-
-### macOS / Linux
+### 一键安装
 
 ```bash
-git clone git@github.com:ParsifalC/codex-flow.git
-cd codex-flow
-bash install.sh
+# macOS / Linux
+git clone git@github.com:ParsifalC/codex-flow.git && cd codex-flow && bash install.sh
 ```
-
-### Windows PowerShell
 
 ```powershell
-git clone git@github.com:ParsifalC/codex-flow.git
-cd codex-flow
-.\install.ps1
+# Windows PowerShell
+git clone git@github.com:ParsifalC/codex-flow.git; cd codex-flow; .\install.ps1
 ```
 
-管理命令默认安装到 `~/.local/bin`。如果当前默认 shell 是 Bash 或 zsh，安装器还会向对应的 rc 文件写入一个带明确标记、可重复执行的托管块。该托管块会自动把 CLI 目录加入 `PATH`，并注册 `codex-flow` 子命令补全，包括 `usage last`、`benchmark-local quick|full` 和 `benchmark-corpus quick|full`。安装完成后，安装器会明确提示执行 `source ~/.zshrc`（Bash 为 `source ~/.bashrc`）立即更新当前终端，或者打开一个新终端。
+> ⚠️ **重要**：安装完成后请**完整重启 Codex**（重新打开应用），即可自动激活 FlowPilot 编排能力！
 
-安装完成后必须**完整退出 Codex，再重新打开 Codex**；只新建任务不够。重启后请开始一个新的 task/turn，因为已经运行中的 turn 无法补建它的起始快照。Telemetry 启用时，请运行 `/hooks`；如果 FlowPilot telemetry 处于待批准状态，请在那里授权。Telemetry 禁用时不需要 hook 授权，但仍必须完整重启 Codex 并开始新的 task/turn。
+---
 
-FlowPilot telemetry 默认会把托管的 command hooks 合并进 `~/.codex/hooks.json`，不会覆盖用户已有 hooks。由于 Codex 对 command hooks 有安全信任机制，**首次安装或 hook 内容发生变化后，Codex 可能要求一次 trust approval**；出现提示时用 `/hooks` 查看并批准即可。批准以后正常任务不需要额外操作。关闭 telemetry 时不会安装这些 hooks，也不会要求 hook 授权。
+## 🎮 基本使用
 
-Shell 选择优先读取 `CODEX_FLOW_SHELL`，否则使用 `SHELL` 的 basename。`CODEX_FLOW_SHELL_CONFIG_DIR` 可将托管的 `.bashrc`、登录 profile 或 `.zshrc` 放到指定配置目录；无法识别 shell 时，安装器仍会输出手动添加 `PATH` 的提示。
+### 1. 对话内自然语言路由
 
-## 任务完成后的确定性统计
-
-Telemetry 默认开启，以**一个用户 turn 作为一次 flow run**。Codex hooks 记录生命周期并提供 Parent / Worker transcript；collector 从其中的原生 `token_count` 事件按 turn 做差。本机已登录的 `codex app-server` 提供 rate-limit snapshot，以及 billing route 可用时的 estimated credits / optional cost。formatter 是纯 Python，因此不会为了生成总结再触发一次 LLM inference。
-
-默认采集：
-
-- Parent 和参与过的 Worker 数量、类型、模型、实际 reasoning effort 和状态
-- Parent / Worker transcript 可获得的 turn-level input、cached input、output、reasoning output、total tokens
-- 服务端可提供时的 estimated credits / optional cost
-- 任务开始与结束时账户 rate-limit window 的 `usedPercent`（已使用比例）、剩余比例，以及前后百分点变化
-- Desktop session 名称；新线程尚未被 app-server materialize 时从本地 session index 回退读取
-
-任务结束时会尽量直接在终端显示，例如：
+在 Codex 对话中，你可以随时用关键词或自然语言精确指定当前任务是否使用子 Agent（仅当前轮次生效）：
 
 ```text
-FlowPilot summary
-  participants  1 parent + 3 workers
-  parent        gpt-5.6-sol (high)   82.4k tokens
-  worker        worker-explorer     gpt-5.6-luna (high)  116.8k tokens  completed
-  worker        worker-implementer  gpt-5.6-luna (xhigh) 401.2k tokens  completed
-  worker        worker-implementer  gpt-5.6-luna (high)   68.4k tokens  completed
-  attributed    668.8k tokens  1.840 credits
-  account quota (used) 5h 31%→34% (+3 pp; 66% remaining); 7d 18%→19% (+1 pp; 81% remaining)
+👉 自动模式（默认） : "按默认策略实现" / "自适应处理"
+👉 强制委派 (Worker) : "delegate" / "使用子 agent 实现" / "交给 worker 处理"
+👉 单兵直出 (Direct) : "direct" / "不要使用子 agent，直接完成" / "这次直接做"
 ```
 
-这里有两个刻意区分的语义：
+---
 
-- **attributed tokens** 来自 hooks 指向的 Parent / Worker transcript，并按当前 turn 的累计计数差值归因；若当前 Codex rollout 格式无法识别才显示 unavailable。
-- **estimated credits / cost** 只在 app-server 暴露 thread billing route 时附加；不会从 token 数或账户余额反推。
-- **account quota** 的 `usedPercent` 是已消耗比例，不是剩余比例；`remaining` 是由该官方比例计算出的剩余比例。这个接口按整数百分比提供快照，短任务可能出现 `70% → 70% (no change)`，这表示两次采样没有跨过一个百分点，不是固定写死。
-- **account quota change during run** 是整个账户在这段时间里的变化。如果同时有别的 Codex session 在运行，不能把全部百分点变化都声称成本次 flow 独占消耗。
+### 2. 交互式控制台
 
-`summary = true` 控制 Stop hook 是否通过 Codex 支持的 `systemMessage` 输出独立统计提示；它不会改写模型已经生成的最终正文。若当前 UI 未展示该系统提示，可用下面的 `usage last` 重看。`summary = false` 只关闭提示，不停止采集。
-
-默认还会在 macOS Notification Center 发送一条短通知，包含项目、worker 数量、总 token 和耗时；它不包含完整 prompt 或 summary 正文。通过 `notifications = false` 或 `CODEX_FLOW_TELEMETRY_NOTIFICATIONS=false` 关闭。每条 run 都会独立写入 `~/.codex/codex-flow/telemetry/runs/*.json`，默认保留 30 天；`retention_days` 或 `CODEX_FLOW_TELEMETRY_RETENTION_DAYS` 可调整保留天数。`last.json` 仍是最近一次完成 run 的快捷指针。
-
-Worker 关联以 `agent_id` 持久索引为主，并用 parent/worker 生命周期窗口兜底；旧版本留下的孤立 worker 会在下一次 parent Stop 时自动归并。原始孤立 run 不会立即删除，而会记录 `merged_into` / `worker_sources`，直到保留期到期。
-
-如果 app-server、transcript token 事件、某个 usage 字段或 billing route 在当前 Codex 版本/账户上不可用，telemetry 会 fail-open：任务本身继续正常执行，只让对应统计缺失，不伪造数据。
-
-最近一次完整结果可以重新查看或机器读取：
+终端输入 `codex-flow` 即刻进入交互式管理菜单：
 
 ```bash
-codex-flow usage last
-codex-flow usage last --json
-```
-
-如果明确不希望安装 telemetry hooks，可在安装/重装时关闭：
-
-```bash
-CODEX_FLOW_TELEMETRY_ENABLED=false bash install.sh
-```
-
-Windows PowerShell 可先设置同名环境变量再运行 `install.ps1`。
-
-## 常用管理命令与交互式终端
-
-终端直接输入 `codex-flow`（TTY 无参数时）即可进入 Moyu 风格的交互式控制台，支持快捷查看最近任务、历史任务列表、项目聚合分析、健康检查及快速基准测试。
-
-```bash
-# 交互式管理控制台
 codex-flow
+```
 
-# 基础状态与诊断
-codex-flow status
+```text
+╭──────────────────────────────────────────────────╮
+│   ⚡️  FlowPilot Management Console               │
+╰──────────────────────────────────────────────────╯
+  [1] 📋 查看最近一次任务消耗 (usage last)
+  [2] 📜 任务历史记录 (usage list)
+  [3] 📊 效能与算力卸载看板 (usage stats)
+  [4] 🩺 系统健康检查 (doctor)
+  [5] 🪟 启动 / 切换原生悬浮窗 (overlay)
+  [6] 🔄 检查与同步更新 (update)
+  [0] 🚪 退出
+```
+
+---
+
+### 3. 常用 CLI 快捷命令
+
+```bash
+# 📊 查看最近任务的 Token、耗时与账户 Quota 变化
+codex-flow usage last
+
+# 📜 查看历史任务列表
+codex-flow usage list --today
+
+# 📈 查看 30 天算力卸载与缓存命中分析
+codex-flow usage stats -d 30
+
+# 🩺 环境诊断与配置检查
 codex-flow doctor
+
+# 🔄 一键无损更新
 codex-flow update
-codex-flow uninstall
-
-# 任务遥测与历史分析
-codex-flow usage last                      # 最近一次任务统计
-codex-flow usage list                      # 任务历史列表 (-n 10, -p <project>, --today)
-codex-flow usage show 1                    # 查看第 1 条历史任务详情卡片 (或指定任务 ID)
-codex-flow usage stats                     # 过去 30 天项目维度汇总与算力卸载分析 (-p <project>, -d <days>)
-codex-flow usage stats --json              # 结构化输出供二次分析
-
-# 基准测试
-codex-flow benchmark-local quick
 ```
 
-`update` 会 fast-forward 原始 checkout，保留用户明确指定的模型/推理配置以及 telemetry 开关，重新执行安装，并且只对 `auto` 配置重新解析当前版本推荐值。
+---
 
-## 默认自适应配置
+## 🪟 FlowPilot macOS 原生悬浮窗
 
-直接安装且不提供任何环境变量覆盖时，会生成类似下面的 `~/.codex/codex-flow.toml`：
+专为 macOS 深度定制的 **100% 纯原生毛玻璃效能看板**，深度打通任务生命周期与 Quota 监控。
 
-```toml
-schema_version = 3
+<div align="center">
+  <img src="docs/assets/promo/flowpilot_promo_poster.png" alt="FlowPilot Native Widget Showcase" width="100%" style="border-radius: 12px; margin: 16px 0;" />
+</div>
 
-[parent]
-model_policy = "latest-capable"
-min_model = "auto"
-min_reasoning_effort = "high"
-reasoning_policy = "adaptive"
-routine_effort = "high"
-complex_effort = "xhigh"
-critical_effort = "max"
-
-[worker]
-model_policy = "latest-efficient"
-model = "auto"
-resolved_model = "gpt-5.6-luna"
-min_reasoning_effort = "high"
-reasoning_policy = "adaptive"
-routine_effort = "high"
-complex_effort = "xhigh"
-critical_effort = "max"
-
-[runtime]
-max_concurrent_threads = 4
-max_repair_cycles = 2
-
-[telemetry]
-enabled = true
-summary = true
-notifications = true
-retention_days = 30
-source = "hooks+app-server"
-```
-
-`model = "auto"` 会跟随 codex-flow 当前版本的推荐；如果用户明确指定具体模型，则更新时继续保持该 pin。Parent 不会因为推荐元数据而被硬编码成某个固定 Sol 版本。
-
-安装器同时会维护 Codex 的 `[agents]` 运行时兜底，例如当前默认：
-
-```toml
-[agents]
-enabled = true
-max_concurrent_threads_per_session = 4
-default_subagent_model = "gpt-5.6-luna"
-default_subagent_reasoning_effort = "high"
-```
-
-它不会强制修改用户当前选择的主模型。
-
-## 推理强度选择
-
-默认目标是使用“足够完成任务的最低合格推理强度”，而不是无条件拉满：
-
-| 任务类型 | Parent | Worker |
-| --- | --- | --- |
-| SMALL | `high` 或当前合格强度 | 不使用 Worker |
-| ROUTINE | `high` | `high` |
-| COMPLEX | `high` / `xhigh` | `high` / `xhigh` |
-| CRITICAL | `xhigh` / `max` | 仅质量优先时使用 `xhigh` / `max` |
-
-`max` 永远不是通用默认值。只有任务风险、复杂度或者较低强度的实际失败证据足以证明有必要时才升级。
-
-## 内置 Benchmark
-
-项目提供一个确定性的六任务 Benchmark corpus，按 2 routine / 2 complex / 2 critical 平衡分层。它同时测量 direct 模型能力、固定强度 Flow 增量，以及自适应推理强度的价值。覆盖：
-
-- 局部 Bug 修复
-- 配置优先级
-- 多文件兼容性重构
-- 配置迁移
-- 可恢复且幂等的数据迁移
-- 具有权限与目录持久化语义的原子状态写入
-
-当前 profiles：
-
-```text
-quick
-  6 tasks × 5 strategies × 1 repetition = 30 runs
-  Luna direct/high
-  Terra direct/high
-  Sol direct/high
-  Flow fixed: Sol parent/high + Luna worker/high
-  Flow adaptive: routine=high, complex=xhigh, critical=max
-
-full
-  6 tasks × 5 strategies × 3 repetitions = 90 runs
-  与 quick 使用相同五组策略
-```
-
-三组 direct 与固定 Flow 全部使用 `high`，确保模型与策略结论不会混入 reasoning 差异；自适应 Flow 单列分析。Flow 由 runner 显式执行 `Sol 只读规划 → Luna 实现 → 外部 verifier → Sol 只读复核 → Luna 定向修复`，并分别记录 parent/worker usage。每个任务都会生成确定性的 seed commit，并使用位于可写任务仓库之外的外部 verifier。
-
-`quick` 每个类别只有 2 个样本，用于烟雾观察；`full` 每策略每类别有 6 个样本，才满足默认正式证据门槛。
-
-## 推荐真实 Benchmark：本地 Codex 登录态
-
-本地已经认证的 Codex session 是当前默认的真实 Benchmark 路径。如果本机 Codex CLI 已经通过 ChatGPT 或其他受支持的本地方式登录，**不需要 API Key**。
-
-运行：
+- **🟢 灵动微胶囊 (Capsule)**：闲置时边缘半收起，呼吸光环直观指示任务状态与最新消耗。
+- **⚡️ 实时巡检 (Inspector)**：3 组高精环形仪表盘（耗时 / Tokens / 费用），实时呈现 5m / 1h / 1d 配额水位与 Agent 拓扑树。
+- **📜 历史回溯 (History)**：多项目任务流水线，点击任意历史任务即刻切回详情回溯。
+- **📊 效能看板 (Analytics)**：7d/30d 缓存命中率、Worker 算力卸载比与多模型/多仓库活跃度分布。
 
 ```bash
-codex-flow update
-codex-flow benchmark-local quick
+# 一键启动悬浮窗
+codex-flow overlay start
+
+# 切换展开 / 折叠
+codex-flow overlay toggle
 ```
 
-该命令会自动完成：
+---
 
-```text
-检查 git / Python / Codex
-显示 Codex CLI 版本
-        ↓
-生成冻结的 quick corpus
-        ↓
-dry-run 验证 30 个计划执行
-        ↓
-显示 quota / token 提示
-        ↓
-要求输入确认：
-RUN QUICK 30
-        ↓
-执行 30 次真实 Codex 策略任务
-        ↓
-认证/CLI 等零 usage 基础设施失败时立即停止
-        ↓
-分析结果
-        ↓
-生成 Markdown 报告
-```
+## 📚 深入文档
 
-默认会在 `benchmark/results/` 下生成带时间戳的结果：
+高级特性、底层原理与深入定制请参阅二级文档：
 
-```text
-quick-<timestamp>.jsonl
-quick-<timestamp>.analysis.json
-quick-<timestamp>.report.md
-quick-<timestamp>.meta.json
-```
+| 模块 | 文档入口 | 核心内容 |
+| :--- | :--- | :--- |
+| **⚙️ 策略与配置** | [docs/configuration.md](docs/configuration.md) | `codex-flow.toml` 参数全解、推理强度矩阵、环境变量覆盖 |
+| **📈 确定性遥测** | [docs/telemetry.md](docs/telemetry.md) | Hook 生命周期、Token 差值归因算法、账户 Quota 采集机制 |
+| **🪟 原生悬浮窗** | [docs/overlay.md](docs/overlay.md) | 交互手势、快捷控制、IPC 通信与 SwiftUI 架构指南 |
+| **🧪 本地基准测试** | [docs/benchmark.md](docs/benchmark.md) | 6 任务平衡测试集、本地无 Key 评测方法与多策略对比 |
+| **☁️ Actions 评测** | [docs/benchmark-actions.md](docs/benchmark-actions.md) | GitHub Actions 云端自动化 Benchmark 工作流 |
+| **🌐 多语言支持** | [docs/localization.md](docs/localization.md) | 中英双语 (i18n) 切换与本地化范围说明 |
 
-metadata 会记录 Codex CLI 版本、codex-flow commit、本地认证执行模式、manifest 路径以及结果/报告路径。
+---
 
-第一次 `quick` 建议按**最多约 1500 万总 token**作为保守预算上限。Flow 的规划/复核以及 repair 会增加 usage；实际消耗可能明显不同。
+## 📄 开源协议
 
-### 成本含义
-
-如果 Benchmark 使用 ChatGPT/Codex 套餐登录态执行，报告中的美元数字全部是：
-
-> **API-equivalent reference cost（API 等价参考成本）**
-
-它使用固定 API 价格快照把不同模型放到统一尺度上比较，**不代表 ChatGPT 套餐实际产生了对应美元账单**。
-
-套餐用户更应该关注：
-
-- 任务通过率
-- 首轮通过率
-- repair cycles
-- parent review cycles
-- input / cached input / output tokens
-- 总 token 效率
-- wall time
-- API 等价参考成本
-
-## 底层 Benchmark 命令
-
-如果需要单独控制每一步，仍然可以使用：
-
-```bash
-codex-flow benchmark-corpus quick
-
-codex-flow benchmark \
-  --manifest .codex-flow-benchmark/manifest.json \
-  --output benchmark/results/quick-001.jsonl \
-  --fail-fast-infrastructure
-
-codex-flow benchmark-analyze \
-  --results benchmark/results/quick-001.jsonl \
-  --prices benchmark/prices/gpt-5.6-2026-08-30.json \
-  --json
-```
-
-Analyzer 会分别输出 Sol 同强度能力证据、固定 Flow 相对 Sol/Luna 的增量证据、自适应 Flow 相对固定 Flow 的证据，再在质量门槛后比较总参考成本。Flow 成本包含 parent 与 worker。Benchmark 结论保持 advisory；`policy/benchmark.toml` 默认 `auto_apply = false`。
-
-## 可选：API Key + GitHub Actions Benchmark
-
-`.github/workflows/benchmark-quick.yml` 仍然保留，作为拥有 OpenAI API Key 用户的可选无头执行方式，但它不再是默认 Benchmark 路径。
-
-该 workflow：
-
-- 仅支持手动 `workflow_dispatch`
-- 需要 repository secret `OPENAI_API_KEY`
-- 需要精确确认 `RUN QUICK 30`
-- 只开放 30-run `quick` profile
-- 正常 CI 永远不会自动调用付费模型
-- 会上传原始结果、analysis、report 和相关 metadata
-
-## 自动模型推荐
-
-`scripts/check-recommendation.py` 和 `.github/workflows/model-recommendation.yml` 会保守地检查 OpenAI 官方模型文档，并通过可 review 的 PR 维护 release recommendation。
-
-设计原则是：
-
-- Parent 始终由能力策略决定，而不是推荐值硬 pin
-- Worker 的 `auto` 推荐可以随着新一代高性价比模型更新
-- 用户明确 pin 的模型不会被 update 偷偷覆盖
-- 无法可靠确认模型能力或价格时 fail closed
-
-## 测量边界
-
-Benchmark 和 FlowPilot telemetry 使用不同的数据路径：Benchmark 保持可重复的 JSONL 实验口径；正常交互任务的 token 归因读取 hook-provided transcript，billing / quota 读取 app-server。任何未暴露的 billing 字段都保持 unavailable，不通过 token 数反推套餐 quota。
-
-完整方法说明见 `docs/benchmark.md`。
-GitHub Actions 可选路径说明见 `docs/benchmark-actions.md`。
-
-## 安装时覆盖项
-
-```text
-CODEX_FLOW_PARENT_MODEL_POLICY    默认: latest-capable
-CODEX_FLOW_PARENT_MIN_MODEL       默认: auto
-CODEX_FLOW_PARENT_MIN_EFFORT      默认: high
-CODEX_FLOW_WORKER_MODEL_POLICY    默认: latest-efficient
-CODEX_FLOW_WORKER_MODEL           默认: auto
-CODEX_FLOW_WORKER_MIN_EFFORT      默认: high
-CODEX_FLOW_MAX_THREADS            默认: 4
-CODEX_FLOW_MAX_REPAIR_CYCLES      默认: 2
-CODEX_FLOW_TELEMETRY_ENABLED      默认: true
-CODEX_FLOW_TELEMETRY_NOTIFICATIONS 默认: true（macOS Notification Center）
-CODEX_FLOW_TELEMETRY_RETENTION_DAYS 默认: 30
-CODEX_FLOW_BIN_DIR                默认: ~/.local/bin
-CODEX_FLOW_SHELL                  默认: SHELL 的 basename（自动配置 Bash/zsh）
-CODEX_FLOW_SHELL_CONFIG_DIR       默认: HOME
-```
-
-## CI
-
-普通 CI **不会调用真实付费模型**。目前主要验证：
-
-- Shell / Python / PowerShell 语法
-- 模型推荐 fixture
-## FlowPilot macOS 原生悬浮窗与效能看板 (Native Widget)
-
-`1.4.0` 全面升级并深度集成了 `codex-flow usage` 的全部核心能力（基于 SwiftUI + AppKit 原生构建），并提供中英双语 (i18n) 国际化支持：
-
-- **⚡️ Inspector 实时巡检与 Quota 配额感知**：
-  - 3 组高精环形仪表盘（耗时 / Tokens / 费用估算）、Prompt / Output / Cached / Reasoning 细分分布条、多 Agent 拓扑架构树；
-  - **Rate Limits & Account Quota 监控**：实时呈现 5m / 1h / 1d 配额消耗进度、用量变化（`+X pp`）与重置倒计时；
-  - **历史任务回溯**：支持一键回溯历史任务详情并一键 `[⚡️ Jump to Live]` 返回实时。
-- **📜 History 历史任务回溯**：
-  - 时间线任务列表（序号、时间、项目/分支、会话摘要、Workers 计数、Tokens 胶囊与状态）；
-  - 支持 `All / Today` 过滤、多项目下拉筛选与即时关键词搜索，点击任意历史任务即刻切至 Inspector 回溯详情。
-- **📊 Analytics 效能聚合看板**：
-  - 支持 7d / 30d 周期切换；总任务数（委派 vs 直接）、总活跃时长、总 Tokens 消耗与 Cost 费用预估；
-  - **Cache Efficiency**（缓存命中率与命中 Token 数）与 **Worker Offload**（算力委派卸载比）效能进度条；
-  - **Model Breakdown**（各模型调用次数、Token 占比与角色标签）与 **Projects Distribution**（多仓库活跃度分布）。
-- **极简灵动交互**：
-  - 闲置时自动吸附为边缘微胶囊（Half-Tuck），悬停 0.4s 弹性展开为三段式 Glass 卡片；支持全局拖拽磁吸与一键 Pin 常驻。
-
-管理入口：
-```bash
-codex-flow overlay [start|stop|restart|toggle|expand|collapse|tab|stats|history|status]
-```
-或直接在控制台菜单中选择 `[8] 🪟 FlowPilot 原生悬浮窗`。
-
-## 当前状态
-
-Private preview，版本 `1.4.0`。
-
-FlowPilot 是默认编排 Skill；本地认证 Benchmark 是默认真实数据采集路径；`direct`、`delegate`、`adaptive` 是显式且非持久的当前任务覆盖；正常任务 telemetry 默认开启且不额外调用模型；模型推荐变更需要 review；Benchmark routing 保持 advisory；真实 Benchmark 必须由用户明确触发；用户明确 pin 的配置始终拥有最高持久配置优先级。
+本项目采用 [MIT License](LICENSE) 开源协议。

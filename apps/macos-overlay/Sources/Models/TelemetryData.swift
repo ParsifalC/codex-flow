@@ -481,6 +481,11 @@ public struct TaskRun: Codable, Identifiable {
         return TaskRun.formatTokenCount(count)
     }
     
+    public var formattedCompactTokens: String {
+        let count = aggregatedUsage.totalTokens ?? 0
+        return TaskRun.formatCompactTokenCount(count)
+    }
+    
     public var formattedCost: String {
         if let creditsMicros = aggregatedUsage.estimatedCreditsMicros, creditsMicros > 0 {
             let dollars = creditsMicros / 1_000_000.0
@@ -494,6 +499,16 @@ public struct TaskRun: Codable, Identifiable {
             return String(format: "%.1fM", Double(count) / 1_000_000.0)
         } else if count >= 1_000 {
             return String(format: "%.1fk", Double(count) / 1_000.0)
+        } else {
+            return "\(count)"
+        }
+    }
+    
+    public static func formatCompactTokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.0fM", round(Double(count) / 1_000_000.0))
+        } else if count >= 1_000 {
+            return String(format: "%.0fk", round(Double(count) / 1_000.0))
         } else {
             return "\(count)"
         }

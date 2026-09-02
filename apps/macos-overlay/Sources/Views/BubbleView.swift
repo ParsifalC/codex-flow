@@ -77,11 +77,12 @@ public struct BubbleView: View {
                     )
             }
             
-            // Clean, bold Token metric
-            Text(state.latestRun?.formattedTotalTokens ?? "Ready")
-                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+            // Clean, bold Token metric (no decimals in docked half-screen mode)
+            Text(state.latestRun?.formattedCompactTokens ?? "Ready")
+                .font(.system(size: 9.0, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
+                .minimumScaleFactor(0.7)
             
             // Subtle action handle & status text
             HStack(spacing: 2) {
@@ -204,9 +205,11 @@ public struct BubbleView: View {
                         .font(.system(size: 6.5, weight: .bold))
                         .foregroundColor(statusColor)
                     
-                    Text(state.latestRun?.formattedTotalTokens ?? "Ready")
+                    Text(state.latestRun?.formattedCompactTokens ?? "Ready")
                         .font(.system(size: 8, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.95))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1.5)

@@ -4,6 +4,12 @@
 
 ---
 
+<div align="center">
+  <img src="assets/promo/flowpilot_promo_poster.png" alt="FlowPilot Native Overlay Showcase" width="100%" style="border-radius: 12px; margin: 12px 0;" />
+</div>
+
+---
+
 ## ✨ 核心特性
 
 - 🟢 **默认形态（圆形悬浮气泡）**：
