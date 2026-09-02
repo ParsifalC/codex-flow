@@ -35,7 +35,9 @@ fi
 manifest_url="https://github.com/$REPO/releases/latest/download/codex-flow-update.json"
 manifest="$TMP_DIR/codex-flow-update.json"
 say "→ Resolving latest codex-flow release for $platform"
-curl -fL --retry 3 --connect-timeout 15 "$manifest_url" -o "$manifest"
+if ! curl -fL --retry 3 --connect-timeout 15 "$manifest_url" -o "$manifest"; then
+  fail "no OTA-enabled stable release is available yet; publish a stable release containing codex-flow-update.json before using the release bootstrap"
+fi
 
 IFS=$'\t' read -r version artifact_url expected_sha archive_format < <(python3 - "$manifest" "$platform" <<'PY'
 import json, sys
@@ -139,6 +141,12 @@ if [[ "$os" == "darwin" ]]; then
   else
     say "! codex-flow installed, but FlowPilot did not stay running. Retry with: codex-flow overlay start" >&2
   fi
+fi
+
+doctor="$STATE_DIR/doctor.py"
+if [[ -f "$doctor" ]]; then
+  say "→ Running doctor"
+  python3 "$doctor"
 fi
 
 say ""
