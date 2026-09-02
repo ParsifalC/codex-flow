@@ -18,10 +18,10 @@ Deterministic lifecycle evaluator
     ├─ hard timeout
     ├─ supersession
     ├─ fallback
-    └─ writable replacement fencing
+    └─ writable writer fencing
 ```
 
-Strategy Runtime determines topology and StagePolicy. FlowPilot supplies observable facts such as recent Worker activity, scope coverage, and terminal state. Timing, stall/fallback transitions, cancellation requirements, and writable replacement permission are evaluated deterministically by `scripts/strategies/lifecycle_runtime.py`.
+Strategy Runtime determines topology and StagePolicy. FlowPilot supplies observable facts such as recent Worker activity, scope coverage, and terminal state. Timing, stall/fallback transitions, cancellation requirements, and permission for any downstream writer to enter a writable scope are evaluated deterministically by `scripts/strategies/lifecycle_runtime.py`.
 
 The helper is copied automatically with the `strategies/` package by both Unix and Windows installers to `~/.codex/codex-flow/strategies/lifecycle_runtime.py`.
 
@@ -80,16 +80,16 @@ A numeric quorum is only the minimum successful result count. It does not automa
 
 ## Deterministic evaluator
 
-When a lifecycle decision is required, FlowPilot passes StagePolicy plus actual observations to:
+When a lifecycle decision is required, FlowPilot passes StagePolicy plus actual observations to the evaluator. All three timestamp arguments must be **Unix seconds**, for example Python `time.time()`. Do not pass the 13-digit millisecond timestamps common in JavaScript or telemetry events. The evaluator fails fast on obvious millisecond input instead of silently dividing by 1000.
 
 ```bash
 python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
   --policy-json '<stage-policy-json>' \
   --scope-id <scope> \
   --stage exploration|implementation|review \
-  --started-at <timestamp> \
-  --last-progress-at <timestamp> \
-  --now <timestamp> \
+  --started-at <unix-seconds> \
+  --last-progress-at <unix-seconds> \
+  --now <unix-seconds> \
   [--writable] [--in-flight] \
   [--terminal-success] [--terminal-failure] \
   [--scope-superseded] [--cancel-confirmed] \
@@ -110,26 +110,33 @@ wall_seconds
 fallback_policy
 ```
 
-`cancel_required=true` means the Worker is still non-terminal. Even when `action` already permits `parent_delta`, `continue_partial`, or an isolated `replan`, Scheduler must still request cancellation of the old Worker. That prevents read-only fallback from leaving a timed-out Worker burning resources in the background; writable stages additionally obey `fence_required`.
+`cancel_required=true` means the Worker is still non-terminal. Even when `action` already permits `parent_delta`, `continue_partial`, or an isolated `replan`, Scheduler must still request cancellation of the old Worker. That prevents read-only fallback from leaving a timed-out Worker burning resources in the background; writable stages additionally obey `fence_required` for any new writer.
+
+`fallback_policy` is populated only when failure/cancellation/stall actually requires a fallback decision. It is `null` for successful results and for superseded scopes that are already satisfied, so consumers do not infer duplicate work.
 
 This keeps StagePolicy deterministic and moves timeout/fallback state transitions plus cancellation requirements out of ad-hoc Parent judgment.
 
-## Writable replacement fencing
+## Writable writer fencing
 
 Writable fencing is a Runtime hard safety invariant. Strategies cannot disable it.
 
-If an implementation Worker has already written to a scope, becomes stalled or reaches hard timeout, and fallback is `replan`, the same writable scope cannot immediately receive a replacement while the old Worker might resume:
+The invariant protects **any new writer**, not only a replacement Worker. Once an implementation Worker owns a writable scope and becomes stalled/hard-timed-out while still non-terminal, both of these fallback paths create a downstream writer:
+
+- `parent_delta`: Parent becomes the downstream writer;
+- `replan`: a new Implementer/execution path becomes the downstream writer.
+
+Both must satisfy the same hard fence:
 
 ```text
 old Worker may still write
         ↓
-block same-scope replacement
+block any new writer from the same live scope
         ↓
 request cancellation
         ↓
 cancel/termination confirmed
         ↓
-replan replacement
+Parent delta or replan replacement may write
 ```
 
 If the runtime cannot reliably terminate the old Worker, a second safe path is allowed:
@@ -139,29 +146,24 @@ old Worker remains non-terminal
         ↓
 request cancellation of old Worker (cancel_required=true)
         ↓
-replacement uses a fresh isolated worktree
+new downstream writer uses a fresh isolated worktree
         ↓
 old output is fenced from integration
         ↓
-replan replacement
+Parent delta or replan may proceed
 ```
 
-The evaluator returns `replacement_allowed=true` only when either:
+`replacement_allowed` describes only whether `replan` may spawn a replacement Worker; it does not need to become true for `parent_delta`. For both writer-producing fallback modes, `fence_required=true` is the common safety signal.
 
-1. the old writable Worker is terminal/cancelled/failed; or
-2. the replacement is explicitly isolated and the old output is fenced from integration.
-
-In the second case the replacement may proceed, but the cancellation requirement for the old Worker remains active.
-
-This prevents a stalled Worker A from recovering and writing concurrently with replacement Worker B in the same writable scope.
+This prevents a stalled Worker A from recovering and writing concurrently with either Parent or replacement Worker B in the same writable scope.
 
 ## Fallback
 
 Fallback always covers the missing delta:
 
 - `continue_partial`: continue when existing evidence already satisfies acceptance needs.
-- `parent_delta`: Parent covers only the missing scope.
-- `replan`: re-profile/recompile only for the remaining delta.
+- `parent_delta`: Parent covers only the missing scope; for writable implementation delta it must satisfy writable writer fencing first.
+- `replan`: re-profile/recompile only for the remaining delta; a new writable Implementer must satisfy the same fence.
 - `fail`: surface the unresolved failure instead of silently replacing it.
 
 For a non-terminal stalled/hard-timed-out Worker, fallback may proceed where policy allows, while `cancel_required=true` simultaneously requires cleanup of the old Worker.
@@ -175,7 +177,7 @@ Worker lifecycle failures do not consume `max_repair_cycles`; repair cycles are 
 - **quality**: longer leases, exploration quorum target 2, required implementation, required independent review target 2, no silent Parent replacement of required reviewers.
 - **speed**: opportunistic exploration, shorter leases, required implementation, quorum review.
 
-All strategy preferences remain bounded by Runtime hard ceilings, cancellation requirements, and writable replacement fencing.
+All strategy preferences remain bounded by Runtime hard ceilings, cancellation requirements, and writable writer fencing.
 
 ## Real scenarios
 
@@ -195,18 +197,23 @@ When equivalent scope evidence already exists and policy allows supersession, th
 
 A fallback such as `parent_delta` may continue, but evaluator also returns `cancel_required=true` so the old Worker is reclaimed rather than silently running past idle/hard ceilings.
 
-### Writable implementation stalls
+### Writable Worker stalls and Parent wants to take over
+
+`parent_delta` also creates a new writer. Parent must not write directly into the old Worker's live scope. Confirm termination first, or perform the missing delta in a fresh isolated worktree and fence the old output from integration.
+
+### Writable implementation stalls and needs a replacement
 
 Do not execute `replan → spawn same-scope replacement` directly. Terminate the old Worker first, or move the replacement into a fresh isolated worktree and fence the old output. In either path, a non-terminal old Worker must receive a cancellation request.
 
 ## Runtime invariants
 
 1. `wait()` timeout is not Worker timeout.
-2. Observable progress renews the idle lease.
-3. Hard timeout is absolute.
-4. Supersession requires equivalent scope coverage, not elapsed time.
-5. Parent fallback covers only missing delta.
-6. Any non-terminal lifecycle exit explicitly carries `cancel_required=true`; a timed-out Worker is never silently left running.
-7. Writable replacement requires `old terminal OR new isolated+fenced`.
-8. Lifecycle failure does not consume implementation repair cycles.
-9. Strategy-specific lifecycle preferences stay in StrategySpec; deterministic evaluator enforces hard safety invariants uniformly.
+2. Evaluator timestamps are Unix seconds; obvious millisecond inputs fail fast.
+3. Observable progress renews the idle lease.
+4. Hard timeout is absolute.
+5. Supersession requires equivalent scope coverage, not elapsed time.
+6. Parent fallback covers only missing delta.
+7. Any non-terminal lifecycle exit explicitly carries `cancel_required=true`; a timed-out Worker is never silently left running.
+8. A writable downstream writer (Parent or replacement) requires `old terminal OR new isolated+fenced`.
+9. Lifecycle failure does not consume implementation repair cycles.
+10. Strategy-specific lifecycle preferences stay in StrategySpec; deterministic evaluator enforces hard safety invariants uniformly.
