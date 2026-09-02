@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 
+// Shared update state bridge used by both the FlowPilot badge and update popover.
 public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
     public var schema: Int?
     public var status: String?
