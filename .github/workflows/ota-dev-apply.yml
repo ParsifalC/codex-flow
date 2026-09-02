@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/ota-dev/apply.py'
       - 'apps/macos-overlay/Sources/Services/UpdateService.swift'
+      - '.github/workflows/ota-dev-apply.yml'
 
 permissions:
   contents: write
