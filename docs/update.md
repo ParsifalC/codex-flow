@@ -20,6 +20,8 @@ codex-flow rollback
 
 终端交互菜单会直接在“更新”选项中显示“已是最新”或“vX.Y.Z 可用”。FlowPilot 顶栏提供更新按钮；有更新或已安装但仍需要重启 Codex 时显示角标。App 与 CLI 都读取 `~/.codex/codex-flow/state/update.json`。
 
+更新安装完成后会写入 `restart_required=true`。用户完整重启 Codex 后，可在 FlowPilot 更新面板点击“我已重启 Codex”，或使用 `codex-flow update --ack-restart` 清除提醒。Updater 无法可靠跨平台证明 Codex 宿主进程是否已经完整重启，因此不伪造自动确认。
+
 ## 默认配置
 
 ```toml
@@ -32,34 +34,68 @@ notify_app = true
 auto_install = false
 ```
 
-`stable`、`beta`、`nightly` 使用同一套 manifest 协议。CLI / App 启动时先读本地缓存；缓存过期后由独立静默进程刷新，因此 GitHub 网络延迟不会阻塞主界面。
+`stable`、`beta`、`nightly` 使用同一套 manifest 协议。CLI / App 启动时先读本地缓存；缓存过期后由独立静默进程刷新，因此 GitHub 网络延迟不会阻塞主界面。当前默认交互仍是“自动检查 + 明确提醒 + 用户主动安装”；不会静默自动升级。
 
 ## 安全与事务模型
 
 OTA 安装流程为：
 
 1. 获取 Release 中的 `codex-flow-update.json`。
-2. 按当前平台选择 artifact。
+2. 按当前 OS / CPU 架构选择 artifact。
 3. 下载到临时 staging 目录。
-4. 校验 SHA-256，并拒绝 archive path traversal / link 注入。
-5. 保存当前 policy、runtime、hooks、agents、skill、迁移状态与可执行文件快照。
-6. 在 staging 版本上执行增量 migration，再原子替换受管理文件。
-7. 运行 `doctor` 健康检查。
-8. 只有健康检查成功后才提交 migration 状态与当前版本元数据。
-9. 任一步骤失败都恢复升级前快照；checksum、并发锁、migration 或 doctor 失败不会绕过 OTA 去执行 Git fallback。
+4. 校验 SHA-256，并拒绝 archive path traversal、link 注入以及 tar device/FIFO 等特殊成员。
+5. 保存当前 `config.toml`、policy、runtime、hooks、agents、skill、迁移状态、CLI 与 FlowPilot 可执行文件快照。
+6. 在 staging 版本上执行增量 migration，并只增量同步 codex-flow 管理的 `config.toml [agents]` 字段；未知及用户自有配置保持不变。
+7. 原子替换受管理 runtime 文件，并按 telemetry 配置安装或移除 codex-flow 自己的 hooks。
+8. 运行 `doctor` 健康检查。
+9. 只有健康检查成功后才提交 migration 状态、当前版本和 source 元数据。
+10. 任一步骤失败都恢复升级前快照；checksum、并发锁、migration、配置同步或 doctor 失败不会绕过 OTA 去执行 Git fallback。
 
-首次 OTA 升级会捕获现有安装作为 rollback package。`codex-flow rollback` 会恢复上一版本 runtime 以及该次升级前保存的用户配置快照。
+更新和 rollback 共用写入锁。锁文件包含持锁 PID：只有确认原持锁进程已经退出后才允许回收，不能因为一次较长的下载/安装超过时间阈值就抢占仍在工作的 updater。
 
-## Release 协议
+首次 OTA 升级会捕获现有安装作为 rollback package；同时每次升级都保存精确的 pre-update snapshot。`codex-flow rollback` 优先恢复该次升级前的精确 snapshot，包括原 `source` 指向；只有没有可用精确 snapshot 时才使用上一版本 package 重建受管理 runtime。
 
-每个 OTA Release 发布：
+## Release 发布内容
 
-- 各平台 archive；
-- 对应 SHA-256；
-- `codex-flow-update.json` manifest；
-- Release notes。
+每个 OTA Release 最终对用户公开：
 
-当前正式打包目标为 `linux-x86_64`、`windows-x86_64`、`darwin-arm64`。macOS artifact 在 Release workflow 中重新编译原生 FlowPilot。
+- `codex-flow-<version>-linux-x86_64.tar.gz`
+- `codex-flow-<version>-linux-arm64.tar.gz`
+- `codex-flow-<version>-windows-x86_64.zip`
+- `codex-flow-<version>-windows-arm64.zip`
+- `codex-flow-<version>-darwin-arm64.tar.gz`
+- `codex-flow-<version>-darwin-x86_64.tar.gz`
+- 每个 archive 对应的 `.sha256` 文件
+- `codex-flow-update.json` manifest
+- GitHub Release notes（Release body）
+
+macOS 两个 artifact 都在对应架构的 GitHub runner 上重新编译原生 FlowPilot：Apple Silicon 使用 `darwin-arm64`，Intel 使用 `darwin-x86_64`。
+
+### Archive 内部包含
+
+通用平台 package 是“安装后完整运行时”，而不是只够 updater 自己工作的最小包，主要包含：
+
+- `VERSION`、`LICENSE`、`README.md`、`README.en.md`
+- `install.sh`、`install.ps1`（首次安装/恢复场景；正常 OTA 不重新跑 installer）
+- `bin/`：`codex-flow`、`codex-flow.ps1`、`codex-flow.cmd`、`codex-flow-mcp`
+- `scripts/`：updater、runtime config reconciler、migration、telemetry、doctor、strategy、benchmark 等运行脚本
+- `templates/`：Agent 模板与 FlowPilot Skill
+- `completions/`
+- `policy/`
+- `benchmark/`：benchmark corpus / profile 等运行数据
+- `apps/chatgpt-mcp/`：MCP server、adapter 与 widget 运行资源
+
+macOS package 额外包含完整 `apps/macos-overlay/`，包括 Swift Sources、`build.sh`、README 以及该架构新构建的 `FlowPilot` / `codex-flow-overlay`。这样 OTA 后即使 `source` 已切换到 `~/.codex/codex-flow/versions/<version>`，CLI benchmark、ChatGPT MCP 和 FlowPilot rebuild 仍然可用。
+
+Release package 不包含 `.git`、`.github/`、`tests/` 等开发/CI 元数据。归档过程排除 `__pycache__`、`.pyc/.pyo` 和 symlink；tar/gzip 元数据固定，以提高同输入构建的可重复性。
+
+## Release 发布原子性
+
+Release workflow 先创建 **Draft Release**，完成全部平台构建、SHA-256、manifest 生成和六平台完整性校验后，才把 Release 从 draft 切换为公开状态。因此 updater 不会看到一个“Release 已公开但 manifest / artifact 尚未上传完整”的中间状态。
+
+已经公开的 Release 被视为不可变：workflow 不允许重新 `--clobber` 已发布版本的 OTA 资产；需要修复时必须提升 `VERSION` 并发布新版本。只有仍处于 draft 的同版本 Release 可以被构建任务覆盖重试。
+
+## Release channel
 
 `VERSION` 是唯一版本源，同时决定 release channel：
 
@@ -71,4 +107,4 @@ Git tag 必须严格等于 `v$VERSION`。beta / nightly GitHub Release 会被标
 
 ## 重启语义
 
-更新完成后 CLI 与 App 会写入 `restart_required=true`。新的 CLI、updater、telemetry 与 FlowPilot binary 已落盘，但 Codex 对 Skill / Agent / Hook / policy snapshot 的加载需要完整重启 Codex 才能保证全部生效，因此 UI 会持续提醒直到用户完成重启后的下一轮状态更新。
+新的 CLI、updater、telemetry 和 FlowPilot binary 在 OTA 成功后已经落盘，但 Codex 对 Skill / Agent / Hook / policy snapshot 的加载需要完整重启 Codex 才能保证全部生效。因此 CLI / App 会明确保持 restart reminder，直到用户完成重启并主动确认，而不是把“文件已安装”和“Codex 已激活新 snapshot”混为一个状态。
