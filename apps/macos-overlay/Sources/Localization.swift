@@ -103,9 +103,44 @@ public final class AppLocalization: ObservableObject {
     }
 }
 
+private enum FlowPilotDateFormatters {
+    static let lock = NSLock()
+    static let clock = make("HH:mm")
+    static let dateTime = make("MM-dd HH:mm")
+    static let fullDateTime = make("yyyy-MM-dd HH:mm")
+
+    private static func make(_ format: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    static func string(from date: Date, format: DateFormatter) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        // Locale and time zone can change while a long-running menu-bar app is
+        // alive, so refresh those lightweight properties while reusing the
+        // expensive formatter instances themselves.
+        format.locale = Locale.current
+        format.timeZone = TimeZone.current
+        return format.string(from: date)
+    }
+}
+
 @inline(__always)
 public func L(_ english: String, _ chinese: String) -> String {
     AppLocalization.shared.text(english, chinese)
+}
+
+/// User-facing local date/time with a calendar date. Same-year timestamps stay
+/// compact; cross-year timestamps include the year to avoid ambiguity.
+public func formatLocalDateTime(_ date: Date) -> String {
+    let currentYear = Calendar.current.component(.year, from: Date())
+    let targetYear = Calendar.current.component(.year, from: date)
+    let formatter = currentYear == targetYear
+        ? FlowPilotDateFormatters.dateTime
+        : FlowPilotDateFormatters.fullDateTime
+    return FlowPilotDateFormatters.string(from: date, format: formatter)
 }
 
 public func localizedRole(_ role: String) -> String {
@@ -137,13 +172,7 @@ public extension QuotaWindow {
             return L("resets now", "立即重置")
         }
 
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        formatter.timeZone = TimeZone.current
-        let currentYear = Calendar.current.component(.year, from: Date())
-        let resetYear = Calendar.current.component(.year, from: date)
-        formatter.dateFormat = currentYear == resetYear ? "MM-dd HH:mm" : "yyyy-MM-dd HH:mm"
-        let value = formatter.string(from: date)
+        let value = formatLocalDateTime(date)
         return L("resets \(value)", "\(value) 重置")
     }
 }
@@ -152,13 +181,11 @@ public extension TaskRun {
     var localizedFormattedDate: String {
         guard let s = startedAtMs else { return "--:--" }
         let date = Date(timeIntervalSince1970: s / 1000.0)
-        let formatter = DateFormatter()
         if Calendar.current.isDateInToday(date) {
-            formatter.dateFormat = "HH:mm"
-            return L("Today \(formatter.string(from: date))", "今天 \(formatter.string(from: date))")
+            let value = FlowPilotDateFormatters.string(from: date, format: FlowPilotDateFormatters.clock)
+            return L("Today \(value)", "今天 \(value)")
         }
-        formatter.dateFormat = "MM-dd HH:mm"
-        return formatter.string(from: date)
+        return FlowPilotDateFormatters.string(from: date, format: FlowPilotDateFormatters.dateTime)
     }
 }
 
