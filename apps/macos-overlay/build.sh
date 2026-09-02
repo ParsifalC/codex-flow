@@ -7,9 +7,14 @@ OUTPUT="$BIN_DIR/codex-flow-overlay"
 FLOWPILOT_OUTPUT="$BIN_DIR/FlowPilot"
 TMP_OUTPUT="$BIN_DIR/.codex-flow-overlay.$$"
 TMP_FLOWPILOT="$BIN_DIR/.FlowPilot.$$"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+state_tmp_flowpilot=""
+state_tmp_overlay=""
 
 cleanup() {
     rm -f "$TMP_OUTPUT" "$TMP_FLOWPILOT"
+    [[ -z "$state_tmp_flowpilot" ]] || rm -f "$state_tmp_flowpilot"
+    [[ -z "$state_tmp_overlay" ]] || rm -f "$state_tmp_overlay"
 }
 trap cleanup EXIT
 
@@ -49,7 +54,7 @@ ln -sf "codex-flow-overlay" "$BIN_DIR/flow-pilot"
 
 # Sync to installed state dir if it exists. Use the same atomic replacement so
 # rebuilding from the console never corrupts a currently running installed copy.
-STATE_BIN="$HOME/.codex/codex-flow/bin"
+STATE_BIN="$CODEX_HOME/codex-flow/bin"
 if [[ -d "$STATE_BIN" ]]; then
     state_tmp_flowpilot="$STATE_BIN/.FlowPilot.$$"
     state_tmp_overlay="$STATE_BIN/.codex-flow-overlay.$$"
@@ -57,7 +62,9 @@ if [[ -d "$STATE_BIN" ]]; then
     cp "$OUTPUT" "$state_tmp_overlay"
     chmod +x "$state_tmp_flowpilot" "$state_tmp_overlay"
     mv -f "$state_tmp_flowpilot" "$STATE_BIN/FlowPilot"
+    state_tmp_flowpilot=""
     mv -f "$state_tmp_overlay" "$STATE_BIN/codex-flow-overlay"
+    state_tmp_overlay=""
 fi
 
 echo "✨ Build succeeded: $FLOWPILOT_OUTPUT"
