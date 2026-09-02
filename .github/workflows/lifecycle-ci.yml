@@ -15,6 +15,17 @@ jobs:
           bash -n tests/lifecycle-runtime.sh
       - name: Lifecycle and restored regressions
         run: bash tests/lifecycle-runtime.sh
+      - name: Verify lifecycle helper installation
+        run: |
+          export CODEX_HOME="$RUNNER_TEMP/codex-flow-lifecycle-install/.codex"
+          export CODEX_FLOW_BIN_DIR="$RUNNER_TEMP/codex-flow-lifecycle-install/bin"
+          export CODEX_FLOW_SHELL=none
+          export CODEX_FLOW_TELEMETRY_ENABLED=false
+          mkdir -p "$CODEX_HOME" "$CODEX_FLOW_BIN_DIR"
+          bash ./install.sh >/dev/null
+          test -f "$CODEX_HOME/codex-flow/strategies/lifecycle_runtime.py"
+          python3 -m py_compile "$CODEX_HOME/codex-flow/strategies/lifecycle_runtime.py"
+          python3 "$CODEX_HOME/codex-flow/strategies/lifecycle_runtime.py" --help >/dev/null
 
   windows-lifecycle-install:
     runs-on: windows-latest
