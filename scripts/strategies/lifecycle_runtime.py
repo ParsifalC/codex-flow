@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
@@ -21,6 +22,8 @@ FALLBACK_ACTIONS = {
     "fail": "fail",
 }
 JOIN_POLICIES = {"opportunistic", "quorum", "required"}
+WRITER_FALLBACKS = {"parent_delta", "replan"}
+EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000
 
 
 @dataclass(frozen=True)
@@ -99,8 +102,19 @@ class WorkerObservation:
             raise ValueError("scope_id is required")
         if self.stage not in {"exploration", "implementation", "review"}:
             raise ValueError(f"invalid stage: {self.stage}")
-        if self.started_at < 0 or self.last_progress_at < 0 or self.now < 0:
+        timestamps = {
+            "started_at": self.started_at,
+            "last_progress_at": self.last_progress_at,
+            "now": self.now,
+        }
+        if any(not math.isfinite(value) for value in timestamps.values()):
+            raise ValueError("timestamps must be finite seconds")
+        if any(value < 0 for value in timestamps.values()):
             raise ValueError("timestamps cannot be negative")
+        if any(value > EPOCH_MILLISECONDS_THRESHOLD for value in timestamps.values()):
+            raise ValueError(
+                "timestamps must use seconds, not milliseconds; pass Unix seconds such as time.time()"
+            )
         if self.last_progress_at < self.started_at:
             raise ValueError("last_progress_at cannot precede started_at")
         if self.now < self.started_at:
@@ -137,17 +151,18 @@ def _fallback_decision(
 ) -> LifecycleDecision:
     fallback = FALLBACK_ACTIONS[policy.fallback_policy]
     cancel_required = not terminal
+    fallback_creates_writer = policy.fallback_policy in WRITER_FALLBACKS
     fence_required = (
         observation.stage == "implementation"
         and observation.writable
-        and policy.fallback_policy == "replan"
+        and fallback_creates_writer
     )
     if fence_required and not terminal and not observation.replacement_isolated:
-        # Hard safety invariant: never start a replacement for the same writable
-        # scope while the old Worker may still resume and write. Parent must
-        # confirm termination/cancellation first, or explicitly move the
-        # replacement into a fresh isolated worktree and fence the old output
-        # from integration.
+        # Hard safety invariant: Parent delta and replacement Workers are both
+        # downstream writers. Never let either write the same live scope while
+        # the old Worker may resume. Confirm cancellation/termination first, or
+        # move the downstream writer into a fresh isolated worktree and fence
+        # the old output from integration.
         action = "request_cancel"
         replacement_allowed = False
     else:
@@ -156,7 +171,7 @@ def _fallback_decision(
             not fence_required or terminal or observation.replacement_isolated
         )
         if fence_required and observation.replacement_isolated and not terminal:
-            reason += "; replacement is explicitly isolated and old output is fenced from integration"
+            reason += "; downstream writer is explicitly isolated and old output is fenced from integration"
     if cancel_required:
         reason += "; non-terminal Worker cancellation is required"
     return LifecycleDecision(
@@ -281,9 +296,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--policy-json", required=True)
     parser.add_argument("--scope-id", required=True)
     parser.add_argument("--stage", choices=("exploration", "implementation", "review"), required=True)
-    parser.add_argument("--started-at", type=float, required=True)
-    parser.add_argument("--last-progress-at", type=float, required=True)
-    parser.add_argument("--now", type=float, required=True)
+    parser.add_argument("--started-at", type=float, required=True, help="Unix timestamp in seconds")
+    parser.add_argument("--last-progress-at", type=float, required=True, help="Unix timestamp in seconds")
+    parser.add_argument("--now", type=float, required=True, help="Unix timestamp in seconds")
     parser.add_argument("--writable", action="store_true")
     parser.add_argument("--in-flight", action="store_true")
     parser.add_argument("--terminal-success", action="store_true")
