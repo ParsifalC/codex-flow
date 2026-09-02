@@ -190,12 +190,12 @@ public class IPCService {
     // MARK: - Client Implementation
     public static func sendCommand(_ cmd: String, socketPath: String = IPCService.socketPath) -> (success: Bool, response: String) {
         guard FileManager.default.fileExists(atPath: socketPath) else {
-            return (false, "Overlay is not running (socket not found).")
+            return (false, L("Overlay is not running (socket not found).", "悬浮窗未运行（未找到 socket）。"))
         }
         
         let clientSocket = socket(AF_UNIX, SOCK_STREAM, 0)
         guard clientSocket >= 0 else {
-            return (false, "Failed to create client socket.")
+            return (false, L("Failed to create client socket.", "创建客户端 socket 失败。"))
         }
         defer { close(clientSocket) }
         
@@ -218,11 +218,11 @@ public class IPCService {
         }
         
         guard connectResult == 0 else {
-            return (false, "Failed to connect to overlay socket.")
+            return (false, L("Failed to connect to overlay socket.", "连接悬浮窗 socket 失败。"))
         }
         
         guard let data = cmd.data(using: .utf8) else {
-            return (false, "Encoding error.")
+            return (false, L("Encoding error.", "编码错误。"))
         }
         
         _ = data.withUnsafeBytes { raw in

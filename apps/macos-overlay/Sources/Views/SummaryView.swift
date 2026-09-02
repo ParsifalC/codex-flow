@@ -91,6 +91,7 @@ public struct MetricRingView: View {
 
 // MARK: - Quota & Rate Limit Windows Meter
 public struct QuotaWindowsView: View {
+    @ObservedObject private var localization = AppLocalization.shared
     public var windows: [QuotaWindow]
     
     public init(windows: [QuotaWindow]) {
@@ -105,7 +106,7 @@ public struct QuotaWindowsView: View {
                         Image(systemName: "gauge.with.needle.fill")
                             .font(.system(size: 9))
                             .foregroundColor(.cyan)
-                        Text("Rate Limits & Account Quota")
+                        Text(L("Rate Limits & Account Quota", "速率限制与账户配额"))
                             .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                             .foregroundColor(.white.opacity(0.85))
                             .lineLimit(1)
@@ -113,7 +114,7 @@ public struct QuotaWindowsView: View {
                     
                     Spacer(minLength: 4)
                     
-                    if let firstReset = windows.compactMap({ $0.formattedResetsAt }).first {
+                    if let firstReset = windows.compactMap({ $0.localizedFormattedResetsAt }).first {
                         Text(firstReset)
                             .font(.system(size: 8.0, weight: .regular))
                             .foregroundColor(.white.opacity(0.45))
@@ -153,7 +154,7 @@ public struct QuotaWindowsView: View {
                 
                 Spacer(minLength: 4)
                 
-                Text(String(format: "%.0f%% rem", rem))
+                Text(String(format: L("%.0f%% rem", "剩余 %.0f%%"), rem))
                     .font(.system(size: 8.0, weight: .semibold, design: .rounded))
                     .foregroundColor(color)
                     .lineLimit(1)
@@ -175,7 +176,7 @@ public struct QuotaWindowsView: View {
             .frame(height: 3)
             
             if let delta = window.deltaPercentagePoints, delta != 0 {
-                Text(String(format: "%+.1f pp", delta))
+                Text(String(format: L("%+.1f pp", "%+.1f 个百分点"), delta))
                     .font(.system(size: 7.5, weight: .regular))
                     .foregroundColor(delta > 0 ? .orange.opacity(0.85) : .green.opacity(0.85))
                     .lineLimit(1)
@@ -193,6 +194,7 @@ public struct QuotaWindowsView: View {
 
 // MARK: - Token Segmented Distribution Bar
 public struct TokenDistributionBar: View {
+    @ObservedObject private var localization = AppLocalization.shared
     public var usage: TokenUsage
     
     public init(usage: TokenUsage) {
@@ -232,14 +234,14 @@ public struct TokenDistributionBar: View {
     
     private var headerRow: some View {
         HStack {
-            Text("Token Distribution")
+            Text(L("Token Distribution", "Token 分布"))
                 .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
                 .lineLimit(1)
             
             Spacer(minLength: 4)
             
-            Text("Total: \(TaskRun.formatTokenCount(rawTotal))")
+            Text(L("Total: \(TaskRun.formatTokenCount(usage.totalTokens ?? (prompt + completion)))", "总计：\(TaskRun.formatTokenCount(usage.totalTokens ?? (prompt + completion)))"))
                 .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.6))
                 .lineLimit(1)
@@ -292,7 +294,7 @@ public struct TokenDistributionBar: View {
                 let promptPct = rawTotal > 0 ? Int(Double(prompt) / Double(total) * 100) : 0
                 legendItem(
                     color: Color(red: 0.88, green: 0.35, blue: 0.82),
-                    label: "Prompt",
+                    label: L("Prompt", "输入"),
                     count: TaskRun.formatTokenCount(prompt),
                     pct: promptPct
                 )
@@ -302,7 +304,7 @@ public struct TokenDistributionBar: View {
                 let compPct = rawTotal > 0 ? Int(Double(completion) / Double(total) * 100) : 0
                 legendItem(
                     color: Color(red: 0.22, green: 0.88, blue: 0.58),
-                    label: "Output",
+                    label: L("Output", "输出"),
                     count: TaskRun.formatTokenCount(completion),
                     pct: compPct
                 )
@@ -315,7 +317,7 @@ public struct TokenDistributionBar: View {
                         let cachedPct = Int(Double(cached) / Double(total) * 100)
                         legendItem(
                             color: Color(red: 0.28, green: 0.58, blue: 0.95),
-                            label: "Cached",
+                            label: L("Cached", "缓存"),
                             count: TaskRun.formatTokenCount(cached),
                             pct: cachedPct
                         )
@@ -329,7 +331,7 @@ public struct TokenDistributionBar: View {
                         let rPct = Int(Double(reasoning) / Double(total) * 100)
                         legendItem(
                             color: Color(red: 0.65, green: 0.45, blue: 0.95),
-                            label: "Reason",
+                            label: L("Reason", "推理"),
                             count: TaskRun.formatTokenCount(reasoning),
                             pct: rPct
                         )
@@ -368,6 +370,7 @@ public struct TokenDistributionBar: View {
 // MARK: - Native Summary View Card
 public struct SummaryView: View {
     @ObservedObject var state: OverlayState
+    @ObservedObject private var localization = AppLocalization.shared
     @State private var copiedSummary: Bool = false
     
     public init(state: OverlayState) {
@@ -510,7 +513,7 @@ public struct SummaryView: View {
                     HStack(spacing: 5) {
                         Image(systemName: tab.iconName)
                             .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                        Text(tab.rawValue)
+                        Text(tab.localizedTitle)
                             .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
                     }
                     .foregroundColor(isSelected ? .white : .white.opacity(0.6))
@@ -554,7 +557,7 @@ public struct SummaryView: View {
                 // 3 KPI Rings
                 HStack(spacing: 6) {
                     MetricRingView(
-                        title: "Time",
+                        title: L("Time", "耗时"),
                         value: run.formattedDuration,
                         progress: min(1.0, run.durationSeconds / 30.0),
                         ringColor: Color.cyan,
@@ -562,7 +565,7 @@ public struct SummaryView: View {
                     )
                     
                     MetricRingView(
-                        title: "Tokens",
+                        title: L("Tokens", "Token"),
                         value: run.formattedTotalTokens,
                         progress: min(1.0, Double(run.aggregatedUsage.totalTokens ?? 0) / 100_000.0),
                         ringColor: Color(red: 0.95, green: 0.35, blue: 0.8),
@@ -570,7 +573,7 @@ public struct SummaryView: View {
                     )
                     
                     MetricRingView(
-                        title: "Cost",
+                        title: L("Cost", "成本"),
                         value: run.formattedCost,
                         progress: min(1.0, (run.aggregatedUsage.estimatedCreditsMicros ?? 0) / 100_000.0),
                         ringColor: Color(red: 0.2, green: 0.85, blue: 0.45),
@@ -618,11 +621,11 @@ public struct SummaryView: View {
             .padding(.top, 14)
             
             VStack(spacing: 4) {
-                Text("FlowPilot is Ready")
+                Text(L("FlowPilot is Ready", "FlowPilot 已就绪"))
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 
-                Text("Listening for live agent runs & telemetry")
+                Text(L("Listening for live agent runs & telemetry", "正在监听 Agent 任务与遥测数据"))
                     .font(.system(size: 11, weight: .regular))
                     .foregroundColor(.white.opacity(0.6))
             }
@@ -632,11 +635,11 @@ public struct SummaryView: View {
                     Circle()
                         .fill(Color(red: 0.2, green: 0.85, blue: 0.45))
                         .frame(width: 6, height: 6)
-                    Text("Telemetry Hook:")
+                    Text(L("Telemetry Hook:", "遥测 Hook："))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                     Spacer()
-                    Text("Active & Streaming")
+                    Text(L("Active & Streaming", "运行中 · 实时传输"))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(Color(red: 0.2, green: 0.85, blue: 0.45))
                 }
@@ -645,11 +648,11 @@ public struct SummaryView: View {
                     Circle()
                         .fill(Color.cyan)
                         .frame(width: 6, height: 6)
-                    Text("IPC Daemon:")
+                    Text(L("IPC Daemon:", "IPC 守护进程："))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                     Spacer()
-                    Text("Connected")
+                    Text(L("Connected", "已连接"))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.cyan)
                 }
@@ -672,7 +675,7 @@ public struct SummaryView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "terminal.fill")
                             .font(.system(size: 9.5))
-                        Text("Open Console")
+                        Text(L("Open Console", "打开控制台"))
                             .font(.system(size: 10.5, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -694,7 +697,7 @@ public struct SummaryView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 9.5))
-                        Text("History")
+                        Text(L("History", "历史"))
                             .font(.system(size: 10.5, weight: .semibold))
                     }
                     .foregroundColor(.white.opacity(0.85))
@@ -723,7 +726,7 @@ public struct SummaryView: View {
                 .font(.system(size: 9))
                 .foregroundColor(.cyan)
             
-            Text("Viewing Historical Task")
+            Text(L("Viewing Historical Task", "正在查看历史任务"))
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundColor(.cyan)
             
@@ -734,7 +737,7 @@ public struct SummaryView: View {
                 label: HStack(spacing: 3) {
                     Image(systemName: "clock")
                         .font(.system(size: 8))
-                    Text("Select Run")
+                    Text(L("Select Run", "选择任务"))
                         .font(.system(size: 8.5, weight: .medium))
                     Image(systemName: "chevron.down")
                         .font(.system(size: 6.5))
@@ -758,7 +761,7 @@ public struct SummaryView: View {
                 HStack(spacing: 3) {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 8))
-                    Text("Jump to Live")
+                    Text(L("Jump to Live", "返回当前任务"))
                         .font(.system(size: 9, weight: .bold))
                 }
                 .foregroundColor(.white)
@@ -847,14 +850,14 @@ public struct SummaryView: View {
         Menu {
             // 1. Live Task Option
             if let latest = state.latestRun {
-                Section("Live Session") {
+                Section(L("Live Session", "当前会话")) {
                     Button {
                         state.jumpToLive()
                     } label: {
                         let isLiveActive = (state.inspectedRun == nil || state.inspectedRun?.id == latest.id)
                         let check = isLiveActive ? "✓ " : ""
                         let branch = latest.gitBranch.map { " (\($0))" } ?? ""
-                        Text("\(check)⚡ Live: \(latest.projectName)\(branch) · \(latest.formattedDate)")
+                        Text(L("\(check)⚡ Live: \(latest.projectName)\(branch) · \(latest.localizedFormattedDate)", "\(check)⚡ 当前：\(latest.projectName)\(branch) · \(latest.localizedFormattedDate)"))
                     }
                 }
             }
@@ -862,7 +865,7 @@ public struct SummaryView: View {
             // 2. Recent Tasks
             let historyRuns = TelemetryQueryEngine.shared.fetchHistory(limit: 20)
             if !historyRuns.isEmpty {
-                Section("Recent Runs & Tasks") {
+                Section(L("Recent Runs & Tasks", "最近任务")) {
                     ForEach(Array(historyRuns.enumerated()), id: \.element.id) { index, hRun in
                         Button {
                             if hRun.id == state.latestRun?.id {
@@ -878,7 +881,7 @@ public struct SummaryView: View {
                                 .replacingOccurrences(of: "\n", with: " ")
                                 .trimmingCharacters(in: .whitespaces)
                             let shortPreview = preview.count > 28 ? String(preview.prefix(28)) + "..." : preview
-                            let title = "#\(index + 1) \(hRun.projectName)\(branch) · \(hRun.formattedDate) - \(shortPreview)"
+                            let title = "#\(index + 1) \(hRun.projectName)\(branch) · \(hRun.localizedFormattedDate) - \(shortPreview)"
                             Text("\(check)\(title)")
                         }
                     }
@@ -888,7 +891,7 @@ public struct SummaryView: View {
             // 3. Project Quick Filter
             let projects = TelemetryQueryEngine.shared.allProjects()
             if projects.count > 1 {
-                Section("Filter History by Project") {
+                Section(L("Filter History by Project", "按项目筛选历史")) {
                     ForEach(projects, id: \.self) { proj in
                         Button {
                             state.selectedProject = proj
@@ -906,7 +909,7 @@ public struct SummaryView: View {
             Button {
                 state.selectTab(.history)
             } label: {
-                Label("Browse All in History...", systemImage: "clock.arrow.circlepath")
+                Label(L("Browse All in History...", "浏览全部历史…"), systemImage: "clock.arrow.circlepath")
             }
         } label: {
             label
@@ -953,14 +956,14 @@ public struct SummaryView: View {
     
     private var statusBadgeText: String {
         guard let run = currentRun else {
-            return "READY"
+            return L("READY", "就绪")
         }
         if run.isRunning {
-            return "RUNNING"
+            return L("RUNNING", "运行中")
         } else if run.isError {
-            return "FAILED"
+            return L("FAILED", "失败")
         }
-        return "COMPLETED"
+        return L("COMPLETED", "已完成")
     }
     
     // MARK: - Participants Section
@@ -972,7 +975,7 @@ public struct SummaryView: View {
                     Image(systemName: "brain.head.profile")
                         .font(.system(size: 9))
                         .foregroundColor(.indigo.opacity(0.9))
-                    Text("Parent Model")
+                    Text(L("Parent Model", "父 Agent 模型"))
                         .font(.system(size: 9.0, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                 }
@@ -999,7 +1002,7 @@ public struct SummaryView: View {
                 }
                 
                 let u = run.parent?.effectiveUsage?.totalTokens ?? 0
-                Text("\(TaskRun.formatTokenCount(u)) tokens")
+                Text(L("\(TaskRun.formatTokenCount(u)) tokens", "\(TaskRun.formatTokenCount(u)) Token"))
                     .font(.system(size: 8.5, weight: .regular))
                     .foregroundColor(.white.opacity(0.5))
                     .lineLimit(1)
@@ -1021,17 +1024,17 @@ public struct SummaryView: View {
                     Image(systemName: "person.2.fill")
                         .font(.system(size: 9))
                         .foregroundColor(.teal.opacity(0.9))
-                    Text("Workers (\(run.allWorkers.count))")
+                    Text(L("Workers (\(run.allWorkers.count))", "Worker（\(run.allWorkers.count)）"))
                         .font(.system(size: 9.0, weight: .semibold))
                         .foregroundColor(.white.opacity(0.7))
                 }
                 
                 if run.allWorkers.isEmpty {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Direct Execution")
+                        Text(L("Direct Execution", "直接执行"))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.white.opacity(0.75))
-                        Text("No subagents")
+                        Text(L("No subagents", "未使用子 Agent"))
                             .font(.system(size: 8.5, weight: .regular))
                             .foregroundColor(.white.opacity(0.4))
                     }
@@ -1057,7 +1060,7 @@ public struct SummaryView: View {
                         }
                         
                         if run.allWorkers.count > 2 {
-                            Text("+\(run.allWorkers.count - 2) more subagents")
+                            Text(L("+\(run.allWorkers.count - 2) more subagents", "还有 \(run.allWorkers.count - 2) 个子 Agent"))
                                 .font(.system(size: 8.0, weight: .regular))
                                 .foregroundColor(.teal.opacity(0.7))
                                 .lineLimit(1)
@@ -1088,7 +1091,7 @@ public struct SummaryView: View {
                 HStack(spacing: 3) {
                     Image(systemName: copiedSummary ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 9, weight: .semibold))
-                    Text(copiedSummary ? "Copied!" : "Copy")
+                    Text(copiedSummary ? L("Copied!", "已复制") : L("Copy", "复制"))
                         .font(.system(size: 9.5, weight: .medium))
                 }
                 .foregroundColor(copiedSummary ? Color(red: 0.2, green: 0.85, blue: 0.45) : .white.opacity(0.85))
@@ -1112,7 +1115,7 @@ public struct SummaryView: View {
                 HStack(spacing: 3) {
                     Image(systemName: "terminal.fill")
                         .font(.system(size: 9, weight: .semibold))
-                    Text("Console")
+                    Text(L("Console", "控制台"))
                         .font(.system(size: 9.5, weight: .medium))
                 }
                 .foregroundColor(.white.opacity(0.85))
@@ -1132,7 +1135,7 @@ public struct SummaryView: View {
             Spacer()
             
             // Relative date / update time
-            Text(run.formattedDate)
+            Text(run.localizedFormattedDate)
                 .font(.system(size: 8.5, weight: .regular))
                 .foregroundColor(.white.opacity(0.4))
         }
@@ -1140,16 +1143,28 @@ public struct SummaryView: View {
     }
     
     private func copySummaryToClipboard(run: TaskRun) {
-        let text = """
-        📊 FlowPilot Task Summary
-        • Project: \(run.projectName) (\(run.gitBranch ?? "main"))
-        • Duration: \(run.formattedDuration)
-        • Total Tokens: \(run.formattedTotalTokens)
-        • Estimated Cost: \(run.formattedCost)
-        • Parent Model: \(run.parent?.displayModel ?? "unknown")
-        • Workers: \(run.allWorkers.count)
-        • Overview: \(run.summary ?? run.sessionTitle)
-        """
+        let text = L(
+            """
+            📊 FlowPilot Task Summary
+            • Project: \(run.projectName) (\(run.gitBranch ?? "main"))
+            • Duration: \(run.formattedDuration)
+            • Total Tokens: \(run.formattedTotalTokens)
+            • Estimated Cost: \(run.formattedCost)
+            • Parent Model: \(run.parent?.displayModel ?? "unknown")
+            • Workers: \(run.allWorkers.count)
+            • Overview: \(run.summary ?? run.sessionTitle)
+            """,
+            """
+            📊 FlowPilot 任务摘要
+            • 项目：\(run.projectName)（\(run.gitBranch ?? "main")）
+            • 耗时：\(run.formattedDuration)
+            • 总 Token：\(run.formattedTotalTokens)
+            • 预估成本：\(run.formattedCost)
+            • 父 Agent 模型：\(run.parent?.displayModel ?? "unknown")
+            • Worker：\(run.allWorkers.count)
+            • 摘要：\(run.summary ?? run.sessionTitle)
+            """
+        )
         
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

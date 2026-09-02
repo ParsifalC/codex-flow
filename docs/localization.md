@@ -1,6 +1,6 @@
 # Language localization
 
-codex-flow supports Chinese and English for user-facing CLI output.
+codex-flow supports Chinese and English across the CLI and the native macOS FlowPilot app.
 
 ## Default behavior
 
@@ -28,4 +28,4 @@ For a temporary per-process override, set `CODEX_FLOW_LANGUAGE=zh`, `en`, or `au
 
 ## Localized surfaces
 
-The language setting is used by the interactive console, `status`, `help`, `doctor`, install guidance, telemetry summaries/history/statistics, and macOS completion notifications. Benchmark internals and machine-readable JSON remain stable and are not translated.
+The language setting is used by the interactive console, `status`, `help`, `doctor`, install guidance, telemetry summaries/history/statistics, macOS completion notifications, and the native FlowPilot app (summary, history, analytics, bubble status, context menus, and native binary help). The running app re-reads the shared policy periodically, so `codex-flow language zh|en|auto` propagates without maintaining a separate app preference. Benchmark internals and machine-readable JSON/IPC protocol fields remain stable and are not translated.
