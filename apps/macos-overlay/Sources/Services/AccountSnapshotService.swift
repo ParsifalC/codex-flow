@@ -95,8 +95,7 @@ private final class AccountAppServerRPC {
     private var started = false
 
     init() throws {
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["codex", "app-server"]
+        Self.configureProcess(process)
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -162,6 +161,52 @@ private final class AccountAppServerRPC {
         started = false
         output.fileHandleForReading.readabilityHandler = nil
         if process.isRunning { process.terminate() }
+    }
+
+    private static func configureProcess(_ process: Process) {
+        let environment = ProcessInfo.processInfo.environment
+
+        // Keep parity with the Python telemetry app-server adapter. This is
+        // especially useful for tests and non-standard Codex installations.
+        if let override = environment["CODEX_FLOW_APP_SERVER_COMMAND"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty {
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-lc", override]
+            return
+        }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let codexHome = environment["CODEX_HOME"]
+            .map(URL.init(fileURLWithPath:))
+            ?? home.appendingPathComponent(".codex")
+
+        // Finder and Login Items normally inherit a minimal PATH. Honor any
+        // explicit PATH entries first, then probe the common installation
+        // locations used by Homebrew, npm/pnpm, Volta, Bun, and local installs.
+        var candidates: [URL] = []
+        if let path = environment["PATH"] {
+            candidates.append(contentsOf: path.split(separator: ":").map {
+                URL(fileURLWithPath: String($0)).appendingPathComponent("codex")
+            })
+        }
+        candidates.append(home.appendingPathComponent(".local/bin/codex"))
+        candidates.append(home.appendingPathComponent(".npm-global/bin/codex"))
+        candidates.append(home.appendingPathComponent("Library/pnpm/codex"))
+        candidates.append(home.appendingPathComponent(".volta/bin/codex"))
+        candidates.append(home.appendingPathComponent(".bun/bin/codex"))
+        candidates.append(home.appendingPathComponent(".nvm/current/bin/codex"))
+        candidates.append(codexHome.appendingPathComponent("bin/codex"))
+        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/codex"))
+        candidates.append(URL(fileURLWithPath: "/usr/local/bin/codex"))
+
+        if let installedCodex = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) {
+            process.executableURL = installedCodex
+            process.arguments = ["app-server"]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["codex", "app-server"]
+        }
     }
 
     private func send(_ object: [String: Any]) -> Bool {
