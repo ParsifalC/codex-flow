@@ -57,7 +57,9 @@ public struct StrategyModeSnapshot {
 
 public enum StrategyModeService {
     public static func load() throws -> StrategyModeSnapshot {
-        let show = try run(["strategy", "show", "--json"])
+        // `strategy show` deliberately returns 2 when the stored value is invalid.
+        // Accept that status so the app can still offer a supported profile to repair it.
+        let show = try run(["strategy", "show", "--json"], acceptedExitCodes: [0, 2])
         guard let data = show.stdout.data(using: .utf8),
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let configured = json["strategy"] as? String else {
@@ -99,14 +101,17 @@ public enum StrategyModeService {
         let stderr: String
     }
 
-    private static func run(_ arguments: [String]) throws -> CommandResult {
+    private static func run(
+        _ arguments: [String],
+        acceptedExitCodes: Set<Int32> = [0]
+    ) throws -> CommandResult {
         let process = Process()
         let output = Pipe()
         let error = Pipe()
-        let codeHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
+        let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
             .map(URL.init(fileURLWithPath:))
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
-        let installedCLI = codeHome.appendingPathComponent("codex-flow/bin/codex-flow")
+        let installedCLI = codexHome.appendingPathComponent("codex-flow/bin/codex-flow")
 
         if FileManager.default.isExecutableFile(atPath: installedCLI.path) {
             process.executableURL = installedCLI
@@ -123,7 +128,7 @@ public enum StrategyModeService {
 
         let stdout = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let stderr = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else {
+        guard acceptedExitCodes.contains(process.terminationStatus) else {
             let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             throw serviceError(detail.isEmpty
                 ? L("codex-flow strategy command failed.", "codex-flow 策略命令执行失败。")
@@ -162,17 +167,22 @@ public struct StrategyModeCard: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 5) {
-                Label(L("Strategy mode", "策略模式"), systemImage: "slider.horizontal.3")
+                Label(L("Global strategy mode", "全局策略模式"), systemImage: "slider.horizontal.3")
                     .font(.system(size: 9.5, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.82))
                 Spacer()
-                if let current = snapshot?.configured {
-                    Text(current.uppercased())
+                if let snapshot {
+                    if let routing = snapshot.routing, !routing.isEmpty {
+                        Text(routing.uppercased())
+                            .font(.system(size: 6.8, weight: .bold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.42))
+                    }
+                    Text(snapshot.configured.uppercased())
                         .font(.system(size: 7.5, weight: .heavy, design: .rounded))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(snapshot.valid ? .cyan : .orange)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.cyan.opacity(0.12)))
+                        .background(Capsule().fill((snapshot.valid ? Color.cyan : Color.orange).opacity(0.12)))
                 }
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
@@ -192,16 +202,23 @@ public struct StrategyModeCard: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 48)
             } else if let snapshot {
+                if !snapshot.valid {
+                    Text(L("The stored strategy is invalid. Choose a supported mode below to repair it.", "当前保存的策略无效，请在下方选择一个受支持模式进行修复。"))
+                        .font(.system(size: 7.8, weight: .medium))
+                        .foregroundColor(.orange.opacity(0.88))
+                }
+
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                     ForEach(snapshot.profiles) { profile in
                         strategyButton(profile, current: snapshot.configured)
                     }
                 }
 
-                HStack(spacing: 4) {
+                HStack(alignment: .top, spacing: 4) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 7.5))
-                    Text(L("Changes are persisted through `codex-flow strategy set`. Repository policy can still override the global mode.", "切换通过 `codex-flow strategy set` 持久化；仓库级策略仍可覆盖全局模式。"))
+                        .padding(.top, 1)
+                    Text(L("This changes the global policy through `codex-flow strategy set`. A repository `.codex-flow.toml` remains higher priority for tasks in that repository.", "这里通过 `codex-flow strategy set` 修改全局策略；具体仓库中的 `.codex-flow.toml` 对该仓库任务仍具有更高优先级。"))
                         .font(.system(size: 7.5))
                 }
                 .foregroundColor(.white.opacity(0.35))
@@ -308,7 +325,7 @@ public struct StrategyModeCard: View {
                     snapshot = verified
                     applyingProfile = nil
                     isError = false
-                    message = L("Strategy switched to \(profile).", "策略已切换为 \(profile)。")
+                    message = L("Global strategy switched to \(profile).", "全局策略已切换为 \(profile)。")
                 }
             } catch {
                 DispatchQueue.main.async {
