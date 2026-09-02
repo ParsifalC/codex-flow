@@ -8,6 +8,7 @@ public struct HistoryView: View {
     @State private var availableProjects: [String] = []
     @State private var detailRun: TaskRun?
     @State private var detailHoverGeneration = 0
+    @State private var searchGeneration = 0
 
     public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
@@ -85,11 +86,15 @@ public struct HistoryView: View {
                             Image(systemName: "folder")
                                 .font(.system(size: 8))
                                 .foregroundColor(.cyan.opacity(0.85))
-                            Text(state.selectedProject ?? L("All Projects", "全部项目"))
-                                .font(.system(size: 8.5, weight: .medium))
-                                .foregroundColor(.white.opacity(0.72))
-                                .lineLimit(1)
-                                .blur(radius: state.isPrivacyMode && state.selectedProject != nil ? 4.5 : 0)
+                            HoverRevealText(
+                                state.selectedProject ?? L("All Projects", "全部项目"),
+                                font: .system(size: 8.5, weight: .medium),
+                                foregroundColor: .white.opacity(0.72),
+                                lineLimit: 1,
+                                privacyBlur: state.isPrivacyMode && state.selectedProject != nil,
+                                popoverWidth: 320
+                            )
+                            .frame(maxWidth: 118, alignment: .leading)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 6.5))
                                 .foregroundColor(.white.opacity(0.4))
@@ -124,14 +129,13 @@ public struct HistoryView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 9.2))
                     .foregroundColor(.white)
-                    .onChange(of: state.searchQuery) { _ in
-                        state.loadHistory()
+                    .onChange(of: state.searchQuery) { _, _ in
+                        scheduleSearchReload()
                     }
 
                 if !state.searchQuery.isEmpty {
                     Button {
                         state.searchQuery = ""
-                        state.loadHistory()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 8.5))
@@ -219,7 +223,6 @@ public struct HistoryView: View {
             if !state.searchQuery.isEmpty {
                 Button(L("Clear Search", "清除搜索")) {
                     state.searchQuery = ""
-                    state.loadHistory()
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 9, weight: .semibold))
@@ -237,7 +240,7 @@ public struct HistoryView: View {
             detailRun = run
         }
 
-        if run.trajectory == nil || run.skillsUsed == nil || run.logs == nil {
+        if run.trajectory == nil || run.skillsUsed == nil || run.toolsUsed == nil || run.logs == nil {
             var enriched = run
             DispatchQueue.global(qos: .userInitiated).async {
                 TelemetryQueryEngine.shared.enrichRunIfNeeded(&enriched)
@@ -268,6 +271,15 @@ public struct HistoryView: View {
             withAnimation(.easeIn(duration: 0.12)) {
                 detailRun = nil
             }
+        }
+    }
+
+    private func scheduleSearchReload() {
+        searchGeneration += 1
+        let generation = searchGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            guard generation == searchGeneration else { return }
+            state.loadHistory()
         }
     }
 }
@@ -550,10 +562,19 @@ public struct HistoryTaskDetailOverlay: View {
 
                     detailNarrative
                     TokenUsageBreakdownView(usage: run.aggregatedUsage)
+
+                    if run.hasSkillsOrTools {
+                        InspectorSkillsToolsView(run: run)
+                    }
+
                     detailWorkers
 
                     if let steps = run.trajectory, !steps.isEmpty {
                         detailSteps(steps)
+                    }
+
+                    if let logs = run.logs, !logs.isEmpty {
+                        detailLogs(logs)
                     }
                 }
             }
@@ -718,7 +739,10 @@ public struct HistoryTaskDetailOverlay: View {
                 .foregroundColor(.white.opacity(0.48))
             ForEach(Array(steps.prefix(5))) { step in
                 HStack(alignment: .top, spacing: 4) {
-                    Circle().fill(.cyan).frame(width: 4, height: 4).padding(.top, 4)
+                    Circle()
+                        .fill(step.status == "error" ? Color.orange : Color.cyan)
+                        .frame(width: 4, height: 4)
+                        .padding(.top, 4)
                     HoverRevealText(
                         [step.title, step.detail].compactMap { $0 }.joined(separator: " — "),
                         font: .system(size: 7.6),
@@ -726,6 +750,33 @@ public struct HistoryTaskDetailOverlay: View {
                         lineLimit: 1,
                         privacyBlur: isPrivacyMode,
                         popoverWidth: 400
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(7)
+        .background(detailCard)
+    }
+
+    private func detailLogs(_ logs: [TaskLogEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L("Recent logs", "最近日志"))
+                .font(.system(size: 7.7, weight: .bold))
+                .foregroundColor(.white.opacity(0.48))
+            ForEach(Array(logs.suffix(4))) { entry in
+                HStack(alignment: .top, spacing: 4) {
+                    Circle()
+                        .fill(entry.level == "error" ? Color.orange : Color.green)
+                        .frame(width: 4, height: 4)
+                        .padding(.top, 4)
+                    HoverRevealText(
+                        entry.message ?? "",
+                        font: .system(size: 7.4, design: .monospaced),
+                        foregroundColor: entry.level == "error" ? .orange.opacity(0.82) : .white.opacity(0.58),
+                        lineLimit: 2,
+                        privacyBlur: isPrivacyMode,
+                        popoverWidth: 410
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
