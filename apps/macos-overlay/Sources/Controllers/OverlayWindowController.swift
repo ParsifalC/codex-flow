@@ -363,10 +363,11 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         }
 
         if isDragging {
+            // Keep the interaction gate active only until the snap animation
+            // finishes. Its completion owns ending this drag and scheduling the
+            // subsequent idle tuck, so no detached delayed closure can clear a
+            // newer user interaction or lose the tuck while the guard is active.
             performMagneticSnap(for: window)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                self?.windowController?.isInteractingOrDragging = false
-            }
         } else {
             windowController?.isInteractingOrDragging = false
             if let state = windowController?.state, !state.isExpanded {
@@ -378,7 +379,11 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
     }
 
     private func performMagneticSnap(for window: NSWindow) {
-        guard let screen = window.screen ?? NSScreen.main else { return }
+        guard let screen = window.screen ?? NSScreen.main else {
+            windowController?.isInteractingOrDragging = false
+            windowController?.scheduleTuck()
+            return
+        }
         let visible = screen.visibleFrame
         let frame = window.frame
         var targetOrigin = frame.origin
@@ -424,9 +429,10 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
             context.allowsImplicitAnimation = true
             window.animator().setFrame(targetFrame, display: true)
         }, completionHandler: { [weak self] in
-            guard let self = self else { return }
-            self.windowController?.saveWindowPosition(targetOrigin)
-            self.windowController?.scheduleTuck()
+            guard let self = self, let controller = self.windowController else { return }
+            controller.isInteractingOrDragging = false
+            controller.saveWindowPosition(targetOrigin)
+            controller.scheduleTuck()
         })
     }
 
