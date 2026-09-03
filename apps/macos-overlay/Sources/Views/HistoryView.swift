@@ -17,40 +17,38 @@ public struct HistoryView: View {
 
     public var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: 8) {
-                filterBar
+            historySurface
+            detailOverlay
+        }
+        .onAppear(perform: loadInitialHistory)
+    }
 
-                if state.historyChats.isEmpty && state.historyRuns.isEmpty {
-                    emptyState
-                } else {
-                    historyList
-                }
-            }
-
-            if let run = detailRun {
-                HistoryTaskDetailOverlay(
-                    run: run,
-                    isPrivacyMode: state.isPrivacyMode,
-                    onClose: closeDetail
-                )
-                .frame(width: 350)
-                .padding(.top, 34)
-                .padding(.trailing, 2)
-                .zIndex(20)
-                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topTrailing)))
-                .onHover { inside in
-                    if inside {
-                        cancelScheduledClose()
-                    } else {
-                        scheduleDetailClose()
-                    }
-                }
+    private var historySurface: some View {
+        VStack(spacing: 8) {
+            filterBar
+            if state.historyChats.isEmpty && state.historyRuns.isEmpty {
+                emptyState
+            } else {
+                historyList
             }
         }
-        .onAppear {
-            availableProjects = ["All"] + TelemetryQueryEngine.shared.allProjects()
-            if state.historyChats.isEmpty && state.historyRuns.isEmpty {
-                state.loadHistory()
+    }
+
+    @ViewBuilder
+    private var detailOverlay: some View {
+        if let run = detailRun {
+            HistoryTaskDetailOverlay(
+                run: run,
+                isPrivacyMode: state.isPrivacyMode,
+                onClose: closeDetail
+            )
+            .frame(width: 350)
+            .padding(.top, 34)
+            .padding(.trailing, 2)
+            .zIndex(20)
+            .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topTrailing)))
+            .onHover { inside in
+                inside ? cancelScheduledClose() : scheduleDetailClose()
             }
         }
     }
@@ -60,99 +58,110 @@ public struct HistoryView: View {
     private var filterBar: some View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
-                HStack(spacing: 2) {
-                    scopeButton(title: L("All", "全部"), selected: !state.isTodayOnly) {
-                        state.isTodayOnly = false
-                        state.loadHistory()
-                    }
-                    scopeButton(title: L("Today", "今天"), selected: state.isTodayOnly) {
-                        state.isTodayOnly = true
-                        state.loadHistory()
-                    }
-                }
-                .padding(2)
-                .background(Capsule().fill(Color.white.opacity(0.06)))
-
-                if availableProjects.count > 2 {
-                    Menu {
-                        ForEach(availableProjects, id: \.self) { project in
-                            Button(project == "All" ? L("All Projects", "全部项目") : project) {
-                                state.selectedProject = project == "All" ? nil : project
-                                state.loadHistory()
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 8))
-                                .foregroundColor(.cyan.opacity(0.85))
-                            HoverRevealText(
-                                state.selectedProject ?? L("All Projects", "全部项目"),
-                                font: .system(size: 8.5, weight: .medium),
-                                foregroundColor: .white.opacity(0.72),
-                                lineLimit: 1,
-                                privacyBlur: state.isPrivacyMode && state.selectedProject != nil,
-                                popoverWidth: 320
-                            )
-                            .frame(maxWidth: 118, alignment: .leading)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 6.5))
-                                .foregroundColor(.white.opacity(0.4))
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.white.opacity(0.05)))
-                    }
-                    .menuStyle(.borderlessButton)
-                }
-
+                scopeControls
+                projectMenu
                 Spacer()
+                refreshButton
+            }
+            searchField
+        }
+        .padding(.top, 7)
+    }
 
+    private var scopeControls: some View {
+        HStack(spacing: 2) {
+            scopeButton(title: L("All", "全部"), selected: !state.isTodayOnly) {
+                state.isTodayOnly = false
+                state.loadHistory()
+            }
+            scopeButton(title: L("Today", "今天"), selected: state.isTodayOnly) {
+                state.isTodayOnly = true
+                state.loadHistory()
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.white.opacity(0.06)))
+    }
+
+    @ViewBuilder
+    private var projectMenu: some View {
+        if availableProjects.count > 2 {
+            Menu {
+                ForEach(availableProjects, id: \.self) { project in
+                    Button(project == "All" ? L("All Projects", "全部项目") : project) {
+                        state.selectedProject = project == "All" ? nil : project
+                        state.loadHistory()
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 8))
+                        .foregroundColor(.cyan.opacity(0.85))
+                    HoverRevealText(
+                        state.selectedProject ?? L("All Projects", "全部项目"),
+                        font: .system(size: 8.5, weight: .medium),
+                        foregroundColor: .white.opacity(0.72),
+                        lineLimit: 1,
+                        privacyBlur: state.isPrivacyMode && state.selectedProject != nil,
+                        popoverWidth: 320
+                    )
+                    .frame(maxWidth: 118, alignment: .leading)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6.5))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.white.opacity(0.05)))
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
+    private var refreshButton: some View {
+        Button {
+            state.loadHistory()
+        } label: {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundColor(.white.opacity(0.55))
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.white.opacity(0.05)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 8.5))
+                .foregroundColor(.white.opacity(0.4))
+
+            TextField(L("Search chat or session…", "搜索对话或任务…"), text: $state.searchQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 9.2))
+                .foregroundColor(.white)
+                .onChange(of: state.searchQuery) { _, _ in scheduleSearchReload() }
+
+            if !state.searchQuery.isEmpty {
                 Button {
-                    state.loadHistory()
+                    state.searchQuery = ""
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.55))
-                        .frame(width: 20, height: 20)
-                        .background(Circle().fill(Color.white.opacity(0.05)))
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(.white.opacity(0.4))
                 }
                 .buttonStyle(.plain)
             }
-
-            HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 8.5))
-                    .foregroundColor(.white.opacity(0.4))
-
-                TextField(L("Search chat or session…", "搜索对话或任务…"), text: $state.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 9.2))
-                    .foregroundColor(.white)
-                    .onChange(of: state.searchQuery) { _, _ in
-                        scheduleSearchReload()
-                    }
-
-                if !state.searchQuery.isEmpty {
-                    Button {
-                        state.searchQuery = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 8.5))
-                            .foregroundColor(.white.opacity(0.4))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color.white.opacity(0.035))
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.075), lineWidth: 0.6))
-            )
         }
-        .padding(.top, 7)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.white.opacity(0.035))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.075), lineWidth: 0.6))
+        )
     }
 
     private func scopeButton(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -170,7 +179,18 @@ public struct HistoryView: View {
     // MARK: - History List
 
     private var historyList: some View {
-        let content = LazyVStack(spacing: 7) {
+        Group {
+            if isFullHeight {
+                historyContent
+            } else {
+                ScrollView(.vertical, showsIndicators: true) { historyContent }
+                    .frame(maxHeight: 355)
+            }
+        }
+    }
+
+    private var historyContent: some View {
+        LazyVStack(spacing: 7) {
             if !state.historyChats.isEmpty {
                 ForEach(Array(state.historyChats.enumerated()), id: \.element.id) { index, chat in
                     HistoryChatRow(
@@ -196,17 +216,6 @@ public struct HistoryView: View {
             }
         }
         .padding(.vertical, 2)
-
-        return Group {
-            if isFullHeight {
-                content
-            } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    content
-                }
-                .frame(maxHeight: 355)
-            }
-        }
     }
 
     private var emptyState: some View {
@@ -221,12 +230,10 @@ public struct HistoryView: View {
                 .foregroundColor(.white.opacity(0.72))
 
             if !state.searchQuery.isEmpty {
-                Button(L("Clear Search", "清除搜索")) {
-                    state.searchQuery = ""
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.cyan)
+                Button(L("Clear Search", "清除搜索")) { state.searchQuery = "" }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.cyan)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 230)
@@ -236,9 +243,7 @@ public struct HistoryView: View {
 
     private func showDetail(_ run: TaskRun) {
         cancelScheduledClose()
-        withAnimation(.easeOut(duration: 0.15)) {
-            detailRun = run
-        }
+        withAnimation(.easeOut(duration: 0.15)) { detailRun = run }
 
         if run.trajectory == nil || run.skillsUsed == nil || run.toolsUsed == nil || run.logs == nil {
             var enriched = run
@@ -252,25 +257,24 @@ public struct HistoryView: View {
         }
     }
 
-    private func closeDetail() {
-        cancelScheduledClose()
-        withAnimation(.easeIn(duration: 0.12)) {
-            detailRun = nil
-        }
+    private func loadInitialHistory() {
+        availableProjects = ["All"] + TelemetryQueryEngine.shared.allProjects()
+        if state.historyChats.isEmpty && state.historyRuns.isEmpty { state.loadHistory() }
     }
 
-    private func cancelScheduledClose() {
-        detailHoverGeneration += 1
+    private func closeDetail() {
+        cancelScheduledClose()
+        withAnimation(.easeIn(duration: 0.12)) { detailRun = nil }
     }
+
+    private func cancelScheduledClose() { detailHoverGeneration += 1 }
 
     private func scheduleDetailClose() {
         detailHoverGeneration += 1
         let generation = detailHoverGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
             guard generation == detailHoverGeneration else { return }
-            withAnimation(.easeIn(duration: 0.12)) {
-                detailRun = nil
-            }
+            withAnimation(.easeIn(duration: 0.12)) { detailRun = nil }
         }
     }
 
@@ -299,140 +303,186 @@ public struct HistoryChatRow: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            Button(action: onToggle) {
-                HStack(alignment: .top, spacing: 7) {
-                    VStack(spacing: 4) {
-                        Text("#\(index)")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(index == 1 ? .cyan : .white.opacity(0.45))
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 7.5, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.42))
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                    }
-                    .frame(width: 25)
+            headerButton
+            if expanded { expandedTurns }
+        }
+        .background(rowBackground)
+        .overlay(rowBorder)
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 4) {
-                            HoverRevealText(
-                                chat.projectName,
-                                font: .system(size: 9.8, weight: .bold, design: .rounded),
-                                foregroundColor: .white.opacity(0.92),
-                                lineLimit: 1,
-                                privacyBlur: isPrivacyMode,
-                                popoverWidth: 300
-                            )
-
-                            if let branch = chat.gitBranch, !branch.isEmpty {
-                                HoverRevealText(
-                                    "(\(branch))",
-                                    font: .system(size: 8, weight: .medium, design: .monospaced),
-                                    foregroundColor: .cyan.opacity(0.78),
-                                    lineLimit: 1,
-                                    privacyBlur: isPrivacyMode,
-                                    popoverWidth: 300
-                                )
-                            }
-
-                            Spacer(minLength: 4)
-                            Text(chat.localizedFormattedDate)
-                                .font(.system(size: 7.8))
-                                .foregroundColor(.white.opacity(0.38))
-                        }
-
-                        HoverRevealText(
-                            chat.title,
-                            font: .system(size: 9.3),
-                            foregroundColor: .white.opacity(0.78),
-                            lineLimit: 1,
-                            privacyBlur: isPrivacyMode,
-                            popoverWidth: 400
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        HStack(spacing: 6) {
-                            Label(chat.localizedRunsSummary, systemImage: "bubble.left.and.bubble.right.fill")
-                                .font(.system(size: 7.8, weight: .semibold))
-                                .foregroundColor(.cyan.opacity(0.8))
-
-                            Text(chat.formattedDuration)
-                                .font(.system(size: 7.8, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.45))
-
-                            if chat.maxWorkerCount > 0 {
-                                Label("\(chat.maxWorkerCount)w", systemImage: "person.2.fill")
-                                    .font(.system(size: 7.6, weight: .medium))
-                                    .foregroundColor(.teal.opacity(0.8))
-                            }
-
-                            Spacer()
-
-                            if let delta = chat.totalQuotaDelta, abs(delta) >= 0.1 {
-                                Text(String(format: "%+.0f%%", delta))
-                                    .font(.system(size: 7.5, weight: .bold))
-                                    .foregroundColor(delta > 0 ? .orange : .green)
-                            }
-
-                            Text(chat.formattedTotalTokens)
-                                .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                                .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
-
-                            Circle()
-                                .fill(chat.isRunning ? .cyan : (chat.isError ? .orange : .green))
-                                .frame(width: 4.5, height: 4.5)
-                        }
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
+    private var headerButton: some View {
+        Button(action: onToggle) {
+            HStack(alignment: .top, spacing: 7) {
+                indexColumn
+                chatSummary
             }
-            .buttonStyle(.plain)
-            .onHover { hovered = $0 }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+    }
 
-            if expanded {
-                Divider().background(Color.white.opacity(0.07))
-                VStack(spacing: 3) {
-                    HStack {
-                        Text(L("Session Turns", "执行轮次"))
-                            .font(.system(size: 7.8, weight: .bold, design: .rounded))
-                            .foregroundColor(.white.opacity(0.42))
-                        Spacer()
-                        if let latest = chat.latestRun {
-                            Button {
-                                onSelectRun(latest)
-                            } label: {
-                                Label(L("Details", "详情"), systemImage: "rectangle.inset.filled.and.person.filled")
-                                    .font(.system(size: 7.5, weight: .semibold))
-                                    .foregroundColor(.cyan)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.top, 5)
+    private var indexColumn: some View {
+        VStack(spacing: 4) {
+            Text("#\(index)")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(index == 1 ? .cyan : .white.opacity(0.45))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 7.5, weight: .semibold))
+                .foregroundColor(.white.opacity(0.42))
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+        }
+        .frame(width: 25)
+    }
 
-                    ForEach(Array(chat.runs.enumerated()), id: \.element.id) { offset, run in
-                        HistoryRunRow(
-                            turnNumber: chat.runs.count - offset,
-                            run: run,
-                            selected: selectedRunId == run.id,
-                            isPrivacyMode: isPrivacyMode,
-                            onSelect: { onSelectRun(run) }
-                        )
-                    }
+    private var chatSummary: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            projectRow
+            HoverRevealText(
+                chat.title,
+                font: .system(size: 9.3),
+                foregroundColor: .white.opacity(0.78),
+                lineLimit: 1,
+                privacyBlur: isPrivacyMode,
+                popoverWidth: 400
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            metadataRow
+        }
+    }
+
+    private var projectRow: some View {
+        HStack(spacing: 4) {
+            HoverRevealText(
+                chat.projectName,
+                font: .system(size: 9.8, weight: .bold, design: .rounded),
+                foregroundColor: .white.opacity(0.92),
+                lineLimit: 1,
+                privacyBlur: isPrivacyMode,
+                popoverWidth: 300
+            )
+
+            if let branch = chat.gitBranch, !branch.isEmpty {
+                HoverRevealText(
+                    "(\(branch))",
+                    font: .system(size: 8, weight: .medium, design: .monospaced),
+                    foregroundColor: .cyan.opacity(0.78),
+                    lineLimit: 1,
+                    privacyBlur: isPrivacyMode,
+                    popoverWidth: 300
+                )
+            }
+
+            Spacer(minLength: 4)
+            Text(chat.localizedFormattedDate)
+                .font(.system(size: 7.8))
+                .foregroundColor(.white.opacity(0.38))
+        }
+    }
+
+    private var metadataRow: some View {
+        HStack(spacing: 6) {
+            Label(chat.localizedRunsSummary, systemImage: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 7.8, weight: .semibold))
+                .foregroundColor(.cyan.opacity(0.8))
+
+            Text(chat.formattedDuration)
+                .font(.system(size: 7.8, design: .monospaced))
+                .foregroundColor(.white.opacity(0.45))
+
+            workerCount
+            Spacer()
+            quotaDelta
+
+            Text(chat.formattedTotalTokens)
+                .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+
+            Circle()
+                .fill(statusColor)
+                .frame(width: 4.5, height: 4.5)
+        }
+    }
+
+    @ViewBuilder
+    private var workerCount: some View {
+        if chat.maxWorkerCount > 0 {
+            Label("\(chat.maxWorkerCount)w", systemImage: "person.2.fill")
+                .font(.system(size: 7.6, weight: .medium))
+                .foregroundColor(.teal.opacity(0.8))
+        }
+    }
+
+    @ViewBuilder
+    private var quotaDelta: some View {
+        if let delta = chat.totalQuotaDelta, abs(delta) >= 0.1 {
+            Text(String(format: "%+.0f%%", delta))
+                .font(.system(size: 7.5, weight: .bold))
+                .foregroundColor(delta > 0 ? .orange : .green)
+        }
+    }
+
+    private var statusColor: Color {
+        if chat.isRunning { return .cyan }
+        if chat.isError { return .orange }
+        return .green
+    }
+
+    private var expandedTurns: some View {
+        VStack(spacing: 0) {
+            Divider().background(Color.white.opacity(0.07))
+            VStack(spacing: 3) {
+                turnsHeader
+                turnsList
+            }
+            .padding(.horizontal, 5)
+            .padding(.bottom, 5)
+            .background(Color.black.opacity(0.16))
+        }
+    }
+
+    private var turnsHeader: some View {
+        HStack {
+            Text(L("Session Turns", "执行轮次"))
+                .font(.system(size: 7.8, weight: .bold, design: .rounded))
+                .foregroundColor(.white.opacity(0.42))
+            Spacer()
+            if let latest = chat.latestRun {
+                Button { onSelectRun(latest) } label: {
+                    Label(L("Details", "详情"), systemImage: "rectangle.inset.filled.and.person.filled")
+                        .font(.system(size: 7.5, weight: .semibold))
+                        .foregroundColor(.cyan)
                 }
-                .padding(.horizontal, 5)
-                .padding(.bottom, 5)
-                .background(Color.black.opacity(0.16))
+                .buttonStyle(.plain)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 9).fill(hovered ? Color.white.opacity(0.055) : Color.white.opacity(0.03)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(expanded ? Color.cyan.opacity(0.22) : Color.white.opacity(hovered ? 0.12 : 0.065), lineWidth: 0.7)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .padding(.horizontal, 7)
+        .padding(.top, 5)
+    }
+
+    private var turnsList: some View {
+        ForEach(Array(chat.runs.enumerated()), id: \.element.id) { offset, run in
+            HistoryRunRow(
+                turnNumber: chat.runs.count - offset,
+                run: run,
+                selected: selectedRunId == run.id,
+                isPrivacyMode: isPrivacyMode,
+                onSelect: { onSelectRun(run) }
+            )
+        }
+    }
+
+    private var rowBackground: some View {
+        RoundedRectangle(cornerRadius: 9)
+            .fill(hovered ? Color.white.opacity(0.055) : Color.white.opacity(0.03))
+    }
+
+    private var rowBorder: some View {
+        RoundedRectangle(cornerRadius: 9)
+            .stroke(expanded ? Color.cyan.opacity(0.22) : Color.white.opacity(hovered ? 0.12 : 0.065), lineWidth: 0.7)
     }
 }
 
@@ -448,59 +498,78 @@ public struct HistoryRunRow: View {
     public var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 5) {
-                Capsule()
-                    .fill(selected ? Color.cyan : Color.white.opacity(hovered ? 0.35 : 0.12))
-                    .frame(width: 2.5, height: 24)
-
-                Text("#\(turnNumber)")
-                    .font(.system(size: 7.8, weight: .bold, design: .monospaced))
-                    .foregroundColor(selected ? .cyan : .white.opacity(0.45))
-                    .frame(width: 22, alignment: .leading)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(run.localizedFormattedDate)
-                            .font(.system(size: 7.4))
-                            .foregroundColor(.white.opacity(0.38))
-                        Text("·")
-                            .foregroundColor(.white.opacity(0.2))
-                        Text(run.formattedDuration)
-                            .font(.system(size: 7.4, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.5))
-
-                        Spacer()
-
-                        if !run.allWorkers.isEmpty {
-                            Text("\(run.allWorkers.count)w")
-                                .font(.system(size: 7.2, weight: .semibold))
-                                .foregroundColor(.teal.opacity(0.8))
-                        }
-
-                        Text(run.formattedTotalTokens)
-                            .font(.system(size: 7.8, weight: .bold, design: .rounded))
-                            .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
-                    }
-
-                    if let preview = run.thread?.preview ?? run.summary, !preview.isEmpty {
-                        HoverRevealText(
-                            preview,
-                            font: .system(size: 8.2),
-                            foregroundColor: .white.opacity(0.6),
-                            lineLimit: 1,
-                            privacyBlur: isPrivacyMode,
-                            popoverWidth: 400
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+                selectionBar
+                turnLabel
+                runSummary
             }
             .padding(.horizontal, 5)
             .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.cyan.opacity(0.14) : (hovered ? Color.white.opacity(0.06) : Color.white.opacity(0.018))))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.cyan.opacity(0.42) : Color.clear, lineWidth: 0.7))
+            .background(rowBackground)
+            .overlay(rowBorder)
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
+    }
+
+    private var selectionBar: some View {
+        Capsule()
+            .fill(selected ? Color.cyan : Color.white.opacity(hovered ? 0.35 : 0.12))
+            .frame(width: 2.5, height: 24)
+    }
+
+    private var turnLabel: some View {
+        Text("#\(turnNumber)")
+            .font(.system(size: 7.8, weight: .bold, design: .monospaced))
+            .foregroundColor(selected ? .cyan : .white.opacity(0.45))
+            .frame(width: 22, alignment: .leading)
+    }
+
+    private var runSummary: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            runMetadata
+            if let preview = run.thread?.preview ?? run.summary, !preview.isEmpty {
+                HoverRevealText(
+                    preview,
+                    font: .system(size: 8.2),
+                    foregroundColor: .white.opacity(0.6),
+                    lineLimit: 1,
+                    privacyBlur: isPrivacyMode,
+                    popoverWidth: 400
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var runMetadata: some View {
+        HStack(spacing: 4) {
+            Text(run.localizedFormattedDate)
+                .font(.system(size: 7.4))
+                .foregroundColor(.white.opacity(0.38))
+            Text("·").foregroundColor(.white.opacity(0.2))
+            Text(run.formattedDuration)
+                .font(.system(size: 7.4, design: .monospaced))
+                .foregroundColor(.white.opacity(0.5))
+            Spacer()
+            if !run.allWorkers.isEmpty {
+                Text("\(run.allWorkers.count)w")
+                    .font(.system(size: 7.2, weight: .semibold))
+                    .foregroundColor(.teal.opacity(0.8))
+            }
+            Text(run.formattedTotalTokens)
+                .font(.system(size: 7.8, weight: .bold, design: .rounded))
+                .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+        }
+    }
+
+    private var rowBackground: some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(selected ? Color.cyan.opacity(0.14) : (hovered ? Color.white.opacity(0.06) : Color.white.opacity(0.018)))
+    }
+
+    private var rowBorder: some View {
+        RoundedRectangle(cornerRadius: 6)
+            .stroke(selected ? Color.cyan.opacity(0.42) : Color.clear, lineWidth: 0.7)
     }
 }
 
@@ -531,65 +600,82 @@ public struct HistoryTaskDetailOverlay: View {
 
     public var body: some View {
         VStack(spacing: 7) {
-            HStack(spacing: 5) {
-                Image(systemName: "rectangle.inset.filled.and.person.filled")
-                    .font(.system(size: 9))
-                    .foregroundColor(.cyan)
-                Text(L("Task Detail", "任务详情"))
-                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                Spacer()
-                Text(run.localizedFormattedDate)
-                    .font(.system(size: 7.4))
-                    .foregroundColor(.white.opacity(0.38))
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.48))
-                }
-                .buttonStyle(.plain)
-                .help(L("Close", "关闭"))
-            }
-
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 7) {
-                    detailHeader
-                    detailMetrics
-
-                    if !run.effectiveQuotaWindows.isEmpty {
-                        QuotaWindowsView(windows: run.effectiveQuotaWindows)
-                    }
-
-                    detailNarrative
-                    TokenUsageBreakdownView(usage: run.aggregatedUsage)
-
-                    if run.hasSkillsOrTools {
-                        InspectorSkillsToolsView(run: run)
-                    }
-
-                    detailWorkers
-
-                    if let steps = run.trajectory, !steps.isEmpty {
-                        detailSteps(steps)
-                    }
-
-                    if let logs = run.logs, !logs.isEmpty {
-                        detailLogs(logs)
-                    }
-                }
-            }
-            .frame(maxHeight: 360)
+            detailTitleBar
+            detailScroll
         }
         .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: 13)
-                .fill(Color(red: 0.045, green: 0.052, blue: 0.073).opacity(0.985))
-                .shadow(color: .black.opacity(0.55), radius: 16, y: 7)
-        )
+        .background(detailBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 13)
                 .stroke(Color.cyan.opacity(0.28), lineWidth: 0.8)
         )
+    }
+
+    private var detailTitleBar: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "rectangle.inset.filled.and.person.filled")
+                .font(.system(size: 9))
+                .foregroundColor(.cyan)
+            Text(L("Task Detail", "任务详情"))
+                .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            Spacer()
+            Text(run.localizedFormattedDate)
+                .font(.system(size: 7.4))
+                .foregroundColor(.white.opacity(0.38))
+            Button(action: onClose) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.48))
+            }
+            .buttonStyle(.plain)
+            .help(L("Close", "关闭"))
+        }
+    }
+
+    private var detailScroll: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 7) {
+                detailHeader
+                detailMetrics
+                quotaSection
+                detailNarrative
+                TokenUsageBreakdownView(usage: run.aggregatedUsage)
+                skillsSection
+                detailWorkers
+                stepsSection
+                logsSection
+            }
+        }
+        .frame(maxHeight: 360)
+    }
+
+    @ViewBuilder
+    private var quotaSection: some View {
+        if !run.effectiveQuotaWindows.isEmpty {
+            QuotaWindowsView(windows: run.effectiveQuotaWindows)
+        }
+    }
+
+    @ViewBuilder
+    private var skillsSection: some View {
+        if run.hasSkillsOrTools { InspectorSkillsToolsView(run: run) }
+    }
+
+    @ViewBuilder
+    private var stepsSection: some View {
+        if let steps = run.trajectory, !steps.isEmpty { detailSteps(steps) }
+    }
+
+    @ViewBuilder
+    private var logsSection: some View {
+        if let logs = run.logs, !logs.isEmpty { detailLogs(logs) }
+    }
+
+    private var detailBackground: some View {
+        RoundedRectangle(cornerRadius: 13)
+            .fill(Color(red: 0.045, green: 0.052, blue: 0.073).opacity(0.985))
+            .shadow(color: .black.opacity(0.55), radius: 16, y: 7)
     }
 
     private var detailHeader: some View {
