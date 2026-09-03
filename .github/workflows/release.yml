@@ -1,0 +1,163 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel (must match VERSION semantics)
+        required: true
+        default: stable
+        type: choice
+        options: [stable, beta, nightly]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: package-${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            overlay: false
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            overlay: false
+          - os: windows-latest
+            platform: windows-x86_64
+            overlay: false
+          - os: windows-11-arm
+            platform: windows-arm64
+            overlay: false
+          - os: macos-14
+            platform: darwin-arm64
+            overlay: true
+          - os: macos-15-intel
+            platform: darwin-x86_64
+            overlay: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native FlowPilot
+        if: matrix.overlay
+        shell: bash
+        run: bash apps/macos-overlay/build.sh
+      - name: Package OTA release
+        shell: bash
+        run: python3 scripts/package-release.py --platform '${{ matrix.platform }}' --output-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ota-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ota-*
+          path: dist
+          merge-multiple: true
+      - name: Resolve release tag and channel
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          tag="v$version"
+          lower_version="$(printf '%s' "$version" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$lower_version" == *nightly* ]]; then
+            channel=nightly
+          elif [[ "$version" == *-* ]]; then
+            channel=beta
+          else
+            channel=stable
+          fi
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            if [[ "$GITHUB_REF_NAME" != "$tag" ]]; then
+              echo "release tag $GITHUB_REF_NAME must match VERSION ($tag)" >&2
+              exit 2
+            fi
+          else
+            requested='${{ inputs.channel || 'stable' }}'
+            if [[ "$requested" != "$channel" ]]; then
+              echo "requested channel $requested does not match VERSION $version ($channel)" >&2
+              echo "Use a stable VERSION (x.y.z), beta VERSION (x.y.z-beta.N/rc.N), or nightly VERSION containing nightly." >&2
+              exit 2
+            fi
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Prepare immutable draft Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.release.outputs.tag }}'
+          if gh release view "$tag" >/dev/null 2>&1; then
+            draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
+            if [[ "$draft" != true ]]; then
+              echo "release $tag is already published and immutable; bump VERSION instead of replacing OTA assets" >&2
+              exit 2
+            fi
+          else
+            gh release create "$tag" --draft --title "$tag" --generate-notes --target "$GITHUB_SHA"
+          fi
+          gh release view "$tag" --json body --jq .body > dist/release-notes.md
+      - name: Generate and validate update manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/generate-release-manifest.py \
+            --dist dist \
+            --tag '${{ steps.release.outputs.tag }}' \
+            --channel '${{ steps.release.outputs.channel }}' \
+            --release-notes-file dist/release-notes.md \
+            --output dist/codex-flow-update.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('dist/codex-flow-update.json').read_text(encoding='utf-8'))
+          expected = {
+              'linux-x86_64', 'linux-arm64',
+              'windows-x86_64', 'windows-arm64',
+              'darwin-arm64', 'darwin-x86_64',
+          }
+          actual = set(payload.get('artifacts') or {})
+          missing = expected - actual
+          if missing:
+              raise SystemExit(f'manifest missing release targets: {sorted(missing)}')
+          PY
+      - name: Upload assets to draft Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f dist/release-notes.md
+          gh release upload '${{ steps.release.outputs.tag }}' dist/* --clobber
+      - name: Publish Release atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.release.outputs.tag }}'
+          channel='${{ steps.release.outputs.channel }}'
+          prerelease=false
+          if [[ "$channel" != stable ]]; then prerelease=true; fi
+          gh release edit "$tag" --draft=false --prerelease="$prerelease"
+          is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
+          is_prerelease="$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)"
+          if [[ "$is_draft" != false || "$is_prerelease" != "$prerelease" ]]; then
+            echo "release $tag publication state did not match requested draft/prerelease flags" >&2
+            exit 2
+          fi

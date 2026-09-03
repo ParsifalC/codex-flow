@@ -84,6 +84,12 @@ $ExistingMaxRepairs = Existing-OrDefault $existingText 'runtime' 'max_repair_cyc
 $ExistingTelemetryEnabled = Existing-OrDefault $existingText 'telemetry' 'enabled' $DefaultTelemetryEnabled
 $ExistingTelemetryNotifications = Existing-OrDefault $existingText 'telemetry' 'notifications' $DefaultTelemetryNotifications
 $ExistingTelemetryRetentionDays = Existing-OrDefault $existingText 'telemetry' 'retention_days' $DefaultTelemetryRetentionDays
+$ExistingUpdateChannel = Existing-OrDefault $existingText 'update' 'channel' 'stable'
+$ExistingUpdateCheck = Existing-OrDefault $existingText 'update' 'check' 'true'
+$ExistingUpdateInterval = Existing-OrDefault $existingText 'update' 'check_interval_hours' '24'
+$ExistingUpdateNotifyCli = Existing-OrDefault $existingText 'update' 'notify_cli' 'true'
+$ExistingUpdateNotifyApp = Existing-OrDefault $existingText 'update' 'notify_app' 'true'
+$ExistingUpdateAutoInstall = Existing-OrDefault $existingText 'update' 'auto_install' 'false'
 
 $StrategyProfile = if ($env:CODEX_FLOW_STRATEGY) { $env:CODEX_FLOW_STRATEGY } else { $ExistingStrategy }
 $RoutingMode = if ($env:CODEX_FLOW_ROUTING_MODE) { $env:CODEX_FLOW_ROUTING_MODE } else { $ExistingRouting }
@@ -107,6 +113,12 @@ $MaxRepairs = if ($env:CODEX_FLOW_MAX_REPAIR_CYCLES) { $env:CODEX_FLOW_MAX_REPAI
 $TelemetryEnabled = if ($env:CODEX_FLOW_TELEMETRY_ENABLED) { $env:CODEX_FLOW_TELEMETRY_ENABLED } else { $ExistingTelemetryEnabled }
 $TelemetryNotifications = if ($env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS) { $env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS } else { $ExistingTelemetryNotifications }
 $TelemetryRetentionDays = if ($env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS) { $env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS } else { $ExistingTelemetryRetentionDays }
+$UpdateChannel = if ($env:CODEX_FLOW_UPDATE_CHANNEL) { $env:CODEX_FLOW_UPDATE_CHANNEL } else { $ExistingUpdateChannel }
+$UpdateCheck = if ($env:CODEX_FLOW_UPDATE_CHECK) { $env:CODEX_FLOW_UPDATE_CHECK } else { $ExistingUpdateCheck }
+$UpdateInterval = if ($env:CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS) { $env:CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS } else { $ExistingUpdateInterval }
+$UpdateNotifyCli = if ($env:CODEX_FLOW_UPDATE_NOTIFY_CLI) { $env:CODEX_FLOW_UPDATE_NOTIFY_CLI } else { $ExistingUpdateNotifyCli }
+$UpdateNotifyApp = if ($env:CODEX_FLOW_UPDATE_NOTIFY_APP) { $env:CODEX_FLOW_UPDATE_NOTIFY_APP } else { $ExistingUpdateNotifyApp }
+$UpdateAutoInstall = if ($env:CODEX_FLOW_UPDATE_AUTO_INSTALL) { $env:CODEX_FLOW_UPDATE_AUTO_INSTALL } else { $ExistingUpdateAutoInstall }
 $UiLanguage = 'auto'
 if (Test-Path $Policy) {
     try { $UiLanguage = (& python3 $Localization --policy $Policy --configured 2>$null | Out-String).Trim() } catch { $UiLanguage = 'auto' }
@@ -125,8 +137,14 @@ if ($MaxRepairs -notmatch '^[0-9]+$') { throw 'CODEX_FLOW_MAX_REPAIR_CYCLES must
 if ($TelemetryEnabled -notin @('true','false')) { throw 'CODEX_FLOW_TELEMETRY_ENABLED must be true or false' }
 if ($TelemetryNotifications -notin @('true','false')) { throw 'CODEX_FLOW_TELEMETRY_NOTIFICATIONS must be true or false' }
 if ($TelemetryRetentionDays -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_TELEMETRY_RETENTION_DAYS must be a positive integer' }
+if ($UpdateChannel -notin @('stable','beta','nightly')) { throw 'CODEX_FLOW_UPDATE_CHANNEL must be stable, beta, or nightly' }
+if ($UpdateCheck -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_CHECK must be true or false' }
+if ($UpdateNotifyCli -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_NOTIFY_CLI must be true or false' }
+if ($UpdateNotifyApp -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_NOTIFY_APP must be true or false' }
+if ($UpdateAutoInstall -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_AUTO_INSTALL must be true or false' }
+if ($UpdateInterval -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS must be a positive integer' }
 
-New-Item -ItemType Directory -Force -Path (Join-Path $CodexHome 'agents'),(Join-Path $CodexHome 'skills/flow-pilot'),$StateDir,$BinDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $CodexHome 'agents'),(Join-Path $CodexHome 'skills/flow-pilot'),$StateDir,(Join-Path $StateDir 'state'),(Join-Path $StateDir 'versions'),$BinDir | Out-Null
 if (Test-Path $Config) { Copy-Item $Config "$Config.codex-flow.$Stamp.bak" } else { New-Item -ItemType File -Force -Path $Config | Out-Null }
 
 $text = Read-Utf8NoBom $Config
@@ -155,7 +173,7 @@ if ($match.Success) {
 }
 Write-Utf8NoBom $Config $text
 
-@"
+$PolicyText = @"
 schema_version = 4
 
 [ui]
@@ -200,7 +218,16 @@ summary = true
 notifications = $TelemetryNotifications
 retention_days = $TelemetryRetentionDays
 source = "hooks+app-server"
-"@ | ForEach-Object { Write-Utf8NoBom $Policy $_ }
+
+[update]
+channel = "$UpdateChannel"
+check = $UpdateCheck
+check_interval_hours = $UpdateInterval
+notify_cli = $UpdateNotifyCli
+notify_app = $UpdateNotifyApp
+auto_install = $UpdateAutoInstall
+"@
+Write-Utf8NoBom $Policy $PolicyText
 
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-explorer.toml') (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-implementer.toml') (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force
@@ -213,7 +240,7 @@ Write-Utf8NoBom (Join-Path $StateDir 'source') $RootDir
 Write-Utf8NoBom (Join-Path $StateDir 'version') $Version
 Write-Utf8NoBom $BinDirState $BinDir
 Copy-Item $Defaults (Join-Path $StateDir 'defaults.toml') -Force
-foreach ($name in @('telemetry.py','manage-hooks.py','menu.py','localization.py','ui.py','doctor.py','strategy_runtime.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
+foreach ($name in @('updater.py','update_runtime_config.py','telemetry.py','manage-hooks.py','menu.py','localization.py','ui.py','doctor.py','strategy_runtime.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
 Remove-Item (Join-Path $StateDir 'strategies') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $StateDir 'telemetry_core') -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $RootDir 'scripts/strategies') (Join-Path $StateDir 'strategies') -Recurse -Force

@@ -20,6 +20,14 @@ try:
 except ImportError:
     from scripts.localization import resolve_language, tr  # type: ignore
 
+try:
+    from updater import cached_status as cached_update_status, update_menu_label as updater_menu_label
+except ImportError:
+    from scripts.updater import (  # type: ignore
+        cached_status as cached_update_status,
+        update_menu_label as updater_menu_label,
+    )
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 STATE_DIR = CODEX_HOME / "codex-flow"
@@ -516,6 +524,8 @@ def main_menu() -> int:
     version = get_version()
     while True:
         print_banner(version)
+        update_state = cached_update_status(trigger_background=True)
+        update_label = updater_menu_label(LANG, update_state)
         items = [
             ("1", T("🪟 macOS native floating widget", "🪟 macOS 原生悬浮窗"), "overlay widget"),
             ("2", T("📊 Latest task card", "📊 查看最新任务卡片"), "usage last"),
@@ -524,7 +534,7 @@ def main_menu() -> int:
             ("5", T("🎯 Effective policy", "🎯 查看生效策略配置"), "status"),
             ("6", T("🩺 Diagnostics", "🩺 运行系统诊断检查"), "doctor"),
             ("7", T("⚡ Local quick Benchmark", "⚡ 本地快速 Benchmark"), "benchmark-local quick"),
-            ("8", T("🔄 Check and pull updates", "🔄 检查与拉取更新"), "update"),
+            ("8", update_label, "update"),
             ("9", T("🛠️ Repair telemetry history", "🛠️ 修复历史遥测数据"), "telemetry repair"),
         ]
         for key, label, command in items:

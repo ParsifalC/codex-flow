@@ -109,6 +109,12 @@ switch ($cmd) {
         exit 0
     }
     'update' {
+        $updater = Get-ScriptPath 'updater.py'
+        if ($updater) {
+            & python3 $updater @rest
+            exit $LASTEXITCODE
+        }
+        # Compatibility fallback for installs created before the OTA updater existed.
         $src = Get-SourceDir
         if (-not (Test-Path (Join-Path $src '.git'))) { throw (L 'update requires the original git checkout' '更新需要原始 Git checkout') }
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw (L 'git is required for update' '更新需要 git') }
@@ -153,6 +159,12 @@ switch ($cmd) {
         Write-Host ""
         Write-Host (L "Updated codex-flow $before -> $after" "codex-flow 已更新 $before -> $after") -ForegroundColor Green
         & python3 (Join-Path $src 'scripts/doctor.py')
+        exit $LASTEXITCODE
+    }
+    'rollback' {
+        $updater = Get-ScriptPath 'updater.py'
+        if (-not $updater) { throw (L 'OTA updater is missing; reinstall codex-flow' 'OTA 更新组件缺失，请重新安装 codex-flow') }
+        & python3 $updater rollback @rest
         exit $LASTEXITCODE
     }
     'overlay' {

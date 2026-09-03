@@ -1,0 +1,122 @@
+name: ota-ci
+
+# Validate the same release/update contract consumed by CLI and FlowPilot.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/updater.py'
+      - 'scripts/update_runtime_config.py'
+      - 'scripts/package-release.py'
+      - 'scripts/generate-release-manifest.py'
+      - 'scripts/migrations/**'
+      - 'tests/test_updater.py'
+      - 'install.sh'
+      - 'install-release.sh'
+      - 'install.ps1'
+      - 'install-release.ps1'
+      - 'bin/codex-flow'
+      - 'bin/codex-flow.ps1'
+      - 'scripts/menu.py'
+      - 'apps/macos-overlay/**'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/ota-ci.yml'
+  pull_request:
+    paths:
+      - 'scripts/updater.py'
+      - 'scripts/update_runtime_config.py'
+      - 'scripts/package-release.py'
+      - 'scripts/generate-release-manifest.py'
+      - 'scripts/migrations/**'
+      - 'tests/test_updater.py'
+      - 'install.sh'
+      - 'install-release.sh'
+      - 'install.ps1'
+      - 'install-release.ps1'
+      - 'bin/codex-flow'
+      - 'bin/codex-flow.ps1'
+      - 'scripts/menu.py'
+      - 'apps/macos-overlay/**'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/ota-ci.yml'
+
+jobs:
+  updater:
+    name: updater-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile updater modules
+        shell: bash
+        run: |
+          python3 -m py_compile \
+            scripts/updater.py \
+            scripts/update_runtime_config.py \
+            scripts/package-release.py \
+            scripts/generate-release-manifest.py \
+            scripts/migrations/0001_update_settings.py
+      - name: Validate release bootstrap syntax
+        shell: bash
+        run: bash -n install-release.sh
+      - name: Guard Windows PowerShell 5 installer compatibility
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $installer = Join-Path (Get-Location) 'install.ps1'
+          $bytes = [System.IO.File]::ReadAllBytes($installer)
+          if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xef -or $bytes[1] -ne 0xbb -or $bytes[2] -ne 0xbf) {
+            throw 'install.ps1 must retain its UTF-8 BOM for Windows PowerShell 5 localized parsing'
+          }
+          foreach ($path in @($installer, (Join-Path (Get-Location) 'install-release.ps1'))) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$path`:$($_.Extent.StartLineNumber): $($_.Message)" }
+              exit 1
+            }
+          }
+      - name: OTA updater tests
+        shell: bash
+        run: python3 -m unittest tests.test_updater
+      - name: Package release artifacts
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            platforms=(windows-x86_64 windows-arm64)
+          else
+            platforms=(linux-x86_64 linux-arm64)
+          fi
+          for platform in "${platforms[@]}"; do
+            python3 scripts/package-release.py --platform "$platform" --output-dir dist
+          done
+          python3 scripts/generate-release-manifest.py --dist dist --tag "v$(tr -d '\r\n' < VERSION)" --output dist/codex-flow-update.json
+          test -s dist/codex-flow-update.json
+
+  macos-app:
+    name: macos-app-${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: darwin-arm64
+          - os: macos-15-intel
+            platform: darwin-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: OTA updater tests
+        run: python3 -m unittest tests.test_updater
+      - name: Validate release bootstrap syntax
+        run: bash -n install-release.sh
+      - name: Build FlowPilot with update UI
+        run: bash apps/macos-overlay/build.sh
+      - name: Package macOS OTA artifact
+        run: |
+          python3 scripts/package-release.py --platform '${{ matrix.platform }}' --output-dir dist
+          python3 scripts/generate-release-manifest.py --dist dist --tag "v$(tr -d '\r\n' < VERSION)" --output dist/codex-flow-update.json
+          test -s dist/codex-flow-update.json

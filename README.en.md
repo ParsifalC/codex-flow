@@ -89,17 +89,21 @@ However, v1.7 fresh-install resource policy is intentionally more Worker-centric
 
 ### One-Line Installation
 
+Fresh installs use the matching GitHub Release artifact directly; cloning the repository is not required.
+
 ```bash
 # macOS / Linux
-git clone git@github.com:ParsifalC/codex-flow.git && cd codex-flow && bash install.sh
+curl -fsSL https://raw.githubusercontent.com/ParsifalC/codex-flow/main/install-release.sh | bash
 ```
 
 ```powershell
 # Windows PowerShell
-git clone git@github.com:ParsifalC/codex-flow.git; cd codex-flow; .\install.ps1
+irm https://raw.githubusercontent.com/ParsifalC/codex-flow/main/install-release.ps1 | iex
 ```
 
-> ⚠️ **Important**: After installation, **fully restart Codex** to activate FlowPilot.
+The bootstrap detects OS/CPU, resolves the Latest Stable Release, downloads the matching artifact, verifies SHA-256, installs it under `~/.codex/codex-flow/versions/<version>`, and runs health checks. Windows automatically selects the x86_64 or ARM64 ZIP. macOS uses the prebuilt FlowPilot binary from the Release and starts the floating widget automatically without running `build.sh` locally.
+
+> ⚠️ **Final step**: fully quit and restart Codex so the new Agent / Skill / Hook / policy snapshot is loaded. On macOS, FlowPilot is already running after installation.
 
 ---
 

@@ -4,14 +4,15 @@ import AppKit
 public struct BubbleView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
+    @ObservedObject private var updateService = FlowPilotUpdateService.shared
     @State private var isHovered: Bool = false
     @State private var breathePhase: CGFloat = 0.0
     @State private var shimmerAngle: Double = 0.0
-    
+
     public init(state: OverlayState) {
         self.state = state
     }
-    
+
     public var body: some View {
         ZStack {
             if state.isDocked {
@@ -21,10 +22,18 @@ public struct BubbleView: View {
                 fullBubbleView
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
+
+            if updateService.hasUpdateBadge {
+                residentUpdateBadge
+                    .offset(x: updateBadgeOffsetX, y: -22)
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: 76, height: 76)
         .contentShape(Rectangle())
         .animation(.spring(response: 0.16, dampingFraction: 0.82), value: state.isDocked)
+        .animation(.spring(response: 0.22, dampingFraction: 0.78), value: updateService.hasUpdateBadge)
         .onHover { hovered in
             withAnimation(.easeInOut(duration: 0.25)) {
                 isHovered = hovered
@@ -43,7 +52,30 @@ public struct BubbleView: View {
             }
         }
     }
-    
+
+    private var updateBadgeOffsetX: CGFloat {
+        if !state.isDocked { return -20 }
+        return state.dockEdge == .right ? 27 : -27
+    }
+
+    private var residentUpdateBadge: some View {
+        ZStack {
+            Circle()
+                .fill(updateService.isRestartRequired ? Color.orange : Color.red)
+                .frame(width: 12, height: 12)
+                .overlay(Circle().stroke(Color.black.opacity(0.78), lineWidth: 1.2))
+                .shadow(
+                    color: (updateService.isRestartRequired ? Color.orange : Color.red).opacity(0.7),
+                    radius: 3
+                )
+
+            Image(systemName: updateService.isRestartRequired ? "arrow.clockwise" : "arrow.down")
+                .font(.system(size: 6, weight: .black))
+                .foregroundColor(.white)
+        }
+        .accessibilityLabel(updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
+    }
+
     // MARK: - Dedicated Edge Dock Tab View (Visible metrics when tucked)
     private var dockTabView: some View {
         HStack(spacing: 0) {
@@ -57,16 +89,15 @@ public struct BubbleView: View {
         }
         .frame(width: 76, height: 76)
     }
-    
+
     private func dockPillContent(isRight: Bool) -> some View {
         VStack(spacing: 2.5) {
-            // Live Status beacon + Sparkles
             HStack(spacing: 3) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 6.5, height: 6.5)
                     .shadow(color: statusColor.opacity(0.9), radius: 2)
-                
+
                 Image(systemName: "sparkles")
                     .font(.system(size: 9.5, weight: .bold))
                     .foregroundStyle(
@@ -77,26 +108,24 @@ public struct BubbleView: View {
                         )
                     )
             }
-            
-            // Clean, bold Token metric (no decimals in docked half-screen mode)
+
             Text(state.latestRun?.formattedCompactTokens ?? L("Ready", "就绪"))
                 .font(.system(size: 9.0, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            
-            // Subtle action handle & status text
+
             HStack(spacing: 2) {
                 if isRight {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 7, weight: .bold))
                         .foregroundColor(.cyan.opacity(0.9))
                 }
-                
+
                 Text(state.isTaskRunning ? L("RUN", "运行") : L("OK", "正常"))
                     .font(.system(size: 7.5, weight: .black, design: .rounded))
                     .foregroundColor(statusColor)
-                
+
                 if !isRight {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 7, weight: .bold))
@@ -137,11 +166,10 @@ public struct BubbleView: View {
         )
         .shadow(color: statusGlowColor.opacity(0.45), radius: 4)
     }
-    
+
     // MARK: - Full Circular Bubble View
     private var fullBubbleView: some View {
         ZStack {
-            // Pure circular dark frosted glass (diameter 58 inside 76 frame)
             Circle()
                 .fill(
                     RadialGradient(
@@ -159,8 +187,7 @@ public struct BubbleView: View {
                         .stroke(Color.white.opacity(isHovered ? 0.25 : 0.12), lineWidth: 0.8)
                 )
                 .frame(width: 58, height: 58)
-            
-            // Outer dynamic animated glow border (rotates & pulses on hover)
+
             Circle()
                 .strokeBorder(
                     borderGradient,
@@ -172,12 +199,9 @@ public struct BubbleView: View {
                     radius: isHovered ? 4 : 2
                 )
                 .frame(width: 58, height: 58)
-            
-            // Central Content
+
             VStack(spacing: 2) {
-                // Top status orb & icon
                 ZStack {
-                    // Pulsing ring if task is active or hovered
                     if state.isTaskRunning || isHovered {
                         Circle()
                             .stroke(statusColor.opacity(isHovered ? 0.6 : 0.4), lineWidth: 1.2)
@@ -185,8 +209,7 @@ public struct BubbleView: View {
                             .scaleEffect(1.0 + breathePhase * (isHovered ? 0.25 : 0.35))
                             .opacity(1.0 - breathePhase)
                     }
-                    
-                    // App glyph / Logo
+
                     Image(systemName: "sparkles")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(
@@ -199,13 +222,12 @@ public struct BubbleView: View {
                         .shadow(color: .cyan.opacity(isHovered ? 0.7 : 0.3), radius: isHovered ? 3 : 1.5)
                 }
                 .frame(height: 22)
-                
-                // Micro token badge
+
                 HStack(spacing: 2) {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 6.5, weight: .bold))
                         .foregroundColor(statusColor)
-                    
+
                     Text(state.latestRun?.formattedCompactTokens ?? L("Ready", "就绪"))
                         .font(.system(size: 8, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.95))
@@ -223,7 +245,7 @@ public struct BubbleView: View {
                         )
                 )
             }
-            
+
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
@@ -235,7 +257,7 @@ public struct BubbleView: View {
                 .offset(x: 20, y: -20)
         }
     }
-    
+
     private var borderGradient: AnyShapeStyle {
         if state.isTaskRunning {
             return AnyShapeStyle(
@@ -266,7 +288,7 @@ public struct BubbleView: View {
             )
         }
     }
-    
+
     private var statusColor: Color {
         if state.isTaskRunning {
             return .cyan
@@ -279,7 +301,7 @@ public struct BubbleView: View {
         }
         return Color(red: 0.2, green: 0.85, blue: 0.45)
     }
-    
+
     private var statusGlowColor: Color {
         if state.isTaskRunning {
             return .cyan
