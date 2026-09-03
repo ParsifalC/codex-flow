@@ -531,7 +531,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var runtime = OverlayRuntimeState()
     private var hoverGate = OverlayHoverGate(rearmDistance: 6)
     private var pendingPresentationAnimated = true
-    private var deferredPointerExit = false
+    private var needsPointerReconciliationAfterGeometry = false
 
     private let bubbleSize = NSSize(width: 76, height: 76)
     private let summarySize = NSSize(width: 384, height: 490)
@@ -707,14 +707,23 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             performPresentationFrameUpdate(animated: pendingPresentationAnimated)
             return true
         }
-        drainDeferredPointerExitIfNeeded()
+        reconcilePointerAfterGeometryIfNeeded()
         return false
     }
 
-    private func drainDeferredPointerExitIfNeeded() {
-        guard deferredPointerExit else { return }
-        deferredPointerExit = false
-        handleMouseExited()
+    private func reconcilePointerAfterGeometryIfNeeded() {
+        guard needsPointerReconciliationAfterGeometry,
+              let contentView = window?.contentView,
+              let window else { return }
+        needsPointerReconciliationAfterGeometry = false
+
+        let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let pointInHost = contentView.convert(pointInWindow, from: nil)
+        if isPointerInteractive(at: pointInHost, in: contentView.bounds) {
+            handleMouseEntered(at: pointInHost)
+        } else {
+            handleMouseExited()
+        }
     }
 
     private func approximatelyEqual(_ lhs: NSRect, _ rhs: NSRect, tolerance: CGFloat = 0.5) -> Bool {
@@ -793,8 +802,10 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseEntered(at point: NSPoint) {
-        deferredPointerExit = false
-        guard !isGeometryTransitioning else { return }
+        if isGeometryTransitioning {
+            needsPointerReconciliationAfterGeometry = true
+            return
+        }
         guard pointerMovementRearmedHover() else { return }
 
         cancelTuckTimer()
@@ -811,8 +822,10 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseMoved(at point: NSPoint) {
-        deferredPointerExit = false
-        guard !isGeometryTransitioning else { return }
+        if isGeometryTransitioning {
+            needsPointerReconciliationAfterGeometry = true
+            return
+        }
         guard pointerMovementRearmedHover() else { return }
 
         if state.isDocked {
@@ -839,10 +852,9 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     public func handleMouseExited() {
         cancelDwellTimer()
         if isGeometryTransitioning {
-            deferredPointerExit = true
+            needsPointerReconciliationAfterGeometry = true
             return
         }
-        deferredPointerExit = false
 
         if state.isExpanded && !state.isPinned && !isInteractingOrDragging {
             collapseTimer?.invalidate()
