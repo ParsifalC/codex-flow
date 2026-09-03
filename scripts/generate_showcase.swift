@@ -26,8 +26,9 @@ func renderViewToPNG<V: View>(
 
     // Keep the view attached to a real AppKit window so controls, AccountView's
     // onAppear refresh, menus and progress indicators all finish layout before
-    // the snapshot is taken. Privacy-sensitive text is source-redacted by
-    // HoverRevealText before this point, so bitmap snapshots cannot bypass blur.
+    // the snapshot is taken. Privacy-sensitive text is semantically redacted by
+    // HoverRevealText before blur is applied, so bitmap snapshots stay private
+    // even if an AppKit capture path drops the blur compositing effect.
     let hostingView = NSHostingView(rootView: sizedView)
     let fitting = hostingView.fittingSize
     let width = targetWidth ?? max(fitting.width, 10)
@@ -531,6 +532,11 @@ func runGenerator() {
     stateBubble.isExpanded = false
     stateBubble.isPrivacyMode = true
 
+    // AccountView performs an async Codex app-server request on appearance. The
+    // RPC itself may take up to four seconds, so account-containing captures get
+    // a wider settle window than the purely local telemetry views.
+    let accountSettleTime: TimeInterval = 5.0
+
     renderViewToPNG(
         view: FlowPilotLogoView(size: 512, showGlow: true, withBolt: true),
         scale: 2.0,
@@ -568,7 +574,7 @@ func runGenerator() {
         view: AccountPromoCard(state: stateAccount, isFullHeight: true),
         targetWidth: 384,
         scale: 2.0,
-        settleTime: 0.9,
+        settleTime: accountSettleTime,
         outputPath: "docs/assets/screenshots/account_full.png"
     )
 
@@ -607,7 +613,7 @@ func runGenerator() {
         targetWidth: 384,
         targetHeight: 490,
         scale: 2.0,
-        settleTime: 0.9,
+        settleTime: accountSettleTime,
         outputPath: "docs/assets/screenshots/account_window.png"
     )
 
@@ -620,7 +626,7 @@ func runGenerator() {
             stateBubble: stateBubble
         ),
         scale: 2.0,
-        settleTime: 0.9,
+        settleTime: accountSettleTime,
         outputPath: "docs/assets/promo/flowpilot_promo_poster.png"
     )
 
