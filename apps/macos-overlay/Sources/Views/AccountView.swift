@@ -19,8 +19,6 @@ public struct AccountView: View {
     public var body: some View {
         let content = VStack(spacing: 9) {
             accountHeader
-            StrategyModeCard()
-            AutostartCard()
 
             if isLoading || !hasLoaded {
                 loadingState
@@ -34,6 +32,9 @@ public struct AccountView: View {
             } else {
                 emptyState
             }
+
+            StrategyModeCard()
+            AutostartCard()
         }
         .padding(.vertical, 2)
 
@@ -171,32 +172,161 @@ public struct AccountView: View {
         .background(cardBackground)
     }
 
+    enum QuotaTabMode: String, CaseIterable {
+        case window
+        case daily
+    }
+    @State private var quotaTabMode: QuotaTabMode = .window
+
     private func quotaCard(_ value: AccountSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Label(L("Current quota", "当前额度"), systemImage: "gauge.with.needle.fill")
-                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.82))
+                Label(
+                    quotaTabMode == .window ? L("Current quota", "当前额度") : L("Daily quota usage", "每日额度消耗"),
+                    systemImage: quotaTabMode == .window ? "gauge.with.needle.fill" : "chart.bar.fill"
+                )
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .foregroundColor(.white.opacity(0.82))
+
                 Spacer()
-                if value.quotaWindows.isEmpty {
-                    Text(L("Not reported", "未返回"))
-                        .font(.system(size: 8))
-                        .foregroundColor(.white.opacity(0.4))
+
+                HStack(spacing: 2) {
+                    quotaTabButton(mode: .window, title: L("Window", "额度窗口"))
+                    quotaTabButton(mode: .daily, title: L("Daily", "每日消耗"))
                 }
+                .padding(2)
+                .background(Capsule().fill(Color.white.opacity(0.06)))
             }
 
-            if value.quotaWindows.isEmpty {
-                Text(L("Codex did not return a rate-limit window for this account.", "Codex 当前没有返回该账户的额度窗口。"))
-                    .font(.system(size: 8.5))
-                    .foregroundColor(.white.opacity(0.45))
-            } else {
-                ForEach(value.orderedWindows) { window in
-                    quotaRow(window)
+            if quotaTabMode == .window {
+                if value.quotaWindows.isEmpty {
+                    Text(L("Codex did not return a rate-limit window for this account.", "Codex 当前没有返回该账户的额度窗口。"))
+                        .font(.system(size: 8.5))
+                        .foregroundColor(.white.opacity(0.45))
+                } else {
+                    ForEach(value.orderedWindows) { window in
+                        quotaRow(window)
+                    }
                 }
+            } else {
+                dailyQuotaView
             }
         }
         .padding(9)
         .background(cardBackground)
+    }
+
+    private func quotaTabButton(mode: QuotaTabMode, title: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                quotaTabMode = mode
+            }
+        } label: {
+            Text(title)
+                .font(.system(size: 7.8, weight: quotaTabMode == mode ? .bold : .medium, design: .rounded))
+                .foregroundColor(quotaTabMode == mode ? .white : .white.opacity(0.45))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(
+                    Capsule()
+                        .fill(quotaTabMode == mode ? Color.cyan.opacity(0.28) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var dailyQuotaView: some View {
+        let dailyUsages = TelemetryQueryEngine.shared.computeDailyQuotaUsage(days: 7)
+        let maxDelta = max(1.0, dailyUsages.map(\.quotaDelta).max() ?? 1.0)
+        let totalRecentDelta = dailyUsages.map(\.quotaDelta).reduce(0, +)
+        let todayUsage = dailyUsages.first
+
+        return VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("TODAY'S USAGE", "今日消耗"))
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.4))
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(String(format: "+%.0f%%", todayUsage?.quotaDelta ?? 0))
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundColor((todayUsage?.quotaDelta ?? 0) > 0 ? .orange : .white.opacity(0.8))
+                        if let tokens = todayUsage?.tokens, tokens > 0 {
+                            Text("· \(TaskRun.formatTokenCount(tokens))")
+                                .font(.system(size: 7.8, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                    }
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(L("7-DAY TOTAL", "近 7 天消耗"))
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.4))
+                    Text(String(format: "+%.0f%%", totalRecentDelta))
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.cyan)
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 2)
+
+            VStack(spacing: 4) {
+                ForEach(dailyUsages) { item in
+                    dailyQuotaRow(item, maxDelta: maxDelta)
+                }
+            }
+        }
+    }
+
+    private func dailyQuotaRow(_ item: DailyQuotaUsage, maxDelta: Double) -> some View {
+        let fraction = max(0.0, min(1.0, item.quotaDelta / maxDelta))
+        let accent: Color = item.quotaDelta >= 10 ? .orange : (item.quotaDelta > 0 ? .cyan : .white.opacity(0.2))
+
+        return HStack(spacing: 6) {
+            Text(item.displayDate)
+                .font(.system(size: 8.2, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.75))
+                .frame(width: 36, alignment: .leading)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.06))
+                    if item.quotaDelta > 0 {
+                        Capsule().fill(accent)
+                            .frame(width: max(4, proxy.size.width * CGFloat(fraction)))
+                    }
+                }
+            }
+            .frame(height: 4)
+
+            HStack(spacing: 3) {
+                if item.quotaDelta > 0 {
+                    Text(String(format: "+%.0f%%", item.quotaDelta))
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(accent)
+                } else {
+                    Text("0%")
+                        .font(.system(size: 7.8))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+
+                if item.runs > 0 {
+                    Text("(\(item.runs)\(L(" runs", "次")))")
+                        .font(.system(size: 7.2))
+                        .foregroundColor(.white.opacity(0.32))
+                }
+            }
+            .frame(width: 58, alignment: .trailing)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.white.opacity(0.02))
+        )
     }
 
     private func quotaRow(_ window: AccountQuotaWindow) -> some View {
@@ -265,7 +395,7 @@ public struct AccountView: View {
 
     private func resetCard(_ value: AccountSnapshot) -> some View {
         HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .center, spacing: 3) {
                 Text(L("RESET CREDITS AVAILABLE", "可用重置次数"))
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.42))

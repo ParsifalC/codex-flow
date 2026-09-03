@@ -135,45 +135,68 @@ public struct SummaryView: View {
     }
 
     private var tabBar: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             ForEach(OverlayTab.allCases) { tab in
-                tabButton(tab.localizedTitle, tab.iconName, !showingAccount && state.activeTab == tab) {
+                TabButtonView(
+                    title: tab.localizedTitle,
+                    icon: tab.iconName,
+                    selected: !showingAccount && state.activeTab == tab
+                ) {
                     showingAccount = false
                     state.selectTab(tab)
                 }
             }
 
-            tabButton(L("Account", "账户"), "person.crop.circle.fill", showingAccount) {
+            TabButtonView(
+                title: L("Account", "账户"),
+                icon: "person.crop.circle.fill",
+                selected: showingAccount
+            ) {
                 showingAccount = true
             }
         }
-        .padding(4)
-        .background(Color.black.opacity(0.12))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(Color.black.opacity(0.14))
     }
 
-    private func tabButton(_ title: String, _ icon: String, _ selected: Bool, action: @escaping () -> Void) -> some View {
+    private struct TabButtonView: View {
+    let title: String
+    let icon: String
+    let selected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
         Button(action: action) {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 7.8, weight: .semibold))
+                    .font(.system(size: 8.8, weight: .semibold))
                 Text(title)
-                    .font(.system(size: 8.4, weight: selected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 9.2, weight: selected ? .bold : .medium, design: .rounded))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
-            .foregroundColor(selected ? .white : .white.opacity(0.48))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .foregroundColor(selected ? .white : (isHovered ? .white.opacity(0.85) : .white.opacity(0.52)))
+            .frame(maxWidth: .infinity, minHeight: 26)
+            .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(selected ? Color.cyan.opacity(0.22) : Color.clear)
+                    .fill(selected ? Color.cyan.opacity(0.22) : (isHovered ? Color.white.opacity(0.06) : Color.clear))
                     .overlay(
                         RoundedRectangle(cornerRadius: 7)
-                            .stroke(selected ? Color.cyan.opacity(0.32) : Color.clear, lineWidth: 0.6)
+                            .stroke(selected ? Color.cyan.opacity(0.32) : (isHovered ? Color.white.opacity(0.1) : Color.clear), lineWidth: 0.6)
                     )
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
+}
 
     private var background: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -841,7 +864,7 @@ public struct QuotaWindowsView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label(L("Quota remaining", "额度剩余"), systemImage: "gauge.with.needle.fill")
+                Label(L("Quota remaining at task completion", "任务结束额度剩余"), systemImage: "gauge.with.needle.fill")
                     .font(.system(size: 8.8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
                 Spacer()

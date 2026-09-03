@@ -248,6 +248,32 @@ public struct QuotaWindow: Codable, Identifiable {
     }
 }
 
+public struct DailyQuotaUsage: Identifiable {
+    public var id: String { dateString }
+    public let date: Date
+    public let dateString: String
+    public let displayDate: String
+    public let quotaDelta: Double
+    public let tokens: Int
+    public let runs: Int
+
+    public init(
+        date: Date,
+        dateString: String,
+        displayDate: String,
+        quotaDelta: Double,
+        tokens: Int,
+        runs: Int
+    ) {
+        self.date = date
+        self.dateString = dateString
+        self.displayDate = displayDate
+        self.quotaDelta = quotaDelta
+        self.tokens = tokens
+        self.runs = runs
+    }
+}
+
 public struct SkillUsage: Codable, Identifiable {
     public var id: String { name }
     public var name: String
