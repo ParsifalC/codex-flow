@@ -535,6 +535,13 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var hoverDwellTimer: Timer?
     private var collapseTimer: Timer?
     private var tuckTimer: Timer?
+    // Programmatic window moves can synthesize tracking-area enter/exit events.
+    // Remember the pointer position before a collapse/tuck and require genuine
+    // pointer movement before hover behavior is re-armed. This breaks the
+    // feedback loop where the window moves under a stationary cursor, receives
+    // mouseEntered, reverses the move, then receives mouseExited and tucks again.
+    private var hoverRearmPointerLocation: NSPoint?
+    private let hoverRearmDistance: CGFloat = 2.0
     private let bubbleSize = NSSize(width: 76, height: 76)
     private let summarySize = NSSize(width: 384, height: 490)
 
@@ -596,6 +603,22 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    private func suppressHoverUntilPointerMoves() {
+        hoverRearmPointerLocation = NSEvent.mouseLocation
+        cancelDwellTimer()
+    }
+
+    private func pointerMovementRearmedHover() -> Bool {
+        guard let anchor = hoverRearmPointerLocation else { return true }
+        let current = NSEvent.mouseLocation
+        let dx = current.x - anchor.x
+        let dy = current.y - anchor.y
+        let minimumDistanceSquared = hoverRearmDistance * hoverRearmDistance
+        guard dx * dx + dy * dy >= minimumDistanceSquared else { return false }
+        hoverRearmPointerLocation = nil
+        return true
+    }
+
     public func tuckBubble(animated: Bool = true) {
         guard let window = self.window else { return }
         guard !state.isExpanded, !state.isPinned, !isInteractingOrDragging, !state.isDocked else { return }
@@ -606,6 +629,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         let targetX = visible.maxX - bubbleSize.width
 
         let targetFrame = NSRect(origin: NSPoint(x: targetX, y: window.frame.origin.y), size: bubbleSize)
+        suppressHoverUntilPointerMoves()
         state.isDocked = true
 
         if animated {
@@ -655,6 +679,10 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseEntered() {
+        // A tracking-area enter caused only by our own frame animation is not
+        // user intent. Ignoring it is what makes idle collapse/tuck idempotent.
+        guard pointerMovementRearmedHover() else { return }
+
         cancelTuckTimer()
         collapseTimer?.invalidate()
         collapseTimer = nil
@@ -668,6 +696,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseMoved() {
+        guard pointerMovementRearmedHover() else { return }
+
         if state.isDocked {
             unTuckBubble(animated: true)
         }
@@ -724,6 +754,13 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         }
 
         let newFrame = NSRect(origin: newOrigin, size: targetSize)
+
+        if !state.isExpanded {
+            // Resizing the summary into the collapsed bubble can move the new
+            // tracking area under a stationary cursor. Do not let that synthetic
+            // enter immediately expand or untuck the bubble again.
+            suppressHoverUntilPointerMoves()
+        }
 
         if animated {
             NSAnimationContext.runAnimationGroup { context in
