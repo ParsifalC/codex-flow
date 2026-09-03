@@ -75,7 +75,7 @@ private enum ShowcaseMockData {
                 AccountQuotaWindow(
                     id: "showcase-weekly",
                     durationMinutes: 10080,
-                    usedPercent: 57,
+                    usedPercent: 52,
                     resetsAt: now.addingTimeInterval(4 * 86_400 + 6 * 3600)
                 )
             ],
@@ -101,6 +101,52 @@ private enum ShowcaseMockData {
             StrategyProfileInfo(name: "speed", description: "Minimize wall-clock time with safe parallelism.")
         ]
     )
+}
+
+/// Keep promotional screenshots visually stable even when the user's live quota
+/// happens to be under pressure. The product keeps its real warning thresholds;
+/// only showcase copies are normalized into the non-warning cyan range.
+private func showcaseQuotaWindow(_ source: QuotaWindow, index: Int) -> QuotaWindow {
+    var copy = source
+    copy.usedPercent = index == 0 ? 34 : 48
+    copy.deltaPercentagePoints = 0
+    return copy
+}
+
+private func showcaseRun(_ source: TaskRun) -> TaskRun {
+    var copy = source
+    if let value = copy.quotaBefore {
+        copy.quotaBefore = value.enumerated().map { showcaseQuotaWindow($0.element, index: $0.offset) }
+    }
+    if let value = copy.quotaAfter {
+        copy.quotaAfter = value.enumerated().map { showcaseQuotaWindow($0.element, index: $0.offset) }
+    }
+    if let value = copy.quotaChangeDuringRun {
+        copy.quotaChangeDuringRun = value.enumerated().map { showcaseQuotaWindow($0.element, index: $0.offset) }
+    }
+    return copy
+}
+
+private func showcaseChat(_ source: ChatSession) -> ChatSession {
+    var copy = source
+    copy.runs = source.runs.map(showcaseRun)
+    return copy
+}
+
+/// ImageRenderer does not provide the same viewport lifecycle as a real AppKit
+/// ScrollView. For promotional window captures, lay out the real full-height
+/// surface first and crop its top 384×490pt viewport. This preserves real App
+/// dimensions without producing an empty scroll-container shell.
+private func showcaseWindow<V: View>(_ view: V) -> some View {
+    view
+        .frame(width: ShowcaseMetrics.panelWidth)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(
+            width: ShowcaseMetrics.panelWidth,
+            height: ShowcaseMetrics.panelHeight,
+            alignment: .top
+        )
+        .clipped()
 }
 
 // MARK: - Account Showcase Chrome
@@ -788,10 +834,11 @@ struct BannerPromoView: View {
                 }
                 .frame(width: 560)
 
-                SummaryView(state: stateInspector, isFullHeight: false)
-                    .frame(width: ShowcaseMetrics.panelWidth, height: ShowcaseMetrics.panelHeight)
-                    .scaleEffect(0.92)
-                    .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 15)
+                showcaseWindow(
+                    SummaryView(state: stateInspector, isFullHeight: true)
+                )
+                .scaleEffect(0.92)
+                .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 15)
             }
             .padding(.horizontal, 50)
             .padding(.vertical, 36)
@@ -880,11 +927,12 @@ struct DesktopScenePromoView: View {
                 .offset(x: -180, y: 15)
                 .shadow(color: Color.black.opacity(0.5), radius: 30, x: -10, y: 15)
 
-            SummaryView(state: stateInspector, isFullHeight: false)
-                .frame(width: ShowcaseMetrics.panelWidth, height: ShowcaseMetrics.panelHeight)
-                .scaleEffect(0.72)
-                .offset(x: 320, y: 15)
-                .shadow(color: Color.black.opacity(0.6), radius: 35, x: 5, y: 15)
+            showcaseWindow(
+                SummaryView(state: stateInspector, isFullHeight: true)
+            )
+            .scaleEffect(0.72)
+            .offset(x: 320, y: 15)
+            .shadow(color: Color.black.opacity(0.6), radius: 35, x: 5, y: 15)
 
             BubbleView(state: stateBubble)
                 .scaleEffect(0.9)
@@ -904,19 +952,17 @@ func runGenerator() {
     let engine = TelemetryQueryEngine.shared
     let allRuns = engine.loadAllRuns()
 
-    var latestRun = engine.loadLatestRun() ?? allRuns.first
-    if var run = latestRun {
-        engine.enrichRunIfNeeded(&run)
-        latestRun = run
-    }
+    var latestRun = engine.loadLatestRun() ?? allRuns.first ?? TaskRun.previewSample
+    engine.enrichRunIfNeeded(&latestRun)
+    latestRun = showcaseRun(latestRun)
 
-    let historyChats = engine.fetchChatHistory(limit: 20)
-    let historyRuns = engine.fetchHistory(limit: 50)
+    let historyChats = engine.fetchChatHistory(limit: 20).map(showcaseChat)
+    let historyRuns = engine.fetchHistory(limit: 50).map(showcaseRun)
     let stats = engine.computeStats(days: 30, project: nil)
 
     let stateInspector = OverlayState()
     stateInspector.latestRun = latestRun
-    stateInspector.inspectedRun = latestRun
+    stateInspector.inspectedRun = nil
     stateInspector.activeTab = .inspector
     stateInspector.isExpanded = true
     stateInspector.isPrivacyMode = true
@@ -997,7 +1043,9 @@ func runGenerator() {
     )
 
     renderViewToPNG(
-        view: SummaryView(state: stateInspector, isFullHeight: false),
+        view: showcaseWindow(
+            SummaryView(state: stateInspector, isFullHeight: true)
+        ),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
@@ -1005,7 +1053,9 @@ func runGenerator() {
     )
 
     renderViewToPNG(
-        view: SummaryView(state: stateHistoryFull, isFullHeight: false),
+        view: showcaseWindow(
+            SummaryView(state: stateHistoryFull, isFullHeight: true)
+        ),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
@@ -1013,7 +1063,9 @@ func runGenerator() {
     )
 
     renderViewToPNG(
-        view: SummaryView(state: stateAnalytics, isFullHeight: false),
+        view: showcaseWindow(
+            SummaryView(state: stateAnalytics, isFullHeight: true)
+        ),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
@@ -1030,7 +1082,9 @@ func runGenerator() {
     )
 
     renderViewToPNG(
-        view: AccountPromoCard(state: stateAccount, isFullHeight: false),
+        view: showcaseWindow(
+            AccountPromoCard(state: stateAccount, isFullHeight: true)
+        ),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
