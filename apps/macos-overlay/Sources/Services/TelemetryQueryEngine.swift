@@ -677,4 +677,50 @@ public class TelemetryQueryEngine {
             projects: sortedProjects
         )
     }
+
+    // MARK: - Daily Quota Usage Aggregation
+    public func computeDailyQuotaUsage(days: Int = 7) -> [DailyQuotaUsage] {
+        let runs = loadAllRuns()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let cutoff = calendar.date(byAdding: .day, value: -(max(1, days) - 1), to: today) ?? today
+
+        var buckets: [Date: (quotaDelta: Double, tokens: Int, runs: Int)] = [:]
+        for run in runs {
+            guard let ms = run.finishedAtMs ?? run.startedAtMs else { continue }
+            let day = calendar.startOfDay(for: Date(timeIntervalSince1970: ms / 1000.0))
+            guard day >= cutoff && day <= today else { continue }
+            let existing = buckets[day] ?? (0.0, 0, 0)
+            let delta = run.primaryQuotaDelta ?? 0.0
+            let tokens = run.aggregatedUsage.totalTokens ?? 0
+            buckets[day] = (existing.quotaDelta + delta, existing.tokens + tokens, existing.runs + 1)
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+
+        let shortFormatter = DateFormatter()
+        shortFormatter.dateFormat = "MM-dd"
+
+        return (0..<days).compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            let value = buckets[day] ?? (0.0, 0, 0)
+            let displayDate: String
+            if calendar.isDateInToday(day) {
+                displayDate = L("Today", "今天")
+            } else if calendar.isDateInYesterday(day) {
+                displayDate = L("Yesterday", "昨天")
+            } else {
+                displayDate = shortFormatter.string(from: day)
+            }
+            return DailyQuotaUsage(
+                date: day,
+                dateString: dateFormatter.string(from: day),
+                displayDate: displayDate,
+                quotaDelta: value.quotaDelta,
+                tokens: value.tokens,
+                runs: value.runs
+            )
+        }
+    }
 }

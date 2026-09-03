@@ -922,6 +922,14 @@ public enum AccountSnapshotService {
         return nil
     }
 
+    private static func isBooleanNumber(_ number: NSNumber) -> Bool {
+        #if canImport(Darwin)
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
+        #else
+        return String(cString: number.objCType) == "c"
+        #endif
+    }
+
     private static func stringValue(_ value: Any?) -> String? {
         if let value = value as? String { return value }
         if let value = value as? NSNumber { return value.stringValue }
@@ -929,19 +937,22 @@ public enum AccountSnapshotService {
     }
 
     private static func intValue(_ value: Any?) -> Int? {
-        if let number = value as? NSNumber, !(value is Bool) { return number.intValue }
+        if let number = value as? NSNumber, !isBooleanNumber(number) { return number.intValue }
         if let value = value as? String { return Int(value.trimmingCharacters(in: .whitespacesAndNewlines)) }
         return nil
     }
 
     private static func doubleValue(_ value: Any?) -> Double? {
-        if let number = value as? NSNumber, !(value is Bool) { return number.doubleValue }
+        if let number = value as? NSNumber, !isBooleanNumber(number) { return number.doubleValue }
         if let value = value as? String { return Double(value.trimmingCharacters(in: .whitespacesAndNewlines)) }
         return nil
     }
 
     private static func boolValue(_ value: Any?) -> Bool? {
-        if let number = value as? NSNumber { return number.boolValue }
+        if let number = value as? NSNumber {
+            if isBooleanNumber(number) { return number.boolValue }
+            return nil
+        }
         if let value = value as? String {
             switch value.lowercased() {
             case "true", "1", "yes": return true

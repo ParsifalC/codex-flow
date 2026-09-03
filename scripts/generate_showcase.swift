@@ -4,32 +4,63 @@ import CoreGraphics
 
 @MainActor
 func renderViewToPNG<V: View>(view: V, targetWidth: CGFloat? = nil, targetHeight: CGFloat? = nil, scale: CGFloat = 2.0, outputPath: String) {
-    let configuredView: AnyView
+    let darkView = view.preferredColorScheme(.dark)
+    
+    let sizedView: AnyView
     if let w = targetWidth, let h = targetHeight {
-        configuredView = AnyView(view.frame(width: w, height: h))
+        sizedView = AnyView(darkView.frame(width: w, height: h))
     } else if let w = targetWidth {
-        configuredView = AnyView(view.frame(width: w))
+        sizedView = AnyView(darkView.frame(width: w))
     } else if let h = targetHeight {
-        configuredView = AnyView(view.frame(height: h))
+        sizedView = AnyView(darkView.frame(height: h))
     } else {
-        configuredView = AnyView(view)
+        sizedView = AnyView(darkView)
     }
     
-    let renderer = ImageRenderer(content: configuredView)
-    renderer.scale = scale
+    let hostingView = NSHostingView(rootView: sizedView)
+    let fitting = hostingView.fittingSize
+    let width = targetWidth ?? max(fitting.width, 10)
+    let height = targetHeight ?? max(fitting.height, 10)
+    let contentRect = NSRect(x: 0, y: 0, width: width, height: height)
+    hostingView.frame = contentRect
     
+    let window = NSWindow(
+        contentRect: contentRect,
+        styleMask: [.borderless],
+        backing: .buffered,
+        defer: false
+    )
+    window.contentView = hostingView
+    window.appearance = NSAppearance(named: .darkAqua)
+    window.backgroundColor = .clear
+    window.isOpaque = false
+    window.layoutIfNeeded()
+    
+    // Allow AppKit/SwiftUI to attach controls (Menu, TextField, ProgressView)
+    // and resolve background fetch tasks cleanly
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.35))
+    
+    if let rep = hostingView.bitmapImageRepForCachingDisplay(in: contentRect) {
+        hostingView.cacheDisplay(in: contentRect, to: rep)
+        if let pngData = rep.representation(using: .png, properties: [:]) {
+            let url = URL(fileURLWithPath: outputPath)
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? pngData.write(to: url)
+            print("✅ Rendered [\(rep.pixelsWide)x\(rep.pixelsHigh)] -> \(outputPath)")
+            return
+        }
+    }
+    
+    let renderer = ImageRenderer(content: sizedView)
+    renderer.scale = scale
     if let cgImage = renderer.cgImage {
         let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
         if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
             let url = URL(fileURLWithPath: outputPath)
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? pngData.write(to: url)
-            print("✅ Rendered [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
-        } else {
-            print("❌ Failed to encode PNG for \(outputPath)")
+            print("✅ Rendered fallback [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
         }
-    } else {
-        print("❌ ImageRenderer failed for \(outputPath)")
     }
 }
 
@@ -482,6 +513,7 @@ func runGenerator() {
     renderViewToPNG(
         view: SummaryView(state: stateInspector, isFullHeight: false),
         targetWidth: 384,
+        targetHeight: 490,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/inspector_window.png"
     )
@@ -489,6 +521,7 @@ func runGenerator() {
     renderViewToPNG(
         view: SummaryView(state: stateHistoryFull, isFullHeight: false),
         targetWidth: 384,
+        targetHeight: 490,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/history_window.png"
     )
@@ -496,6 +529,7 @@ func runGenerator() {
     renderViewToPNG(
         view: SummaryView(state: stateAnalytics, isFullHeight: false),
         targetWidth: 384,
+        targetHeight: 490,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/analytics_window.png"
     )

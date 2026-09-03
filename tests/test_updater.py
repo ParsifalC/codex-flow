@@ -315,7 +315,7 @@ class UpdaterTest(unittest.TestCase):
             run.return_value.returncode = 0
             result = updater._legacy_git_update()
         self.assertEqual(result, 0)
-        commands = [call.args[0] for call in run.call_args_list]
+        commands = [c[0][0] for c in run.call_args_list]
         self.assertFalse(any("pull" in command for command in commands))
         self.assertTrue(any(("install.ps1" in " ".join(command)) or ("install.sh" in " ".join(command)) for command in commands))
 
