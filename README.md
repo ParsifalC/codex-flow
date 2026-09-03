@@ -8,7 +8,7 @@
 
 **智能、高效、自适应的 Codex 多 Agent 策略编排引擎**
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg?style=flat-square)](VERSION)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg?style=flat-square)](VERSION)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-快速安装)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.md)
@@ -191,7 +191,7 @@ codex-flow
 
 ```text
 ╭────────────────────────────────────────────────────────────────────╮
-│                  🚀 codex-flow 控制台 (v2.0.0)                   │
+│                  🚀 codex-flow 控制台 (v2.0.1)                   │
 │    FlowPilot 智能编排 · 确定性任务遥测 · 本地 Benchmark 验证     │
 ╰────────────────────────────────────────────────────────────────────╯
   [1] 🪟 macOS 原生悬浮窗 (overlay widget)
