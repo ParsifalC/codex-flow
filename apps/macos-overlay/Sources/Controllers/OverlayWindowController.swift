@@ -74,6 +74,7 @@ public class OverlayState: ObservableObject {
         DispatchQueue.main.async {
             self.isExpanded = false
             self.isPinned = false
+            self.isDocked = false
             self.windowController?.updateWindowFrame(animated: true)
             self.windowController?.scheduleTuck()
         }
@@ -313,13 +314,17 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
     }
 
     // MARK: - Dragging & Magnetic Edge Snapping
-    private var initialLocation: NSPoint = .zero
+    private var initialMouseScreenLocation: NSPoint = .zero
+    private var initialWindowOrigin: NSPoint = .zero
     private var isDragging: Bool = false
     private let snapMargin: CGFloat = 8.0
     private let snapThreshold: CGFloat = 36.0
 
     override func mouseDown(with event: NSEvent) {
-        initialLocation = event.locationInWindow
+        if let window = self.window {
+            initialMouseScreenLocation = NSEvent.mouseLocation
+            initialWindowOrigin = window.frame.origin
+        }
         isDragging = false
         windowController?.cancelDwellTimer()
         windowController?.isInteractingOrDragging = true
@@ -331,18 +336,19 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
             super.mouseDragged(with: event)
             return
         }
-        let currentLocation = event.locationInWindow
-        let deltaX = currentLocation.x - initialLocation.x
-        let deltaY = currentLocation.y - initialLocation.y
+        let currentMouseScreenLocation = NSEvent.mouseLocation
+        let deltaX = currentMouseScreenLocation.x - initialMouseScreenLocation.x
+        let deltaY = currentMouseScreenLocation.y - initialMouseScreenLocation.y
         let dragThreshold: CGFloat = (windowController?.state.isExpanded ?? false) ? 8.0 : 4.0
-        if abs(deltaX) > dragThreshold || abs(deltaY) > dragThreshold {
+        if isDragging || abs(deltaX) > dragThreshold || abs(deltaY) > dragThreshold {
             isDragging = true
             windowController?.cancelDwellTimer()
             windowController?.isInteractingOrDragging = true
 
-            var newOrigin = window.frame.origin
-            newOrigin.x += deltaX
-            newOrigin.y += deltaY
+            var newOrigin = NSPoint(
+                x: initialWindowOrigin.x + deltaX,
+                y: initialWindowOrigin.y + deltaY
+            )
 
             if let screen = window.screen ?? NSScreen.main {
                 let visible = screen.visibleFrame
@@ -407,9 +413,10 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
                 targetOrigin.y = visible.minY + snapMargin
             }
         } else {
-            // The collapsed bubble is a stable right-edge affordance. It may
-            // be dragged freely while the mouse is down, but release/idle
-            // always settles on the right so it cannot oscillate between edges.
+            // Collapsed mode has a single stable right-edge destination. The
+            // concurrent hotfix experimented with dual-sided snapping, but that
+            // reintroduces the reported left/right ambiguity, so right-only is
+            // the deliberate conflict resolution here.
             targetOrigin.x = visible.maxX - frame.width - snapMargin
             windowController?.state.dockEdge = .right
 
@@ -541,6 +548,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var hoverDwellTimer: Timer?
     private var collapseTimer: Timer?
     private var tuckTimer: Timer?
+    private let edgeTuckIdleInterval: TimeInterval = 30.0
     // Programmatic window moves can synthesize tracking-area enter/exit events.
     // Remember the pointer position before a collapse/tuck and require genuine
     // pointer movement before hover behavior is re-armed. This breaks the
@@ -589,6 +597,9 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
         window.orderFront(nil)
 
+        // Give launch/restoration a moment to settle, then start the normal
+        // 30-second idle countdown. We intentionally do not stack two 30-second
+        // delays here.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.scheduleTuck()
         }
@@ -604,7 +615,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         cancelTuckTimer()
         guard !state.isExpanded, !state.isPinned, !isInteractingOrDragging, !state.isDocked else { return }
         state.dockEdge = .right
-        tuckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
+        tuckTimer = Timer.scheduledTimer(withTimeInterval: edgeTuckIdleInterval, repeats: false) { [weak self] _ in
             self?.tuckBubble(animated: true)
         }
     }
