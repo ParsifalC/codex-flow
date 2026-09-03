@@ -74,6 +74,13 @@ struct AccountSnapshotFixtureTest {
         precondition(first.quotaWindows[1].usedPercent == 61)
         precondition(first.quotaWindows.map(\.id) == second.quotaWindows.map(\.id))
 
+        AccountSnapshotService.clearCache()
+        precondition(AccountSnapshotService.cached == nil)
+        AccountSnapshotService.updateCache(first)
+        precondition(AccountSnapshotService.cached?.email == "fixture@example.com")
+        AccountSnapshotService.clearCache()
+        precondition(AccountSnapshotService.cached == nil)
+
         let duplicateWindow = try AccountSnapshotService.parse(
             accountResponse: [:],
             limitsResponse: [

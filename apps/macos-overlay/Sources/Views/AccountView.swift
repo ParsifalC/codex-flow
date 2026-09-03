@@ -6,25 +6,31 @@ public struct AccountView: View {
     @ObservedObject private var localization = AppLocalization.shared
     public var isFullHeight: Bool = false
 
-    @State private var snapshot: AccountSnapshot?
+    @State private var snapshot: AccountSnapshot? = AccountSnapshotService.cached
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var hasLoaded = false
+    @State private var hasLoaded = AccountSnapshotService.cached != nil
 
     public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
         self.isFullHeight = isFullHeight
+        let cached = AccountSnapshotService.cached
+        _snapshot = State(initialValue: cached)
+        _hasLoaded = State(initialValue: cached != nil)
     }
 
     public var body: some View {
         let content = VStack(spacing: 9) {
             accountHeader
 
-            if isLoading || !hasLoaded {
+            if snapshot == nil && (isLoading || !hasLoaded) {
                 loadingState
-            } else if let errorMessage {
+            } else if snapshot == nil, let errorMessage {
                 errorState(errorMessage)
             } else if let snapshot, !snapshot.isEmpty {
+                if let errorMessage {
+                    staleDataWarning(errorMessage)
+                }
                 identityCard(snapshot)
                 quotaCard(snapshot)
                 resetCard(snapshot)
@@ -48,7 +54,13 @@ public struct AccountView: View {
                 .frame(maxHeight: 390)
             }
         }
-        .onAppear(perform: refresh)
+        .onAppear {
+            if snapshot == nil, let cached = AccountSnapshotService.cached {
+                snapshot = cached
+                hasLoaded = true
+            }
+            refresh()
+        }
     }
 
     private var accountHeader: some View {
@@ -68,11 +80,18 @@ public struct AccountView: View {
             Spacer()
 
             Button(action: refresh) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundColor(.cyan)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color.cyan.opacity(0.12)))
+                if isLoading && snapshot != nil {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.cyan.opacity(0.12)))
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(.cyan)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.cyan.opacity(0.12)))
+                }
             }
             .buttonStyle(.plain)
             .disabled(isLoading)
@@ -110,6 +129,31 @@ public struct AccountView: View {
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 120)
         .background(cardBackground)
+    }
+
+    private func staleDataWarning(_ message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 8.5))
+                .foregroundColor(.orange)
+            Text(L("Refresh failed: \(message) (showing cached data)", "刷新失败：\(message)（已展示缓存数据）"))
+                .font(.system(size: 8))
+                .foregroundColor(.white.opacity(0.65))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer()
+            Button(L("Retry", "重试"), action: refresh)
+                .buttonStyle(.plain)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(.cyan)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.orange.opacity(0.12))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.orange.opacity(0.25), lineWidth: 0.6))
+        )
     }
 
     private var emptyState: some View {
@@ -459,7 +503,6 @@ public struct AccountView: View {
         guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
-        snapshot = nil
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let value = try AccountSnapshotService.load()
@@ -467,6 +510,7 @@ public struct AccountView: View {
                     snapshot = value
                     isLoading = false
                     hasLoaded = true
+                    errorMessage = nil
                 }
             } catch {
                 DispatchQueue.main.async {

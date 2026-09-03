@@ -670,6 +670,30 @@ public enum AccountSnapshotService {
     /// writes, endpoint waits, EOF, and child cleanup.
     public static let outerTimeout: TimeInterval = 10.0
 
+    private static let cacheLock = NSLock()
+    private static var cachedSnapshot: AccountSnapshot?
+
+    /// In-memory cached snapshot from the most recent successful load or manual update.
+    public static var cached: AccountSnapshot? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cachedSnapshot
+    }
+
+    /// Updates the in-memory cached snapshot.
+    public static func updateCache(_ snapshot: AccountSnapshot) {
+        cacheLock.lock()
+        cachedSnapshot = snapshot
+        cacheLock.unlock()
+    }
+
+    /// Clears the in-memory cached snapshot.
+    public static func clearCache() {
+        cacheLock.lock()
+        cachedSnapshot = nil
+        cacheLock.unlock()
+    }
+
     public static func load() throws -> AccountSnapshot {
         let deadline = Date().addingTimeInterval(outerTimeout)
         let rpc = try AccountAppServerRPC(deadline: deadline)
@@ -712,7 +736,9 @@ public enum AccountSnapshotService {
                 userInfo: [NSLocalizedDescriptionKey: L("Account data is unavailable from Codex.", "Codex 暂未返回账户数据。")]
             )
         }
-        return try parse(accountResponse: accountResponse, limitsResponse: limitsResponse, now: Date())
+        let snapshot = try parse(accountResponse: accountResponse, limitsResponse: limitsResponse, now: Date())
+        updateCache(snapshot)
+        return snapshot
     }
 
     /// Pure response parsing is public so fixture tests can exercise API
