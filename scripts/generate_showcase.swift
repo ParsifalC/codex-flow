@@ -14,8 +14,6 @@ func renderViewToPNG<V: View>(
     targetWidth: CGFloat? = nil,
     targetHeight: CGFloat? = nil,
     scale: CGFloat = 2.0,
-    requiresLiveHosting: Bool = false,
-    settleTime: TimeInterval = 0.45,
     outputPath: String
 ) {
     let darkView = view.preferredColorScheme(.dark)
@@ -31,107 +29,85 @@ func renderViewToPNG<V: View>(
         sizedView = AnyView(darkView)
     }
 
-    // The original showcase pipeline used ImageRenderer. Keep that as the
-    // default because it preserves SwiftUI effects (notably privacy blur) and
-    // produces deterministic logical-size × scale pixel dimensions.
-    if !requiresLiveHosting {
-        let renderer = ImageRenderer(content: sizedView)
-        renderer.scale = scale
-        if let cgImage = renderer.cgImage {
-            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-            if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
-                let url = URL(fileURLWithPath: outputPath)
-                try? FileManager.default.createDirectory(
-                    at: url.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try? pngData.write(to: url)
-                print("✅ Rendered [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
-                return
-            }
-        }
+    // Keep the original deterministic SwiftUI renderer for every showcase image.
+    // Account and strategy data are mocked below, so no AppKit lifecycle or async
+    // settling is required and SwiftUI privacy blur remains intact.
+    let renderer = ImageRenderer(content: sizedView)
+    renderer.scale = scale
+
+    guard let cgImage = renderer.cgImage else {
         print("❌ ImageRenderer failed for \(outputPath)")
         return
     }
 
-    // AccountView needs a real AppKit lifecycle so onAppear can start its Codex
-    // app-server request. Wait for that async work, then capture at an explicit
-    // pixel scale instead of inheriting the current monitor's backing scale.
-    let hostingView = NSHostingView(rootView: sizedView)
-    let initialFitting = hostingView.fittingSize
-    var width = targetWidth ?? max(initialFitting.width, 10)
-    var height = targetHeight ?? max(initialFitting.height, 10)
-    var contentRect = NSRect(x: 0, y: 0, width: width, height: height)
-    hostingView.frame = contentRect
-
-    let window = NSWindow(
-        contentRect: contentRect,
-        styleMask: [.borderless],
-        backing: .buffered,
-        defer: false
-    )
-    window.contentView = hostingView
-    window.appearance = NSAppearance(named: .darkAqua)
-    window.backgroundColor = .clear
-    window.isOpaque = false
-    window.layoutIfNeeded()
-
-    RunLoop.current.run(until: Date(timeIntervalSinceNow: settleTime))
-    window.layoutIfNeeded()
-
-    // Full-height Account/Poster content can grow after async data arrives.
-    // Re-measure unspecified dimensions after settling to avoid clipping or an
-    // oversized loading-state canvas.
-    if targetWidth == nil || targetHeight == nil {
-        let settledFitting = hostingView.fittingSize
-        if targetWidth == nil { width = max(settledFitting.width, 10) }
-        if targetHeight == nil { height = max(settledFitting.height, 10) }
-        contentRect = NSRect(x: 0, y: 0, width: width, height: height)
-        hostingView.frame = contentRect
-        window.setContentSize(contentRect.size)
-        window.layoutIfNeeded()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.12))
-    }
-
-    let pixelsWide = max(1, Int((width * scale).rounded()))
-    let pixelsHigh = max(1, Int((height * scale).rounded()))
-    guard let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil,
-        pixelsWide: pixelsWide,
-        pixelsHigh: pixelsHigh,
-        bitsPerSample: 8,
-        samplesPerPixel: 4,
-        hasAlpha: true,
-        isPlanar: false,
-        colorSpaceName: .deviceRGB,
-        bytesPerRow: 0,
-        bitsPerPixel: 0
-    ) else {
-        print("❌ Failed to allocate bitmap for \(outputPath)")
+    let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+    guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+        print("❌ Failed to encode PNG for \(outputPath)")
         return
     }
-    rep.size = NSSize(width: width, height: height)
-    hostingView.cacheDisplay(in: contentRect, to: rep)
 
-    if let pngData = rep.representation(using: .png, properties: [:]) {
-        let url = URL(fileURLWithPath: outputPath)
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
+    let url = URL(fileURLWithPath: outputPath)
+    try? FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try? pngData.write(to: url)
+    print("✅ Rendered [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
+}
+
+// MARK: - Deterministic Showcase Data
+
+private enum ShowcaseMockData {
+    static var account: AccountSnapshot {
+        let now = Date()
+        return AccountSnapshot(
+            accountType: "chatgpt",
+            email: "showcase@flowpilot.dev",
+            planType: "plus",
+            requiresOpenAIAuth: false,
+            quotaWindows: [
+                AccountQuotaWindow(
+                    id: "showcase-5h",
+                    durationMinutes: 300,
+                    usedPercent: 38,
+                    resetsAt: now.addingTimeInterval(2 * 3600 + 18 * 60)
+                ),
+                AccountQuotaWindow(
+                    id: "showcase-weekly",
+                    durationMinutes: 10080,
+                    usedPercent: 57,
+                    resetsAt: now.addingTimeInterval(4 * 86_400 + 6 * 3600)
+                )
+            ],
+            resetCreditCount: 3,
+            resetCredits: [],
+            hasCredits: true,
+            unlimitedCredits: false,
+            creditsBalance: "120",
+            spendControlReached: false,
+            rateLimitReachedType: nil,
+            fetchedAt: now
         )
-        try? pngData.write(to: url)
-        print("✅ Rendered live [\(rep.pixelsWide)x\(rep.pixelsHigh)] -> \(outputPath)")
-    } else {
-        print("❌ Failed to encode PNG for \(outputPath)")
     }
+
+    static let strategy = StrategyModeSnapshot(
+        configured: "balanced",
+        routing: "adaptive",
+        valid: true,
+        profiles: [
+            StrategyProfileInfo(name: "efficient", description: "Minimize quota waste and expensive parent usage."),
+            StrategyProfileInfo(name: "balanced", description: "Balance quality, quota, and latency."),
+            StrategyProfileInfo(name: "quality", description: "Maximize correctness and independent verification."),
+            StrategyProfileInfo(name: "speed", description: "Minimize wall-clock time with safe parallelism.")
+        ]
+    )
 }
 
 // MARK: - Account Showcase Chrome
 
-/// Account is intentionally a UI-only fourth tab in SummaryView, so the normal
-/// OverlayTab enum remains backward compatible. The showcase needs a deterministic
-/// way to render that selected state without synthesizing mouse input, therefore
-/// this wrapper reuses the real AccountView and mirrors the production chrome.
+/// Showcase-only Account surface. It mirrors the real Account tab visually but
+/// deliberately consumes fixed mock snapshots so promotional rendering never
+/// depends on Codex app-server, local strategy commands, or request timing.
 struct AccountPromoCard: View {
     @ObservedObject var state: OverlayState
     var isFullHeight: Bool = true
@@ -176,9 +152,14 @@ struct AccountPromoCard: View {
 
             Divider().background(Color.white.opacity(0.06))
 
-            AccountView(state: state, isFullHeight: isFullHeight)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 9)
+            ShowcaseAccountView(
+                state: state,
+                snapshot: ShowcaseMockData.account,
+                strategy: ShowcaseMockData.strategy,
+                isFullHeight: isFullHeight
+            )
+            .padding(.horizontal, 10)
+            .padding(.bottom, 9)
         }
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -220,6 +201,404 @@ struct AccountPromoCard: View {
                     RoundedRectangle(cornerRadius: 7)
                         .stroke(selected ? Color.cyan.opacity(0.32) : Color.clear, lineWidth: 0.6)
                 )
+        )
+    }
+}
+
+private struct ShowcaseAccountView: View {
+    @ObservedObject var state: OverlayState
+    let snapshot: AccountSnapshot
+    let strategy: StrategyModeSnapshot
+    let isFullHeight: Bool
+
+    var body: some View {
+        let content = VStack(spacing: 9) {
+            accountHeader
+            identityCard
+            quotaCard
+            resetCard
+            accountFactsCard
+            ShowcaseStrategyModeCard(snapshot: strategy)
+            ShowcaseAutostartCard()
+        }
+        .padding(.vertical, 2)
+
+        return Group {
+            if isFullHeight {
+                content
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    content
+                }
+                .frame(maxHeight: 390)
+            }
+        }
+    }
+
+    private var accountHeader: some View {
+        HStack(spacing: 9) {
+            FlowPilotLogoView(size: 42, showGlow: true, withBolt: false, text: "FP")
+                .frame(width: 42, height: 42)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("Account & Limits", "账户与额度"))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Text(L("Account data from Codex · strategy from FlowPilot policy", "账户数据来自 Codex · 策略来自 FlowPilot 配置"))
+                    .font(.system(size: 8.5))
+                    .foregroundColor(.white.opacity(0.45))
+            }
+
+            Spacer()
+
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundColor(.cyan)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.cyan.opacity(0.12)))
+        }
+    }
+
+    private var identityCard: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L("CURRENT PLAN", "当前 PLAN"))
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.42))
+                Text(planDisplayName(snapshot.planType))
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .foregroundStyle(LinearGradient(colors: [.cyan, .indigo], startPoint: .leading, endPoint: .trailing))
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(accountTypeDisplayName(snapshot.accountType))
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.7))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.07)))
+
+                if let email = snapshot.email, !email.isEmpty {
+                    HoverRevealText(
+                        email,
+                        font: .system(size: 8.5),
+                        foregroundColor: .white.opacity(0.48),
+                        lineLimit: 1,
+                        privacyBlur: state.isPrivacyMode,
+                        popoverWidth: 300
+                    )
+                    .frame(maxWidth: 190, alignment: .trailing)
+                }
+            }
+        }
+        .padding(9)
+        .background(cardBackground)
+    }
+
+    private var quotaCard: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label(L("Current quota", "当前额度"), systemImage: "gauge.with.needle.fill")
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .foregroundColor(.white.opacity(0.82))
+
+            ForEach(snapshot.orderedWindows) { window in
+                quotaRow(window)
+            }
+        }
+        .padding(9)
+        .background(cardBackground)
+    }
+
+    private func quotaRow(_ window: AccountQuotaWindow) -> some View {
+        let used = window.usedPercent.map { max(0, min(100, $0)) }
+        let remaining = window.remainingPercent
+        let remainingFraction = max(0, min(1, (remaining ?? 0) / 100.0))
+        let pressure = used ?? 0
+        let accent: Color = pressure >= 85 ? .orange : (pressure >= 60 ? .yellow : .cyan)
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Text(window.compactName)
+                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                    .foregroundColor(accent)
+                    .frame(width: 48, alignment: .leading)
+                Text(window.displayName)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.72))
+                Spacer()
+                if let remaining {
+                    Text(String(format: L("%.0f%% left", "剩余 %.0f%%"), remaining))
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(accent)
+                }
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.08))
+                    Capsule().fill(accent)
+                        .frame(width: proxy.size.width * CGFloat(remainingFraction))
+                }
+            }
+            .frame(height: 4)
+
+            HStack {
+                if let used {
+                    Text(String(format: L("Used %.0f%%", "已用 %.0f%%"), used))
+                        .font(.system(size: 7.8))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+                Spacer()
+                Text(window.resetsAt.map { L("Resets \(formatAccountDate($0))", "\(formatAccountDate($0)) 重置") } ?? L("Reset time unavailable", "重置时间未返回"))
+                    .font(.system(size: 7.8, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.52))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+            }
+        }
+        .padding(7)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.025)))
+    }
+
+    private var resetCard: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .center, spacing: 3) {
+                Text(L("RESET CREDITS AVAILABLE", "可用重置次数"))
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.42))
+                Text(snapshot.resetCreditCount.map(String.init) ?? "—")
+                    .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    .foregroundColor(.cyan)
+            }
+
+            Divider().frame(height: 30).overlay(Color.white.opacity(0.08))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L("NEXT CREDIT EXPIRY", "重置次数到期"))
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.42))
+                Text(L("Available on demand", "按需可用"))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.75))
+            }
+            Spacer()
+        }
+        .padding(9)
+        .background(cardBackground)
+    }
+
+    private var accountFactsCard: some View {
+        VStack(spacing: 5) {
+            factRow(L("Credits", "Credits"), snapshot.creditsBalance.map { "\($0) credits" } ?? "—")
+            factRow(L("Rate limit state", "限额状态"), L("Normal", "正常"))
+            factRow(L("Spend control", "消费控制"), L("Normal", "正常"))
+            factRow(L("OpenAI auth", "OpenAI 认证"), L("Not required", "不需要"))
+            factRow(L("Last refreshed", "最后刷新"), formatAccountDate(snapshot.fetchedAt))
+        }
+        .padding(9)
+        .background(cardBackground)
+    }
+
+    private func factRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundColor(.white.opacity(0.45))
+            Spacer()
+            Text(value)
+                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.78))
+                .lineLimit(1)
+        }
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(Color.white.opacity(0.04))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
+    }
+
+    private func planDisplayName(_ raw: String?) -> String {
+        switch raw?.lowercased() {
+        case "free": return "Free"
+        case "go": return "Go"
+        case "plus": return "Plus"
+        case "pro": return "Pro"
+        case "team": return "Team"
+        case "business": return "Business"
+        case "enterprise": return "Enterprise"
+        case "edu": return "Edu"
+        case .some(let value): return value.replacingOccurrences(of: "_", with: " ").capitalized
+        case .none: return L("Not reported", "未返回")
+        }
+    }
+
+    private func accountTypeDisplayName(_ raw: String?) -> String {
+        switch raw {
+        case "chatgpt": return "ChatGPT"
+        case "apiKey": return "API Key"
+        case "amazonBedrock": return "Bedrock"
+        default: return raw ?? L("Account", "账户")
+        }
+    }
+}
+
+private struct ShowcaseStrategyModeCard: View {
+    let snapshot: StrategyModeSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 5) {
+                Label(L("Global strategy mode", "全局策略模式"), systemImage: "slider.horizontal.3")
+                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.82))
+                Spacer()
+                if let routing = snapshot.routing, !routing.isEmpty {
+                    Text(localizedRoutingName(routing))
+                        .font(.system(size: 6.8, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.42))
+                }
+                Text(localizedConfiguredName)
+                    .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                    .foregroundColor(.cyan)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.cyan.opacity(0.12)))
+
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.32))
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                ForEach(snapshot.profiles) { profile in
+                    strategyTile(profile)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 4) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 7.5))
+                    .padding(.top, 1)
+                Text(L("Repository policy can override this global strategy for individual tasks.", "具体仓库策略可以覆盖此全局模式。"))
+                    .font(.system(size: 7.5))
+            }
+            .foregroundColor(.white.opacity(0.35))
+        }
+        .padding(9)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.04))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
+        )
+    }
+
+    private var localizedConfiguredName: String {
+        snapshot.profiles.first(where: { $0.name == snapshot.configured })?.localizedName
+            ?? snapshot.configured.capitalized
+    }
+
+    private func localizedRoutingName(_ routing: String) -> String {
+        switch routing.lowercased() {
+        case "adaptive": return L("Adaptive", "自适应")
+        case "direct": return L("Direct", "直接")
+        case "delegate": return L("Delegate", "委派")
+        default: return routing.capitalized
+        }
+    }
+
+    private func strategyTile(_ profile: StrategyProfileInfo) -> some View {
+        let selected = profile.name == snapshot.configured
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: profile.iconName)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(profile.accent)
+                Text(profile.localizedName)
+                    .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(selected ? 0.95 : 0.72))
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(profile.accent)
+                }
+            }
+            Text(profile.localizedDescription)
+                .font(.system(size: 7.3))
+                .foregroundColor(.white.opacity(0.38))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(7)
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(selected ? profile.accent.opacity(0.12) : Color.white.opacity(0.025))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(selected ? profile.accent.opacity(0.45) : Color.white.opacity(0.055), lineWidth: 0.7)
+                )
+        )
+    }
+}
+
+private struct ShowcaseAutostartCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: "power.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.green)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Launch at Login", "登录时启动"))
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.84))
+                    Text(L("Enabled · starts automatically on next login", "已开启 · 下次登录自动启动"))
+                        .font(.system(size: 7.6))
+                        .foregroundColor(.white.opacity(0.42))
+                }
+
+                Spacer()
+
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 7.5, weight: .bold))
+                    Text(L("ON", "开"))
+                        .font(.system(size: 7.2, weight: .heavy, design: .rounded))
+                }
+                .foregroundColor(.green)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.green.opacity(0.14)))
+
+                Toggle("", isOn: .constant(true))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .tint(.green)
+                    .disabled(true)
+            }
+
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 7.2))
+                Text(L(
+                    "Registered as a user LaunchAgent; enabling it affects the next login and does not restart the current widget.",
+                    "使用用户级 LaunchAgent 注册；开启后从下次登录生效，不会重启当前悬浮窗。"
+                ))
+                    .font(.system(size: 7.2))
+            }
+            .foregroundColor(.white.opacity(0.3))
+        }
+        .padding(9)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.04))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
         )
     }
 }
@@ -409,7 +788,8 @@ struct BannerPromoView: View {
                 }
                 .frame(width: 560)
 
-                SummaryView(state: stateInspector, isFullHeight: true)
+                SummaryView(state: stateInspector, isFullHeight: false)
+                    .frame(width: ShowcaseMetrics.panelWidth, height: ShowcaseMetrics.panelHeight)
                     .scaleEffect(0.92)
                     .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 15)
             }
@@ -500,7 +880,8 @@ struct DesktopScenePromoView: View {
                 .offset(x: -180, y: 15)
                 .shadow(color: Color.black.opacity(0.5), radius: 30, x: -10, y: 15)
 
-            SummaryView(state: stateInspector, isFullHeight: true)
+            SummaryView(state: stateInspector, isFullHeight: false)
+                .frame(width: ShowcaseMetrics.panelWidth, height: ShowcaseMetrics.panelHeight)
                 .scaleEffect(0.72)
                 .offset(x: 320, y: 15)
                 .shadow(color: Color.black.opacity(0.6), radius: 35, x: 5, y: 15)
@@ -576,10 +957,6 @@ func runGenerator() {
     stateBubble.isExpanded = false
     stateBubble.isPrivacyMode = true
 
-    // AccountSnapshotService bounds the complete app-server flow at 10 seconds.
-    // Give the Account view enough time to leave its loading state before capture.
-    let accountSettleTime = AccountSnapshotService.outerTimeout + 0.75
-
     renderViewToPNG(
         view: FlowPilotLogoView(size: 512, showGlow: true, withBolt: true),
         scale: 2.0,
@@ -643,14 +1020,12 @@ func runGenerator() {
         outputPath: "docs/assets/screenshots/analytics_window.png"
     )
 
-    // Render Account captures later and with a real hosting lifecycle, because
-    // the view fetches live Codex account/quota data on appearance.
+    // Account is deterministic mock data in the showcase pipeline, so it renders
+    // immediately through ImageRenderer instead of waiting on app-server/CLI I/O.
     renderViewToPNG(
         view: AccountPromoCard(state: stateAccount, isFullHeight: true),
         targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
-        requiresLiveHosting: true,
-        settleTime: accountSettleTime,
         outputPath: "docs/assets/screenshots/account_full.png"
     )
 
@@ -659,8 +1034,6 @@ func runGenerator() {
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
-        requiresLiveHosting: true,
-        settleTime: accountSettleTime,
         outputPath: "docs/assets/screenshots/account_window.png"
     )
 
@@ -673,8 +1046,6 @@ func runGenerator() {
             stateBubble: stateBubble
         ),
         scale: 2.0,
-        requiresLiveHosting: true,
-        settleTime: accountSettleTime,
         outputPath: "docs/assets/promo/flowpilot_promo_poster.png"
     )
 
