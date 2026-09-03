@@ -2,6 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! command -v swiftc >/dev/null 2>&1; then
+    echo "swiftc not installed, skipping native account snapshot test"
+    exit 0
+fi
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -157,7 +162,6 @@ chmod +x "$TMP/fake-app-server.py"
 
 CLANG_MODULE_CACHE_PATH="$TMP/module-cache" swiftc \
     -parse-as-library \
-    -framework Foundation \
     "$ROOT_DIR/apps/macos-overlay/Sources/Services/AccountSnapshotService.swift" \
     "$TMP/Test.swift" \
     -o "$TMP/account-snapshot-test"
