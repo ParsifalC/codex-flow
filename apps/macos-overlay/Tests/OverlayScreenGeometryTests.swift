@@ -4,6 +4,7 @@ import Cocoa
 struct OverlayScreenGeometryTests {
     static func main() {
         testScreenGeometry()
+        testPresentationAnchorRouting()
         testVisibleHitRegions()
         testSyntheticHoverGate()
         testSingleOwnerGeometrySequencing()
@@ -47,6 +48,29 @@ struct OverlayScreenGeometryTests {
         let canonicalCollapsedX = rightUpper.maxX - 76
         precondition(canonicalCollapsedX == 3092)
         precondition(canonicalCollapsedX + 76 == rightUpper.maxX)
+    }
+
+    private static func testPresentationAnchorRouting() {
+        let left = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let right = NSRect(x: 1440, y: 0, width: 1728, height: 1117)
+        let frames = [left, right]
+
+        // Regression for the real failure mode: the 384pt panel straddles the
+        // display boundary, so its center is still on the left display while
+        // its top-trailing anchor (the compact bubble's anchor) is on the right.
+        let straddlingPanel = NSRect(x: 1200, y: 400, width: 384, height: 490)
+        precondition(
+            OverlayScreenGeometry.bestVisibleFrame(for: straddlingPanel, among: frames) == left,
+            "center-based routing demonstrates the old wrong-display choice"
+        )
+        precondition(
+            OverlayScreenGeometry.presentationVisibleFrame(for: straddlingPanel, among: frames) == right,
+            "presentation routing must follow the top-trailing anchor"
+        )
+
+        let anchor = OverlayScreenGeometry.topTrailingAnchor(for: straddlingPanel)
+        precondition(anchor.x == 1583)
+        precondition(anchor.y == 889)
     }
 
     private static func testVisibleHitRegions() {
