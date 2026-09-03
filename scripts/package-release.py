@@ -53,6 +53,7 @@ def _collect(path: Path, seen: set[Path]) -> None:
             and not child.is_symlink()
             and "__pycache__" not in child.parts
             and child.suffix not in {".pyc", ".pyo"}
+            and child.name != ".DS_Store"
         ):
             seen.add(child)
 

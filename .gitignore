@@ -6,3 +6,6 @@ benchmark/results/*.report.md
 __pycache__/
 *.pyc
 bin/generate_showcase
+apps/macos-overlay/bin/
+apps/macos-overlay/.build/
+.DS_Store
