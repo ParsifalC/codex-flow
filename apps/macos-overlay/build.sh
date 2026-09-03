@@ -22,25 +22,29 @@ fi
 
 # The Intel Swift 6 solver can hit its default expression budget on the
 # refreshed HistoryChatRow SwiftUI result builder even though the same source
-# type-checks on arm64. Keep the larger budget scoped to Intel builds so the
-# release matrix remains deterministic without weakening normal diagnostics.
-SWIFT_FRONTEND_FLAGS=()
+# type-checks on arm64. Keep the larger budget scoped to Intel builds. Use two
+# explicit invocations instead of an optional empty array so macOS Bash 3.2 +
+# `set -u` remains compatible on arm64 runners.
 if [[ "$(uname -m)" == "x86_64" ]]; then
-    SWIFT_FRONTEND_FLAGS+=(
-        -Xfrontend
-        -solver-expression-time-threshold=180
-    )
+    swiftc \
+        -num-threads "$CORES" \
+        -j "$CORES" \
+        -Xfrontend -solver-expression-time-threshold=180 \
+        -framework Cocoa \
+        -framework SwiftUI \
+        -framework Combine \
+        "${SWIFT_FILES[@]}" \
+        -o "$OUTPUT"
+else
+    swiftc \
+        -num-threads "$CORES" \
+        -j "$CORES" \
+        -framework Cocoa \
+        -framework SwiftUI \
+        -framework Combine \
+        "${SWIFT_FILES[@]}" \
+        -o "$OUTPUT"
 fi
-
-swiftc \
-    -num-threads "$CORES" \
-    -j "$CORES" \
-    "${SWIFT_FRONTEND_FLAGS[@]}" \
-    -framework Cocoa \
-    -framework SwiftUI \
-    -framework Combine \
-    "${SWIFT_FILES[@]}" \
-    -o "$OUTPUT"
 
 chmod +x "$OUTPUT"
 cp -f "$OUTPUT" "$FLOWPILOT_OUTPUT"
