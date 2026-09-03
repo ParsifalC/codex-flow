@@ -464,41 +464,128 @@ public struct SummaryView: View {
     private func participantsCard(_ run: TaskRun) -> some View {
         HStack(spacing: 6) {
             participantBlock(
-                "brain.head.profile",
-                L("Parent", "父 Agent"),
-                run.parent?.displayModel ?? L("Direct CLI", "直接 CLI"),
-                participantSubtitle(run.parent),
-                .indigo
+                icon: "brain.head.profile",
+                title: L("Parent", "父 Agent"),
+                name: run.parent?.displayModel ?? L("Direct CLI", "直接 CLI"),
+                subtitle: participantSubtitle(run.parent),
+                tint: .indigo,
+                badge: run.parent?.displayEffort,
+                fullText: parentHoverText(run)
             )
 
             participantBlock(
-                "person.2.fill",
-                L("Workers", "Worker"),
-                workerSummaryText(run),
-                L("\(run.allWorkers.count) subagents", "\(run.allWorkers.count) 个子 Agent"),
-                .teal
+                icon: "person.2.fill",
+                title: L("Workers", "Worker"),
+                name: workerSummaryText(run),
+                subtitle: workersSubtitle(run),
+                tint: .teal,
+                badge: run.allWorkers.isEmpty ? nil : "\(run.allWorkers.count)",
+                fullText: workerHoverText(run)
             )
         }
     }
 
     private func workerSummaryText(_ run: TaskRun) -> String {
         if run.allWorkers.isEmpty { return L("Direct execution", "直接执行") }
-        if run.allWorkers.count == 1 { return run.allWorkers[0].name ?? run.allWorkers[0].displayModel }
+        if run.allWorkers.count == 1 {
+            let w = run.allWorkers[0]
+            if let name = w.name, name != "default", !name.isEmpty, name != w.displayModel {
+                return "\(name) (\(w.displayModel))"
+            }
+            return w.displayModel
+        }
+
+        var modelCounts: [String: Int] = [:]
+        var order: [String] = []
+        for w in run.allWorkers {
+            let m = w.displayModel
+            if modelCounts[m] == nil {
+                order.append(m)
+            }
+            modelCounts[m, default: 0] += 1
+        }
+
+        if order.count == 1 {
+            return "\(run.allWorkers.count) × \(order[0])"
+        } else {
+            return order.map { "\(modelCounts[$0]!) × \($0)" }.joined(separator: ", ")
+        }
+    }
+
+    private func workersSubtitle(_ run: TaskRun) -> String {
+        if run.allWorkers.isEmpty { return L("No subagents", "无子 Agent") }
+        let tokens = run.allWorkers.reduce(0) { $0 + ($1.effectiveUsage?.totalTokens ?? 0) }
+        let efforts = Array(Set(run.allWorkers.compactMap { $0.displayEffort }))
+        let effortPart = efforts.isEmpty ? nil : efforts.joined(separator: "/")
+
+        if let effort = effortPart {
+            if tokens > 0 {
+                return "\(effort) · \(TaskRun.formatTokenCount(tokens)) tokens"
+            }
+            return effort
+        }
+        if tokens > 0 {
+            return "\(TaskRun.formatTokenCount(tokens)) tokens"
+        }
         return L("\(run.allWorkers.count) workers", "\(run.allWorkers.count) 个 Worker")
     }
 
-    private func participantBlock(_ icon: String, _ title: String, _ name: String, _ subtitle: String, _ tint: Color) -> some View {
+    private func parentHoverText(_ run: TaskRun) -> String {
+        guard let parent = run.parent else {
+            return L("Direct CLI execution (no parent agent metadata)", "直接 CLI 执行（无父 Agent 元数据）")
+        }
+        var lines: [String] = []
+        let name = parent.name ?? L("Parent Agent", "父 Agent")
+        let effort = parent.displayEffort.map { " (\($0))" } ?? ""
+        lines.append("\(name) · \(parent.displayModel)\(effort)")
+        if let tokens = parent.effectiveUsage?.totalTokens, tokens > 0 {
+            lines.append(L("Usage: \(TaskRun.formatTokenCount(tokens)) tokens", "用量：\(TaskRun.formatTokenCount(tokens)) Token"))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func workerHoverText(_ run: TaskRun) -> String {
+        if run.allWorkers.isEmpty { return L("Direct execution (no subagents)", "直接执行（无子 Agent）") }
+        return run.allWorkers.enumerated().map { index, w in
+            let name = w.agentType ?? w.name ?? L("Worker", "Worker")
+            let effort = w.displayEffort.map { " (\($0))" } ?? ""
+            let tokens = w.effectiveUsage?.totalTokens.map { " · \(TaskRun.formatTokenCount($0)) tokens" } ?? ""
+            return "#\(index + 1) \(name) · \(w.displayModel)\(effort)\(tokens)"
+        }.joined(separator: "\n")
+    }
+
+    private func participantBlock(
+        icon: String,
+        title: String,
+        name: String,
+        subtitle: String,
+        tint: Color,
+        badge: String? = nil,
+        fullText: String? = nil
+    ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 8.5, weight: .semibold))
-                .foregroundColor(tint.opacity(0.9))
+            HStack(spacing: 3) {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(tint.opacity(0.9))
+                Spacer()
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 6.8, weight: .semibold, design: .monospaced))
+                        .foregroundColor(tint.opacity(0.9))
+                        .padding(.horizontal, 3.5)
+                        .padding(.vertical, 0.5)
+                        .background(Capsule().fill(tint.opacity(0.14)))
+                }
+            }
 
             HoverRevealText(
                 name,
                 font: .system(size: 9.8, weight: .bold, design: .rounded),
                 foregroundColor: .white.opacity(0.9),
                 lineLimit: 1,
-                popoverWidth: 280
+                popoverWidth: 280,
+                fullText: fullText
             )
 
             Text(subtitle)
@@ -515,9 +602,15 @@ public struct SummaryView: View {
         guard let participant else { return L("No usage data", "暂无用量数据") }
         let tokens = participant.effectiveUsage?.totalTokens ?? 0
         if let effort = participant.displayEffort {
-            return "\(effort) · \(TaskRun.formatTokenCount(tokens)) tokens"
+            if tokens > 0 {
+                return "\(effort) · \(TaskRun.formatTokenCount(tokens)) tokens"
+            }
+            return effort
         }
-        return "\(TaskRun.formatTokenCount(tokens)) tokens"
+        if tokens > 0 {
+            return "\(TaskRun.formatTokenCount(tokens)) tokens"
+        }
+        return L("No usage data", "暂无用量数据")
     }
 
     private func workerOutcomesCard(_ run: TaskRun) -> some View {
@@ -535,13 +628,23 @@ public struct SummaryView: View {
                             popoverWidth: 300
                         )
                         Spacer(minLength: 4)
-                        HoverRevealText(
-                            worker.displayModel,
-                            font: .system(size: 7.7, weight: .medium, design: .monospaced),
-                            foregroundColor: .teal.opacity(0.78),
-                            lineLimit: 1,
-                            popoverWidth: 280
-                        )
+                        HStack(spacing: 3) {
+                            HoverRevealText(
+                                worker.displayModel,
+                                font: .system(size: 7.7, weight: .medium, design: .monospaced),
+                                foregroundColor: .teal.opacity(0.78),
+                                lineLimit: 1,
+                                popoverWidth: 280
+                            )
+                            if let effort = worker.displayEffort {
+                                Text(effort)
+                                    .font(.system(size: 6.8, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.teal.opacity(0.9))
+                                    .padding(.horizontal, 3.5)
+                                    .padding(.vertical, 0.5)
+                                    .background(Capsule().fill(Color.teal.opacity(0.14)))
+                            }
+                        }
                     }
 
                     if let conclusion = worker.conclusion, !conclusion.isEmpty {

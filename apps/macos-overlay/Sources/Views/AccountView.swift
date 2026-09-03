@@ -292,7 +292,7 @@ public struct AccountView: View {
                         .font(.system(size: 7.5, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.4))
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(String(format: "+%.0f%%", todayUsage?.quotaDelta ?? 0))
+                        Text(String(format: "%.0f%%", todayUsage?.quotaDelta ?? 0))
                             .font(.system(size: 13, weight: .heavy, design: .rounded))
                             .foregroundColor((todayUsage?.quotaDelta ?? 0) > 0 ? .orange : .white.opacity(0.8))
                         if let tokens = todayUsage?.tokens, tokens > 0 {
@@ -309,7 +309,7 @@ public struct AccountView: View {
                     Text(L("7-DAY TOTAL", "近 7 天消耗"))
                         .font(.system(size: 7.5, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.4))
-                    Text(String(format: "+%.0f%%", totalRecentDelta))
+                    Text(String(format: "%.0f%%", totalRecentDelta))
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundColor(.cyan)
                 }
@@ -348,7 +348,7 @@ public struct AccountView: View {
 
             HStack(spacing: 3) {
                 if item.quotaDelta > 0 {
-                    Text(String(format: "+%.0f%%", item.quotaDelta))
+                    Text(String(format: "%.0f%%", item.quotaDelta))
                         .font(.system(size: 8, weight: .bold, design: .rounded))
                         .foregroundColor(accent)
                 } else {

@@ -419,9 +419,13 @@ public struct HistoryChatRow: View {
     @ViewBuilder
     private var quotaDelta: some View {
         if let delta = chat.totalQuotaDelta, abs(delta) >= 0.1 {
-            Text(String(format: "%+.0f%%", delta))
+            Text(String(format: "%+.0f%%", -delta))
                 .font(.system(size: 7.5, weight: .bold))
                 .foregroundColor(delta > 0 ? .orange : .green)
+                .help(delta > 0
+                    ? String(format: L("Quota consumed: %.0f%%", "配额消耗：%.0f%%"), delta)
+                    : String(format: L("Quota restored: %.0f%%", "配额恢复：%.0f%%"), -delta)
+                )
         }
     }
 
@@ -798,7 +802,20 @@ public struct HistoryTaskDetailOverlay: View {
                     lineLimit: 1,
                     popoverWidth: 300
                 )
+                if let effort = run.parent?.displayEffort {
+                    Text(effort)
+                        .font(.system(size: 6.8, weight: .medium, design: .monospaced))
+                        .foregroundColor(.indigo.opacity(0.9))
+                        .padding(.horizontal, 3.5)
+                        .padding(.vertical, 0.5)
+                        .background(Capsule().fill(Color.indigo.opacity(0.15)))
+                }
                 Spacer()
+                if let tokens = run.parent?.effectiveUsage?.totalTokens, tokens > 0 {
+                    Text(TaskRun.formatTokenCount(tokens))
+                        .font(.system(size: 7.3, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.4))
+                }
             }
 
             ForEach(run.allWorkers.prefix(4)) { worker in
@@ -813,6 +830,14 @@ public struct HistoryTaskDetailOverlay: View {
                         lineLimit: 1,
                         popoverWidth: 320
                     )
+                    if let effort = worker.displayEffort {
+                        Text(effort)
+                            .font(.system(size: 6.8, weight: .medium, design: .monospaced))
+                            .foregroundColor(.teal.opacity(0.9))
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 0.5)
+                            .background(Capsule().fill(Color.teal.opacity(0.15)))
+                    }
                     Spacer()
                     Text(TaskRun.formatTokenCount(worker.effectiveUsage?.totalTokens ?? 0))
                         .font(.system(size: 7.3, design: .monospaced))

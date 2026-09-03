@@ -93,6 +93,7 @@ bin/generate_showcase
 - `docs/assets/promo/flowpilot_promo_poster.png`（2720 × 2002 三态对比全景海报）
 - `docs/assets/promo/flowpilot_promo_banner.png`（2680 × 1594 宽屏 Hero Banner）
 - `docs/assets/promo/flowpilot_promo_desktop_scene.png`（2560 × 1440 沉浸式桌面场景图）
+- `docs/assets/promo/flowpilot_promo_strategies.png`（3480 × 1363 四大编排策略全景图）
 
 ---
 

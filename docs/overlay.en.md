@@ -92,6 +92,7 @@ Generated outputs in `docs/assets/`:
 - `docs/assets/promo/flowpilot_promo_poster.png` (2720 × 2002 3-State Comparison Poster)
 - `docs/assets/promo/flowpilot_promo_banner.png` (2680 × 1594 Hero Banner)
 - `docs/assets/promo/flowpilot_promo_desktop_scene.png` (2560 × 1440 Desktop Scene)
+- `docs/assets/promo/flowpilot_promo_strategies.png` (3480 × 1363 4-Strategy Matrix Poster)
 
 ---
 

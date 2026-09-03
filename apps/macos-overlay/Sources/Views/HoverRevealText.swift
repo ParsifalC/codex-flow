@@ -10,6 +10,7 @@ import Foundation
 /// visual mask instead of degrading it into placeholder bars.
 public struct HoverRevealText: View {
     public let text: String
+    public let fullText: String?
     public let font: Font
     public let foregroundColor: Color
     public let lineLimit: Int?
@@ -29,9 +30,11 @@ public struct HoverRevealText: View {
         truncationMode: Text.TruncationMode = .tail,
         privacyBlur: Bool = false,
         alignment: TextAlignment = .leading,
-        popoverWidth: CGFloat = 340
+        popoverWidth: CGFloat = 340,
+        fullText: String? = nil
     ) {
         self.text = text
+        self.fullText = fullText
         self.font = font
         self.foregroundColor = foregroundColor
         self.lineLimit = lineLimit
@@ -95,10 +98,11 @@ public struct HoverRevealText: View {
     /// can never become clickable from telemetry.
     @ViewBuilder
     private var expandedText: some View {
-        if let markdown = Self.parseMarkdown(text) {
+        let content = fullText ?? text
+        if let markdown = Self.parseMarkdown(content) {
             Text(markdown)
         } else {
-            Text(text)
+            Text(content)
         }
     }
 
@@ -127,7 +131,8 @@ public struct HoverRevealText: View {
         hoverGeneration += 1
         let generation = hoverGeneration
 
-        guard !privacyBlur, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let content = fullText ?? text
+        guard !privacyBlur, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             isPresented = false
             return
         }
