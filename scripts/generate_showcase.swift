@@ -14,6 +14,8 @@ func renderViewToPNG<V: View>(
     targetWidth: CGFloat? = nil,
     targetHeight: CGFloat? = nil,
     scale: CGFloat = 2.0,
+    requiresLiveHosting: Bool = false,
+    settleTime: TimeInterval = 0.18,
     outputPath: String
 ) {
     let darkView = view.preferredColorScheme(.dark)
@@ -29,19 +31,93 @@ func renderViewToPNG<V: View>(
         sizedView = AnyView(darkView)
     }
 
-    // Keep the original deterministic SwiftUI renderer for every showcase image.
-    // Account and strategy data are mocked below, so no AppKit lifecycle or async
-    // settling is required and SwiftUI privacy blur remains intact.
-    let renderer = ImageRenderer(content: sizedView)
-    renderer.scale = scale
+    // Pure SwiftUI rendering stays the fastest path for simple assets. Views that
+    // contain ScrollView / GeometryReader use live AppKit hosting below so they
+    // receive the same viewport/layout lifecycle as the real overlay window.
+    if !requiresLiveHosting {
+        let renderer = ImageRenderer(content: sizedView)
+        renderer.scale = scale
 
-    guard let cgImage = renderer.cgImage else {
-        print("❌ ImageRenderer failed for \(outputPath)")
+        guard let cgImage = renderer.cgImage else {
+            print("❌ ImageRenderer failed for \(outputPath)")
+            return
+        }
+
+        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+        guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+            print("❌ Failed to encode PNG for \(outputPath)")
+            return
+        }
+
+        let url = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? pngData.write(to: url)
+        print("✅ Rendered [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
         return
     }
 
-    let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-    guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+    let hostingView = NSHostingView(rootView: sizedView)
+    let initialFitting = hostingView.fittingSize
+    var width = targetWidth ?? max(initialFitting.width, 10)
+    var height = targetHeight ?? max(initialFitting.height, 10)
+    var contentRect = NSRect(x: 0, y: 0, width: width, height: height)
+    hostingView.frame = contentRect
+
+    let window = NSWindow(
+        contentRect: contentRect,
+        styleMask: [.borderless],
+        backing: .buffered,
+        defer: false
+    )
+    window.contentView = hostingView
+    window.appearance = NSAppearance(named: .darkAqua)
+    window.backgroundColor = .clear
+    window.isOpaque = false
+    window.layoutIfNeeded()
+    hostingView.layoutSubtreeIfNeeded()
+
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: settleTime))
+    window.layoutIfNeeded()
+    hostingView.layoutSubtreeIfNeeded()
+
+    // Dynamic full-height surfaces need one post-layout fitting pass. Fixed
+    // 384×490 window captures keep the exact production viewport dimensions.
+    if targetWidth == nil || targetHeight == nil {
+        let settledFitting = hostingView.fittingSize
+        if targetWidth == nil { width = max(settledFitting.width, 10) }
+        if targetHeight == nil { height = max(settledFitting.height, 10) }
+        contentRect = NSRect(x: 0, y: 0, width: width, height: height)
+        hostingView.frame = contentRect
+        window.setContentSize(contentRect.size)
+        window.layoutIfNeeded()
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.08))
+    }
+
+    let pixelsWide = max(1, Int((width * scale).rounded()))
+    let pixelsHigh = max(1, Int((height * scale).rounded()))
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: pixelsWide,
+        pixelsHigh: pixelsHigh,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ) else {
+        print("❌ Failed to allocate bitmap for \(outputPath)")
+        return
+    }
+    rep.size = NSSize(width: width, height: height)
+    hostingView.cacheDisplay(in: contentRect, to: rep)
+
+    guard let pngData = rep.representation(using: .png, properties: [:]) else {
         print("❌ Failed to encode PNG for \(outputPath)")
         return
     }
@@ -52,7 +128,7 @@ func renderViewToPNG<V: View>(
         withIntermediateDirectories: true
     )
     try? pngData.write(to: url)
-    print("✅ Rendered [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
+    print("✅ Rendered live [\(rep.pixelsWide)x\(rep.pixelsHigh)] -> \(outputPath)")
 }
 
 // MARK: - Deterministic Showcase Data
@@ -101,52 +177,6 @@ private enum ShowcaseMockData {
             StrategyProfileInfo(name: "speed", description: "Minimize wall-clock time with safe parallelism.")
         ]
     )
-}
-
-/// Keep promotional screenshots visually stable even when the user's live quota
-/// happens to be under pressure. The product keeps its real warning thresholds;
-/// only showcase copies are normalized into the non-warning cyan range.
-private func showcaseQuotaWindow(_ source: QuotaWindow, index: Int) -> QuotaWindow {
-    var copy = source
-    copy.usedPercent = index == 0 ? 34 : 48
-    copy.deltaPercentagePoints = 0
-    return copy
-}
-
-private func showcaseRun(_ source: TaskRun) -> TaskRun {
-    var copy = source
-    if let value = copy.quotaBefore {
-        copy.quotaBefore = value.enumerated().map { showcaseQuotaWindow($0.element, index: $0.offset) }
-    }
-    if let value = copy.quotaAfter {
-        copy.quotaAfter = value.enumerated().map { showcaseQuotaWindow($0.element, index: $0.offset) }
-    }
-    if let value = copy.quotaChangeDuringRun {
-        copy.quotaChangeDuringRun = value.enumerated().map { showcaseQuotaWindow($0.element, index: $0.offset) }
-    }
-    return copy
-}
-
-private func showcaseChat(_ source: ChatSession) -> ChatSession {
-    var copy = source
-    copy.runs = source.runs.map(showcaseRun)
-    return copy
-}
-
-/// ImageRenderer does not provide the same viewport lifecycle as a real AppKit
-/// ScrollView. For promotional window captures, lay out the real full-height
-/// surface first and crop its top 384×490pt viewport. This preserves real App
-/// dimensions without producing an empty scroll-container shell.
-private func showcaseWindow<V: View>(_ view: V) -> some View {
-    view
-        .frame(width: ShowcaseMetrics.panelWidth)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(
-            width: ShowcaseMetrics.panelWidth,
-            height: ShowcaseMetrics.panelHeight,
-            alignment: .top
-        )
-        .clipped()
 }
 
 // MARK: - Account Showcase Chrome
@@ -834,11 +864,9 @@ struct BannerPromoView: View {
                 }
                 .frame(width: 560)
 
-                showcaseWindow(
-                    SummaryView(state: stateInspector, isFullHeight: true)
-                )
-                .scaleEffect(0.92)
-                .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 15)
+                SummaryView(state: stateInspector, isFullHeight: false)
+                    .frame(width: ShowcaseMetrics.panelWidth, height: ShowcaseMetrics.panelHeight)
+                    .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 15)
             }
             .padding(.horizontal, 50)
             .padding(.vertical, 36)
@@ -927,12 +955,11 @@ struct DesktopScenePromoView: View {
                 .offset(x: -180, y: 15)
                 .shadow(color: Color.black.opacity(0.5), radius: 30, x: -10, y: 15)
 
-            showcaseWindow(
-                SummaryView(state: stateInspector, isFullHeight: true)
-            )
-            .scaleEffect(0.72)
-            .offset(x: 320, y: 15)
-            .shadow(color: Color.black.opacity(0.6), radius: 35, x: 5, y: 15)
+            SummaryView(state: stateInspector, isFullHeight: false)
+                .frame(width: ShowcaseMetrics.panelWidth, height: ShowcaseMetrics.panelHeight)
+                .scaleEffect(0.72)
+                .offset(x: 320, y: 15)
+                .shadow(color: Color.black.opacity(0.6), radius: 35, x: 5, y: 15)
 
             BubbleView(state: stateBubble)
                 .scaleEffect(0.9)
@@ -954,10 +981,9 @@ func runGenerator() {
 
     var latestRun = engine.loadLatestRun() ?? allRuns.first ?? TaskRun.previewSample
     engine.enrichRunIfNeeded(&latestRun)
-    latestRun = showcaseRun(latestRun)
 
-    let historyChats = engine.fetchChatHistory(limit: 20).map(showcaseChat)
-    let historyRuns = engine.fetchHistory(limit: 50).map(showcaseRun)
+    let historyChats = engine.fetchChatHistory(limit: 20)
+    let historyRuns = engine.fetchHistory(limit: 50)
     let stats = engine.computeStats(days: 30, project: nil)
 
     let stateInspector = OverlayState()
@@ -1019,6 +1045,7 @@ func runGenerator() {
         view: SummaryView(state: stateInspector, isFullHeight: true),
         targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/inspector_full.png"
     )
 
@@ -1026,6 +1053,7 @@ func runGenerator() {
         view: SummaryView(state: stateHistoryFull, isFullHeight: true),
         targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/history_full.png"
     )
 
@@ -1033,6 +1061,7 @@ func runGenerator() {
         view: SummaryView(state: stateAnalytics, isFullHeight: true),
         targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/analytics_full.png"
     )
 
@@ -1043,51 +1072,48 @@ func runGenerator() {
     )
 
     renderViewToPNG(
-        view: showcaseWindow(
-            SummaryView(state: stateInspector, isFullHeight: true)
-        ),
+        view: SummaryView(state: stateInspector, isFullHeight: false),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/inspector_window.png"
     )
 
     renderViewToPNG(
-        view: showcaseWindow(
-            SummaryView(state: stateHistoryFull, isFullHeight: true)
-        ),
+        view: SummaryView(state: stateHistoryFull, isFullHeight: false),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/history_window.png"
     )
 
     renderViewToPNG(
-        view: showcaseWindow(
-            SummaryView(state: stateAnalytics, isFullHeight: true)
-        ),
+        view: SummaryView(state: stateAnalytics, isFullHeight: false),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/analytics_window.png"
     )
 
-    // Account is deterministic mock data in the showcase pipeline, so it renders
-    // immediately through ImageRenderer instead of waiting on app-server/CLI I/O.
+    // Account remains deterministic mock data in the showcase pipeline. Live
+    // hosting is used only for layout fidelity, never to trigger real account I/O.
     renderViewToPNG(
         view: AccountPromoCard(state: stateAccount, isFullHeight: true),
         targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/account_full.png"
     )
 
     renderViewToPNG(
-        view: showcaseWindow(
-            AccountPromoCard(state: stateAccount, isFullHeight: true)
-        ),
+        view: AccountPromoCard(state: stateAccount, isFullHeight: false),
         targetWidth: ShowcaseMetrics.panelWidth,
         targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/screenshots/account_window.png"
     )
 
@@ -1100,6 +1126,7 @@ func runGenerator() {
             stateBubble: stateBubble
         ),
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/promo/flowpilot_promo_poster.png"
     )
 
@@ -1109,6 +1136,7 @@ func runGenerator() {
             stateBubble: stateBubble
         ),
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/promo/flowpilot_promo_banner.png"
     )
 
@@ -1118,6 +1146,7 @@ func runGenerator() {
             stateBubble: stateBubble
         ),
         scale: 2.0,
+        requiresLiveHosting: true,
         outputPath: "docs/assets/promo/flowpilot_promo_desktop_scene.png"
     )
 
