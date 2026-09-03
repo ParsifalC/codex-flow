@@ -17,14 +17,15 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Test overlay screen geometry
+      - name: Test overlay runtime state machine
         run: |
           swiftc \
             -framework Cocoa \
             apps/macos-overlay/Sources/Controllers/OverlayScreenGeometry.swift \
+            apps/macos-overlay/Sources/Controllers/OverlayRuntimeState.swift \
             apps/macos-overlay/Tests/OverlayScreenGeometryTests.swift \
-            -o "$RUNNER_TEMP/overlay-screen-geometry-tests"
-          "$RUNNER_TEMP/overlay-screen-geometry-tests"
+            -o "$RUNNER_TEMP/overlay-runtime-tests"
+          "$RUNNER_TEMP/overlay-runtime-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
       - name: Smoke test overlay lifecycle
@@ -67,9 +68,6 @@ jobs:
             exit 1
           fi
 
-          # Starting again exercises the real single-instance restart path. The
-          # status endpoint must transition to the new PID rather than allowing
-          # the old instance to create a false-positive startup result.
           "$BIN" start >"$LOG2" 2>&1 &
           START2_PID=$!
           if ! wait_for_pid "$START2_PID"; then
@@ -107,8 +105,6 @@ jobs:
             exit 1
           fi
 
-          # Exercise the user-facing wrapper too. It must wait for the exact new
-          # PID on both start and restart before printing success.
           bash "$CLI" overlay start
           WRAPPER_PID1="$(status_pid)"
           [[ -n "$WRAPPER_PID1" ]]
