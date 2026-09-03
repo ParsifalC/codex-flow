@@ -199,9 +199,16 @@ jobs:
           & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') strategy routing direct
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          # Keep the smoke test deterministic and independent of public GitHub API rate limits.
+          $releaseFixture = Join-Path $tmp 'releases.json'
+          $releaseFixtureJson = '[{"tag_name":"v1.7.0","draft":false,"prerelease":false,"assets":[]}]'
+          [System.IO.File]::WriteAllText($releaseFixture, $releaseFixtureJson, $utf8NoBom)
+          $env:CODEX_FLOW_UPDATE_RELEASES_API = $releaseFixture
+
           Remove-Item Env:CODEX_FLOW_BIN_DIR
           & (Join-Path $tmp 'bin-installed/codex-flow.cmd') update
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item Env:CODEX_FLOW_UPDATE_RELEASES_API -ErrorAction SilentlyContinue
           if (-not (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.cmd'))) { throw 'custom bin directory was not reused by update' }
           if (-not (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.ps1'))) { throw 'PowerShell wrapper was not refreshed in custom bin directory' }
           $policy = [System.IO.File]::ReadAllText($policyPath, $utf8NoBom)
