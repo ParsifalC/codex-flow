@@ -9,6 +9,7 @@ public struct AccountView: View {
     @State private var snapshot: AccountSnapshot?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var hasLoaded = false
 
     public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
@@ -21,15 +22,17 @@ public struct AccountView: View {
             StrategyModeCard()
             AutostartCard()
 
-            if isLoading && snapshot == nil {
+            if isLoading || !hasLoaded {
                 loadingState
-            } else if let snapshot {
+            } else if let errorMessage {
+                errorState(errorMessage)
+            } else if let snapshot, !snapshot.isEmpty {
                 identityCard(snapshot)
                 quotaCard(snapshot)
                 resetCard(snapshot)
                 accountFactsCard(snapshot)
             } else {
-                unavailableState
+                emptyState
             }
         }
         .padding(.vertical, 2)
@@ -85,19 +88,45 @@ public struct AccountView: View {
         .frame(maxWidth: .infinity, minHeight: 120)
     }
 
-    private var unavailableState: some View {
+    private func errorState(_ message: String) -> some View {
         VStack(spacing: 7) {
             Image(systemName: "person.crop.circle.badge.exclamationmark")
                 .font(.system(size: 22))
                 .foregroundColor(.orange.opacity(0.8))
-            Text(errorMessage ?? L("Account data unavailable", "账户数据暂不可用"))
+            Text(L("Unable to read account data", "无法读取账户数据"))
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.white.opacity(0.72))
                 .multilineTextAlignment(.center)
-            Text(L("FlowPilot will not estimate plan or quota values when Codex does not report them.", "Codex 未返回的数据，FlowPilot 不会进行估算。"))
+            Text(message)
                 .font(.system(size: 8.5))
                 .foregroundColor(.white.opacity(0.4))
                 .multilineTextAlignment(.center)
+            Button(L("Retry", "重试"), action: refresh)
+                .buttonStyle(.plain)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundColor(.cyan)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 120)
+        .background(cardBackground)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 7) {
+            Image(systemName: "person.crop.circle")
+                .font(.system(size: 22))
+                .foregroundColor(.white.opacity(0.35))
+            Text(L("No account data reported", "Codex 未返回账户数据"))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.white.opacity(0.72))
+            Text(L("Codex returned an empty account and quota response.", "Codex 返回了空的账户与额度响应。"))
+                .font(.system(size: 8.5))
+                .foregroundColor(.white.opacity(0.4))
+                .multilineTextAlignment(.center)
+            Button(L("Retry", "重试"), action: refresh)
+                .buttonStyle(.plain)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundColor(.cyan)
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 120)
@@ -223,6 +252,11 @@ public struct AccountView: View {
                 Text(window.resetsAt.map { L("Resets \(formatAccountDate($0))", "\(formatAccountDate($0)) 重置") } ?? L("Reset time unavailable", "重置时间未返回"))
                     .font(.system(size: 7.8, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.52))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+                    .allowsTightening(true)
+                    .truncationMode(.tail)
+                    .layoutPriority(-1)
             }
         }
         .padding(7)
@@ -295,17 +329,20 @@ public struct AccountView: View {
         guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
+        snapshot = nil
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let value = try AccountSnapshotService.load()
                 DispatchQueue.main.async {
                     snapshot = value
                     isLoading = false
+                    hasLoaded = true
                 }
             } catch {
                 DispatchQueue.main.async {
                     errorMessage = error.localizedDescription
                     isLoading = false
+                    hasLoaded = true
                 }
             }
         }

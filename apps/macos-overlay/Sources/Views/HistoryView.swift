@@ -597,6 +597,8 @@ public struct HistoryTaskDetailOverlay: View {
     public let run: TaskRun
     public let isPrivacyMode: Bool
     public let onClose: () -> Void
+    @State private var executionExpanded = false
+    @State private var logsExpanded = false
 
     public var body: some View {
         VStack(spacing: 7) {
@@ -609,6 +611,10 @@ public struct HistoryTaskDetailOverlay: View {
             RoundedRectangle(cornerRadius: 13)
                 .stroke(Color.cyan.opacity(0.28), lineWidth: 0.8)
         )
+        .onChange(of: run.id) { _, _ in
+            executionExpanded = false
+            logsExpanded = false
+        }
     }
 
     private var detailTitleBar: some View {
@@ -820,24 +826,47 @@ public struct HistoryTaskDetailOverlay: View {
 
     private func detailSteps(_ steps: [TrajectoryStep]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(L("Execution", "执行轨迹"))
-                .font(.system(size: 7.7, weight: .bold))
-                .foregroundColor(.white.opacity(0.48))
-            ForEach(Array(steps.prefix(5))) { step in
-                HStack(alignment: .top, spacing: 4) {
-                    Circle()
-                        .fill(step.status == "error" ? Color.orange : Color.cyan)
-                        .frame(width: 4, height: 4)
-                        .padding(.top, 4)
-                    HoverRevealText(
-                        [step.title, step.detail].compactMap { $0 }.joined(separator: " — "),
-                        font: .system(size: 7.6),
-                        foregroundColor: .white.opacity(0.6),
-                        lineLimit: 1,
-                        privacyBlur: isPrivacyMode,
-                        popoverWidth: 400
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    executionExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "point.filled.topleft.down.curvedto.point.bottomright.up")
+                        .font(.system(size: 7.5))
+                        .foregroundColor(.indigo)
+                    Text(L("Execution", "执行轨迹"))
+                        .font(.system(size: 7.7, weight: .bold))
+                        .foregroundColor(.white.opacity(0.48))
+                    Spacer()
+                    Text(L("\(steps.count) steps", "\(steps.count) 步"))
+                        .font(.system(size: 7.1, weight: .medium))
+                        .foregroundColor(.white.opacity(0.32))
+                    Image(systemName: executionExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 6.5, weight: .bold))
+                        .foregroundColor(.white.opacity(0.32))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if executionExpanded {
+                ForEach(Array(steps.prefix(5))) { step in
+                    HStack(alignment: .top, spacing: 4) {
+                        Circle()
+                            .fill(step.status == "error" ? Color.orange : Color.cyan)
+                            .frame(width: 4, height: 4)
+                            .padding(.top, 4)
+                        HoverRevealText(
+                            [step.title, step.detail].compactMap { $0 }.joined(separator: " — "),
+                            font: .system(size: 7.6),
+                            foregroundColor: .white.opacity(0.6),
+                            lineLimit: 1,
+                            privacyBlur: isPrivacyMode,
+                            popoverWidth: 400
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }
@@ -847,24 +876,47 @@ public struct HistoryTaskDetailOverlay: View {
 
     private func detailLogs(_ logs: [TaskLogEntry]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(L("Recent logs", "最近日志"))
-                .font(.system(size: 7.7, weight: .bold))
-                .foregroundColor(.white.opacity(0.48))
-            ForEach(Array(logs.suffix(4))) { entry in
-                HStack(alignment: .top, spacing: 4) {
-                    Circle()
-                        .fill(entry.level == "error" ? Color.orange : Color.green)
-                        .frame(width: 4, height: 4)
-                        .padding(.top, 4)
-                    HoverRevealText(
-                        entry.message ?? "",
-                        font: .system(size: 7.4, design: .monospaced),
-                        foregroundColor: entry.level == "error" ? .orange.opacity(0.82) : .white.opacity(0.58),
-                        lineLimit: 2,
-                        privacyBlur: isPrivacyMode,
-                        popoverWidth: 410
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    logsExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                        .font(.system(size: 7.5))
+                        .foregroundColor(.green)
+                    Text(L("Recent logs", "最近日志"))
+                        .font(.system(size: 7.7, weight: .bold))
+                        .foregroundColor(.white.opacity(0.48))
+                    Spacer()
+                    Text(L("\(logs.count) entries", "\(logs.count) 条"))
+                        .font(.system(size: 7.1, weight: .medium))
+                        .foregroundColor(.white.opacity(0.32))
+                    Image(systemName: logsExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 6.5, weight: .bold))
+                        .foregroundColor(.white.opacity(0.32))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if logsExpanded {
+                ForEach(Array(logs.suffix(4))) { entry in
+                    HStack(alignment: .top, spacing: 4) {
+                        Circle()
+                            .fill(entry.level == "error" ? Color.orange : Color.green)
+                            .frame(width: 4, height: 4)
+                            .padding(.top, 4)
+                        HoverRevealText(
+                            entry.message ?? "",
+                            font: .system(size: 7.4, design: .monospaced),
+                            foregroundColor: entry.level == "error" ? .orange.opacity(0.82) : .white.opacity(0.58),
+                            lineLimit: 2,
+                            privacyBlur: isPrivacyMode,
+                            popoverWidth: 410
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }

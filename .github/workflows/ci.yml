@@ -20,6 +20,7 @@ jobs:
           bash -n tests/smoke.sh
           bash -n tests/strategy-runtime.sh
           bash -n tests/lifecycle-runtime.sh
+          bash -n tests/account-snapshot.sh
           bash -n tests/telemetry.sh
           bash -n tests/chatgpt-mcp.sh
           bash -n tests/benchmark.sh

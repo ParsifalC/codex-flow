@@ -7,6 +7,26 @@ export CODEX_HOME="$TMP/.codex"
 export FAKE_COUNTER="$TMP/counter"
 export CODEX_FLOW_TELEMETRY_NOTIFICATIONS=false
 
+# A current Codex response may omit the legacy single-bucket field entirely;
+# the telemetry retry wrapper must treat the canonical codex bucket as usable.
+python3 - "$ROOT_DIR/scripts/telemetry.py" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("telemetry", sys.argv[1])
+telemetry = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(telemetry)
+
+calls = []
+telemetry._ORIGINAL_RATE_LIMITS = lambda _server: calls.append(1) or {
+    "rateLimitsByLimitId": {"codex": {"primary": {"usedPercent": 12}}}
+}
+snapshot = telemetry._rate_limits_with_retry(object())
+assert snapshot["rateLimitsByLimitId"]["codex"]
+assert len(calls) == 1, calls
+PY
+
 cat > "$TMP/fake-app-server.py" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys

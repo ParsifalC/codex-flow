@@ -21,6 +21,11 @@ from strategies import get as get_strategy
 from strategies import names as strategy_names
 from strategies.base import StagePolicy, WorkerBudget
 
+try:
+    from telemetry_core.app_server import quota_windows as app_server_quota_windows
+except ImportError:  # pragma: no cover - standalone installs always bundle it
+    app_server_quota_windows = None
+
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 DEFAULT_POLICY = CODEX_HOME / "codex-flow.toml"
 REPO_POLICY_NAME = ".codex-flow.toml"
@@ -448,17 +453,17 @@ def _configured_effort(task: TaskProfile, policy: PolicySnapshot, role: str) -> 
 def quota_pressure_from_snapshot(snapshot: dict[str, Any] | None) -> str:
     if not isinstance(snapshot, dict):
         return "unknown"
-    rate_limits = snapshot.get("rateLimits")
-    if not isinstance(rate_limits, dict):
-        return "unknown"
     used_values: list[float] = []
-    for slot in ("primary", "secondary"):
-        window = rate_limits.get(slot)
-        if not isinstance(window, dict):
-            continue
-        raw = window.get("usedPercent")
+    windows = app_server_quota_windows(snapshot) if app_server_quota_windows else []
+    for window in windows:
+        raw = window.get("used_percent")
         if isinstance(raw, (int, float)) and not isinstance(raw, bool):
             used_values.append(float(raw))
+        elif isinstance(raw, str):
+            try:
+                used_values.append(float(raw))
+            except ValueError:
+                continue
     if not used_values:
         return "unknown"
     used = max(used_values)

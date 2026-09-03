@@ -353,13 +353,22 @@ PY
 # Quota adapter remains deterministic and independent of strategy/lifecycle semantics.
 python3 - "$ROOT" <<'PY'
 import sys
+import json
 sys.path.insert(0, sys.argv[1] + '/scripts')
+from telemetry_core.app_server import _nvm_version_sort_key, quota_windows
 from strategy_runtime import quota_pressure_from_snapshot
+from pathlib import Path
+versions = sorted((Path(name) for name in ('v9.0.0', 'v22.1.0', 'v22.0.9')), key=_nvm_version_sort_key, reverse=True)
+assert [path.name for path in versions] == ['v22.1.0', 'v22.0.9', 'v9.0.0'], versions
 assert quota_pressure_from_snapshot(None) == 'unknown'
 assert quota_pressure_from_snapshot({'rateLimits': {'primary': {'usedPercent': 20}}}) == 'low'
 assert quota_pressure_from_snapshot({'rateLimits': {'primary': {'usedPercent': 55}}}) == 'medium'
 assert quota_pressure_from_snapshot({'rateLimits': {'primary': {'usedPercent': 80}}}) == 'high'
 assert quota_pressure_from_snapshot({'rateLimits': {'primary': {'usedPercent': 95}}}) == 'critical'
+fixture = json.load(open(sys.argv[1] + '/tests/fixtures/account-rate-limits.json'))
+windows = quota_windows(fixture)
+assert [(row['window_duration_mins'], row['used_percent']) for row in windows] == [(300, 42), (10080, 61)], windows
+assert quota_pressure_from_snapshot(fixture) == 'medium', windows
 PY
 
 # Repository policy precedence/ceilings continue to work with lifecycle v8.

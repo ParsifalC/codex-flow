@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// A compact text label that keeps the normal layout truncated, but reveals the
 /// complete value in a small native popover after a short hover dwell.
@@ -49,20 +50,62 @@ public struct HoverRevealText: View {
             .contentShape(Rectangle())
             .onHover(perform: handleSourceHover)
             .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-                ScrollView(.vertical, showsIndicators: true) {
-                    Text(text)
-                        .font(font)
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.leading)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
+                ZStack {
+                    Color(red: 0.055, green: 0.062, blue: 0.085)
+                        .ignoresSafeArea()
+
+                    ScrollView(.vertical, showsIndicators: true) {
+                        expandedText
+                            .font(font)
+                            .foregroundColor(.white.opacity(0.92))
+                            .multilineTextAlignment(.leading)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
                 }
-                .frame(width: popoverWidth)
-                .frame(maxHeight: 240)
+                .frame(width: min(max(popoverWidth, 220), 520))
+                .frame(maxHeight: 260)
+                .background(Color(red: 0.055, green: 0.062, blue: 0.085))
+                .preferredColorScheme(.dark)
                 .onHover(perform: handlePopoverHover)
             }
+    }
+
+    /// Native Foundation Markdown parsing keeps headings, lists, fenced code,
+    /// inline code, and links selectable without introducing a WebView or HTML.
+    /// A malformed value falls back to the exact source text. Link attributes
+    /// are retained only for http/https URLs so local files and script schemes
+    /// can never become clickable from telemetry.
+    @ViewBuilder
+    private var expandedText: some View {
+        if let markdown = Self.parseMarkdown(text) {
+            Text(markdown)
+        } else {
+            Text(text)
+        }
+    }
+
+    private static func parseMarkdown(_ source: String) -> AttributedString? {
+        do {
+            var value = try AttributedString(
+                markdown: source,
+                options: .init(interpretedSyntax: .full)
+            )
+
+            for run in value.runs {
+                guard let link = run.link else { continue }
+                let scheme = link.scheme?.lowercased()
+                guard scheme == "http" || scheme == "https" else {
+                    value[run.range].link = nil
+                    continue
+                }
+            }
+            return value
+        } catch {
+            return nil
+        }
     }
 
     private func handleSourceHover(_ inside: Bool) {
