@@ -2,6 +2,7 @@
 """Cross-platform localized diagnostics for codex-flow."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -19,6 +20,7 @@ STATE_DIR = CODEX_HOME / "codex-flow"
 LANG = resolve_language(POLICY)
 FAILED = False
 CODEX_AVAILABLE = True
+HOOKS_ACTION_REQUIRED = False
 
 
 def T(en: str, zh: str) -> str:
@@ -97,8 +99,20 @@ def _check_effort(label_en: str, label_zh: str, value: str) -> None:
         fail(T(f"invalid {label_en}: {value or 'missing'}", f"无效{label_zh}：{value or 'missing'}"))
 
 
+def _hook_action_hint() -> str:
+    if CODEX_AVAILABLE:
+        return T(
+            "Open the Codex CLI using the same CODEX_HOME, run /hooks, then review and trust/enable the FlowPilot hooks.",
+            "请使用同一 CODEX_HOME 打开 Codex CLI，运行 /hooks，然后 review 并信任/启用 FlowPilot hooks。",
+        )
+    return T(
+        "Hook review is required, but Codex CLI is not in PATH. Install/open Codex CLI once with the same CODEX_HOME, run /hooks, approve FlowPilot, then you may continue using ChatGPT Desktop without keeping the CLI running.",
+        "Hooks 需要 review，但当前 PATH 中没有 Codex CLI。请使用同一 CODEX_HOME 安装/打开一次 Codex CLI，运行 /hooks 批准 FlowPilot；完成授权后无需让 CLI 常驻，可继续使用 ChatGPT Desktop。",
+    )
+
+
 def main() -> int:
-    global CODEX_AVAILABLE
+    global CODEX_AVAILABLE, HOOKS_ACTION_REQUIRED
     print(f"\n🩺 {T('codex-flow doctor', 'codex-flow 系统诊断')}")
 
     section("Environment & Tools", "环境与工具")
@@ -169,11 +183,11 @@ def main() -> int:
         if review in {"auto", "standard", "strict"}:
             ok(T(f"review modifier: {review}", f"Review 修饰策略：{review}"))
         else:
-            fail(T(f"invalid review modifier: {review}", f"无效 Review 修饰策略：{review}"))
+            fail(T(f"invalid review modifier: {review or 'missing'}", f"无效 Review 修饰策略：{review or 'missing'}"))
         if fanout in {"auto", "conservative", "aggressive"}:
             ok(T(f"fanout modifier: {fanout}", f"Fan-out 修饰策略：{fanout}"))
         else:
-            fail(T(f"invalid fanout modifier: {fanout}", f"无效 Fan-out 修饰策略：{fanout}"))
+            fail(T(f"invalid fanout modifier: {fanout or 'missing'}", f"无效 Fan-out 修饰策略：{fanout or 'missing'}"))
 
         parent_effort = policy_value("parent", "min_reasoning_effort")
         worker_effort = policy_value("worker", "min_reasoning_effort")
@@ -254,7 +268,57 @@ def main() -> int:
                 code, _ = run_capture([sys.executable, str(manager), "check", "--hooks", str(HOOKS)])
                 if code == 0:
                     ok(T("FlowPilot lifecycle hooks installed", "FlowPilot 生命周期 hooks 已安装"))
-                    warn(T("command hooks may require one-time trust approval in Codex; use /hooks if Codex reports them pending", "命令 hooks 可能需要在 Codex 中进行一次信任授权；如果显示 pending，请使用 /hooks 批准"))
+                    _, trust_output = run_capture([
+                        sys.executable,
+                        str(manager),
+                        "status",
+                        "--hooks",
+                        str(HOOKS),
+                        "--config",
+                        str(CONFIG),
+                        "--json",
+                    ])
+                    try:
+                        trust = json.loads(trust_output)
+                    except (json.JSONDecodeError, TypeError):
+                        trust = {"status": "unknown", "error": trust_output or "no trust report"}
+                    status = str(trust.get("status") or "unknown")
+                    total = int(trust.get("total") or 0)
+                    trusted = int(trust.get("trusted") or 0)
+                    if status == "trusted":
+                        ok(T(
+                            f"FlowPilot hook authorization: trusted ({trusted}/{total})",
+                            f"FlowPilot hooks 授权：已信任（{trusted}/{total}）",
+                        ))
+                    elif status == "modified":
+                        HOOKS_ACTION_REQUIRED = True
+                        warn(T(
+                            "FlowPilot hook authorization: definitions changed since approval; re-authorization required",
+                            "FlowPilot hooks 授权：hook 定义在上次批准后已变化，需要重新授权",
+                        ))
+                        print("    " + _hook_action_hint())
+                    elif status == "untrusted":
+                        HOOKS_ACTION_REQUIRED = True
+                        warn(T(
+                            "FlowPilot hook authorization: approval required before hook-backed features can run",
+                            "FlowPilot hooks 授权：需要批准后，依赖 hooks 的功能才能运行",
+                        ))
+                        print("    " + _hook_action_hint())
+                    elif status == "disabled":
+                        HOOKS_ACTION_REQUIRED = True
+                        warn(T(
+                            "FlowPilot hook authorization: one or more lifecycle hooks are disabled",
+                            "FlowPilot hooks 授权：一个或多个生命周期 hook 已被禁用",
+                        ))
+                        print("    " + _hook_action_hint())
+                    else:
+                        HOOKS_ACTION_REQUIRED = True
+                        detail = str(trust.get("error") or "trust state unavailable")
+                        warn(T(
+                            f"FlowPilot hook authorization could not be verified: {detail}",
+                            f"无法验证 FlowPilot hooks 授权状态：{detail}",
+                        ))
+                        print("    " + _hook_action_hint())
                 else:
                     fail(T(f"FlowPilot lifecycle hooks missing from {HOOKS}", f"{HOOKS} 中缺少 FlowPilot 生命周期 hooks"))
         elif enabled == "false":
@@ -278,7 +342,12 @@ def main() -> int:
 
     print("\n  " + "─" * 69)
     if not FAILED:
-        if CODEX_AVAILABLE:
+        if HOOKS_ACTION_REQUIRED:
+            print("  ⚠ " + T(
+                "Installed with action required: FlowPilot hook-backed features are inactive until hook review is completed.",
+                "安装正常，但仍需操作：在完成 hook review 前，FlowPilot 依赖 hooks 的功能不会生效。",
+            ))
+        elif CODEX_AVAILABLE:
             print("  ✨ " + T("Ready. FlowPilot strategy runtime and deterministic telemetry are installed.", "就绪。FlowPilot 策略运行时与确定性遥测均已安装。"))
         else:
             print("  ✨ " + T("Ready. Core FlowPilot strategy runtime is installed and healthy; Codex CLI-dependent telemetry quota reads and benchmark execution are unavailable in this shell.", "就绪。FlowPilot 核心策略运行时安装正常；当前 shell 中依赖 Codex CLI 的遥测额度读取和 Benchmark 执行不可用。"))
