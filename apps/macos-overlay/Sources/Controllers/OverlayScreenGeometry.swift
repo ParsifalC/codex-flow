@@ -4,9 +4,7 @@ import Cocoa
 ///
 /// `NSWindow.screen` can be temporarily nil or point at a different display while
 /// AppKit is animating/resizing a borderless panel. Geometry routing therefore
-/// derives the destination display from the window/pointer's global coordinates
-/// and the current `NSScreen.visibleFrame` list instead of using `window.screen`
-/// as an animation-time source of truth.
+/// derives the destination display from global coordinates instead.
 enum OverlayScreenGeometry {
     static func bestVisibleFrame(for windowFrame: NSRect, among visibleFrames: [NSRect]) -> NSRect? {
         guard !visibleFrames.isEmpty else { return nil }
@@ -34,6 +32,23 @@ enum OverlayScreenGeometry {
         return visibleFrames.min {
             distanceSquared(from: center, to: $0) < distanceSquared(from: center, to: $1)
         }
+    }
+
+    /// Presentation expand/collapse is anchored at the window's top-trailing
+    /// corner. A wide panel may straddle two displays while its top-trailing
+    /// anchor still clearly belongs to the display where the compact bubble
+    /// lives. Using the panel center here can move the bubble to the neighbor.
+    static func presentationVisibleFrame(for windowFrame: NSRect, among visibleFrames: [NSRect]) -> NSRect? {
+        guard !visibleFrames.isEmpty else { return nil }
+        let anchor = topTrailingAnchor(for: windowFrame)
+        return visibleFrame(containing: anchor, among: visibleFrames)
+    }
+
+    static func topTrailingAnchor(for frame: NSRect, inset: CGFloat = 1) -> NSPoint {
+        NSPoint(
+            x: max(frame.minX, frame.maxX - inset),
+            y: max(frame.minY, frame.maxY - inset)
+        )
     }
 
     static func visibleFrame(containing point: NSPoint, among visibleFrames: [NSRect]) -> NSRect? {
