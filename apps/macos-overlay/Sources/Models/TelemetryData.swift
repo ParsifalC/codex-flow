@@ -118,43 +118,60 @@ public struct TokenUsage: Codable {
 }
 
 public struct ParticipantInfo: Codable, Identifiable {
-    public var id: String { name ?? model ?? UUID().uuidString }
+    public var id: String {
+        if let aid = agentId, !aid.isEmpty { return aid }
+        if let n = name, !n.isEmpty { return n }
+        return generatedId
+    }
+    private var generatedId: String = UUID().uuidString
+    public var agentId: String?
     public var name: String?
     public var agentType: String?
     public var model: String?
     public var reasoningEffort: String?
     public var status: String?
     public var conclusion: String?
+    public var startedAtMs: Double?
+    public var finishedAtMs: Double?
     public var usage: TokenUsage?
     public var usageDelta: TokenUsage?
     
     enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
         case name
         case agentType = "agent_type"
         case model
         case reasoningEffort = "reasoning_effort"
         case status
         case conclusion
+        case startedAtMs = "started_at_ms"
+        case finishedAtMs = "finished_at_ms"
         case usage
         case usageDelta = "usage_delta"
     }
     
     public init(
+        agentId: String? = nil,
         name: String? = nil,
         agentType: String? = nil,
         model: String? = nil,
         reasoningEffort: String? = nil,
         status: String? = nil,
         conclusion: String? = nil,
+        startedAtMs: Double? = nil,
+        finishedAtMs: Double? = nil,
         usage: TokenUsage? = nil,
         usageDelta: TokenUsage? = nil
     ) {
+        self.agentId = agentId
         self.name = name
         self.agentType = agentType
         self.model = model
         self.reasoningEffort = reasoningEffort
         self.status = status
         self.conclusion = conclusion
+        self.startedAtMs = startedAtMs
+        self.finishedAtMs = finishedAtMs
         self.usage = usage
         self.usageDelta = usageDelta
     }
@@ -471,8 +488,23 @@ public struct TaskRun: Codable, Identifiable {
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         
         if let dict = try? container.decode([String: ParticipantInfo].self, forKey: .workers) {
-            workersDict = dict
-            workersList = Array(dict.values)
+            var updatedDict: [String: ParticipantInfo] = [:]
+            var list: [ParticipantInfo] = []
+            for (key, var worker) in dict {
+                if worker.agentId == nil || worker.agentId?.isEmpty == true {
+                    worker.agentId = key
+                }
+                updatedDict[key] = worker
+                list.append(worker)
+            }
+            list.sort {
+                let s1 = $0.startedAtMs ?? 0
+                let s2 = $1.startedAtMs ?? 0
+                if s1 != s2 { return s1 < s2 }
+                return ($0.agentId ?? $0.id) < ($1.agentId ?? $1.id)
+            }
+            workersDict = updatedDict
+            workersList = list
         } else if let list = try? container.decode([ParticipantInfo].self, forKey: .workers) {
             workersList = list
         }
@@ -489,7 +521,11 @@ public struct TaskRun: Codable, Identifiable {
         try container.encodeIfPresent(cwd, forKey: .cwd)
         try container.encodeIfPresent(summary, forKey: .summary)
         try container.encodeIfPresent(parent, forKey: .parent)
-        try container.encodeIfPresent(workersDict, forKey: .workers)
+        if let d = workersDict {
+            try container.encode(d, forKey: .workers)
+        } else if let l = workersList {
+            try container.encode(l, forKey: .workers)
+        }
         try container.encodeIfPresent(quotaBefore, forKey: .quotaBefore)
         try container.encodeIfPresent(quotaAfter, forKey: .quotaAfter)
         try container.encodeIfPresent(quotaChangeDuringRun, forKey: .quotaChangeDuringRun)
@@ -640,7 +676,14 @@ public struct TaskRun: Codable, Identifiable {
     }
     
     public var allWorkers: [ParticipantInfo] {
-        return workersList ?? (workersDict != nil ? Array(workersDict!.values) : [])
+        if let list = workersList { return list }
+        guard let dict = workersDict else { return [] }
+        return Array(dict.values).sorted {
+            let s1 = $0.startedAtMs ?? 0
+            let s2 = $1.startedAtMs ?? 0
+            if s1 != s2 { return s1 < s2 }
+            return ($0.agentId ?? $0.id) < ($1.agentId ?? $1.id)
+        }
     }
     
     public var effectiveQuotaWindows: [QuotaWindow] {
