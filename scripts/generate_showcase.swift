@@ -818,18 +818,6 @@ struct BannerPromoView: View {
                 endPoint: .bottomTrailing
             )
 
-            Circle()
-                .fill(Color.cyan.opacity(0.15))
-                .blur(radius: 120)
-                .frame(width: 500, height: 500)
-                .offset(x: -350)
-
-            Circle()
-                .fill(Color(red: 0.6, green: 0.2, blue: 0.9).opacity(0.15))
-                .blur(radius: 140)
-                .frame(width: 600, height: 600)
-                .offset(x: 350)
-
             HStack(spacing: 48) {
                 VStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 14) {
