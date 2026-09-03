@@ -531,6 +531,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var runtime = OverlayRuntimeState()
     private var hoverGate = OverlayHoverGate(rearmDistance: 6)
     private var pendingPresentationAnimated = true
+    private var deferredPointerExit = false
 
     private let bubbleSize = NSSize(width: 76, height: 76)
     private let summarySize = NSSize(width: 384, height: 490)
@@ -670,10 +671,18 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             suppressHoverUntilPointerMoves()
         }
 
+        let completed: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.presentationFrameDidSet(targetOrigin: newOrigin, collapsed: collapsedAfterAnimation)
+            let startedNext = self.finishGeometryActivity()
+            if !startedNext, collapsedAfterAnimation, !self.state.isExpanded {
+                self.scheduleTuck()
+            }
+        }
+
         if approximatelyEqual(window.frame, targetFrame) || !animated {
             window.setFrame(targetFrame, display: true)
-            presentationFrameDidSet(targetOrigin: newOrigin, collapsed: collapsedAfterAnimation)
-            finishGeometryActivity()
+            completed()
             return
         }
 
@@ -682,24 +691,30 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
             window.animator().setFrame(targetFrame, display: true)
-        }, completionHandler: { [weak self] in
-            guard let self else { return }
-            self.presentationFrameDidSet(targetOrigin: newOrigin, collapsed: collapsedAfterAnimation)
-            self.finishGeometryActivity()
-        })
+        }, completionHandler: completed)
     }
 
     private func presentationFrameDidSet(targetOrigin: NSPoint, collapsed: Bool) {
         if collapsed && !state.isExpanded {
             saveWindowPosition(targetOrigin)
-            scheduleTuck()
         }
     }
 
-    private func finishGeometryActivity() {
+    @discardableResult
+    private func finishGeometryActivity() -> Bool {
         let shouldRunPendingPresentation = runtime.completeGeometry()
-        guard shouldRunPendingPresentation else { return }
-        performPresentationFrameUpdate(animated: pendingPresentationAnimated)
+        if shouldRunPendingPresentation {
+            performPresentationFrameUpdate(animated: pendingPresentationAnimated)
+            return true
+        }
+        drainDeferredPointerExitIfNeeded()
+        return false
+    }
+
+    private func drainDeferredPointerExitIfNeeded() {
+        guard deferredPointerExit else { return }
+        deferredPointerExit = false
+        handleMouseExited()
     }
 
     private func approximatelyEqual(_ lhs: NSRect, _ rhs: NSRect, tolerance: CGFloat = 0.5) -> Bool {
@@ -778,6 +793,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseEntered(at point: NSPoint) {
+        deferredPointerExit = false
         guard !isGeometryTransitioning else { return }
         guard pointerMovementRearmedHover() else { return }
 
@@ -795,6 +811,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseMoved(at point: NSPoint) {
+        deferredPointerExit = false
         guard !isGeometryTransitioning else { return }
         guard pointerMovementRearmedHover() else { return }
 
@@ -821,7 +838,11 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
     public func handleMouseExited() {
         cancelDwellTimer()
-        guard !isGeometryTransitioning else { return }
+        if isGeometryTransitioning {
+            deferredPointerExit = true
+            return
+        }
+        deferredPointerExit = false
 
         if state.isExpanded && !state.isPinned && !isInteractingOrDragging {
             collapseTimer?.invalidate()
@@ -848,8 +869,10 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         }
 
         guard let visible = resolvedVisibleFrame(for: window.frame, preferredPoint: pointerLocation) else {
-            finishGeometryActivity()
-            scheduleTuck()
+            let startedNext = finishGeometryActivity()
+            if !startedNext, !state.isExpanded {
+                scheduleTuck()
+            }
             return
         }
 
@@ -894,18 +917,18 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         let targetFrame = NSRect(origin: targetOrigin, size: frame.size)
         suppressHoverUntilPointerMoves()
 
-        let finish: () -> Void = { [weak self] in
+        let completed: () -> Void = { [weak self] in
             guard let self else { return }
             self.saveWindowPosition(targetOrigin)
-            if !self.state.isExpanded {
+            let startedNext = self.finishGeometryActivity()
+            if !startedNext, !self.state.isExpanded {
                 self.scheduleTuck()
             }
-            self.finishGeometryActivity()
         }
 
         if approximatelyEqual(window.frame, targetFrame) {
             window.setFrame(targetFrame, display: true)
-            finish()
+            completed()
             return
         }
 
@@ -914,7 +937,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             context.allowsImplicitAnimation = true
             window.animator().setFrame(targetFrame, display: true)
-        }, completionHandler: finish)
+        }, completionHandler: completed)
     }
 
     // MARK: - Position Persistence
