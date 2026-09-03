@@ -17,6 +17,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test overlay screen geometry
+        run: |
+          swiftc \
+            -framework Cocoa \
+            apps/macos-overlay/Sources/Controllers/OverlayScreenGeometry.swift \
+            apps/macos-overlay/Tests/OverlayScreenGeometryTests.swift \
+            -o "$RUNNER_TEMP/overlay-screen-geometry-tests"
+          "$RUNNER_TEMP/overlay-screen-geometry-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
       - name: Smoke test overlay lifecycle
