@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Tuple
 
 Task = Any
 RouteFn = Callable[[Task], str]
@@ -11,7 +11,7 @@ BudgetFn = Callable[[Task], "WorkerBudget"]
 PredicateFn = Callable[[Task], bool]
 CapabilityFn = Callable[[Task, str], str]
 DemandFn = Callable[[Task], int]
-NotesFn = Callable[[Task], tuple[str, ...]]
+NotesFn = Callable[[Task], Tuple[str, ...]]
 LifecycleFn = Callable[[Task, str], "StagePolicy"]
 
 STAGES = ("exploration", "implementation", "review")
