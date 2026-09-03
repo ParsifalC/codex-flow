@@ -4,8 +4,11 @@ import Foundation
 /// A compact text label that keeps the normal layout truncated, but reveals the
 /// complete value in a small native popover after a short hover dwell.
 ///
-/// Use this anywhere a user-facing string is intentionally line-limited. The
-/// component does not reveal content while privacy mode is active.
+/// Privacy mode deliberately never draws the source string. This matters for
+/// screenshots: AppKit bitmap snapshots can bypass Core Animation blur effects,
+/// so blurring the real text is not a sufficient privacy boundary. Instead we
+/// render a shape-preserving placeholder and blur that placeholder for the same
+/// visual treatment without ever exposing the sensitive source pixels.
 public struct HoverRevealText: View {
     public let text: String
     public let font: Font
@@ -40,37 +43,59 @@ public struct HoverRevealText: View {
     }
 
     public var body: some View {
-        Text(text)
-            .font(font)
-            .foregroundColor(foregroundColor)
-            .lineLimit(lineLimit)
-            .truncationMode(truncationMode)
-            .multilineTextAlignment(alignment)
-            .blur(radius: privacyBlur ? 4.5 : 0)
-            .contentShape(Rectangle())
-            .onHover(perform: handleSourceHover)
-            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-                ZStack {
-                    Color(red: 0.055, green: 0.062, blue: 0.085)
-                        .ignoresSafeArea()
-
-                    ScrollView(.vertical, showsIndicators: true) {
-                        expandedText
-                            .font(font)
-                            .foregroundColor(.white.opacity(0.92))
-                            .multilineTextAlignment(.leading)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                    }
-                }
-                .frame(width: min(max(popoverWidth, 220), 520))
-                .frame(maxHeight: 260)
-                .background(Color(red: 0.055, green: 0.062, blue: 0.085))
-                .preferredColorScheme(.dark)
-                .onHover(perform: handlePopoverHover)
+        Group {
+            if privacyBlur {
+                Text(Self.privacyPlaceholder(for: text))
+                    .font(font)
+                    .foregroundColor(foregroundColor.opacity(0.62))
+                    .lineLimit(lineLimit)
+                    .truncationMode(truncationMode)
+                    .multilineTextAlignment(alignment)
+                    .blur(radius: 3.2)
+                    .accessibilityLabel(Text("Private content"))
+            } else {
+                Text(text)
+                    .font(font)
+                    .foregroundColor(foregroundColor)
+                    .lineLimit(lineLimit)
+                    .truncationMode(truncationMode)
+                    .multilineTextAlignment(alignment)
             }
+        }
+        .contentShape(Rectangle())
+        .onHover(perform: handleSourceHover)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            ZStack {
+                Color(red: 0.055, green: 0.062, blue: 0.085)
+                    .ignoresSafeArea()
+
+                ScrollView(.vertical, showsIndicators: true) {
+                    expandedText
+                        .font(font)
+                        .foregroundColor(.white.opacity(0.92))
+                        .multilineTextAlignment(.leading)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+            }
+            .frame(width: min(max(popoverWidth, 220), 520))
+            .frame(maxHeight: 260)
+            .background(Color(red: 0.055, green: 0.062, blue: 0.085))
+            .preferredColorScheme(.dark)
+            .onHover(perform: handlePopoverHover)
+        }
+    }
+
+    /// Keeps roughly the same line count and text footprint while ensuring the
+    /// original source string is never part of the rendered privacy-mode view.
+    private static func privacyPlaceholder(for source: String) -> String {
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.map { line in
+            let visibleLength = min(max(line.count, 8), 42)
+            return String(repeating: "●", count: visibleLength)
+        }.joined(separator: "\n")
     }
 
     /// Native Foundation Markdown parsing keeps headings, lists, fenced code,
