@@ -536,7 +536,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var hoverGate = OverlayHoverGate(rearmDistance: 6)
     private var pendingPresentationAnimated = true
     private var needsPointerReconciliationAfterGeometry = false
-    private let flightRecorder = OverlayFlightRecorder.shared
 
     private let bubbleSize = NSSize(width: 76, height: 76)
     private let summarySize = NSSize(width: 384, height: 490)
@@ -556,27 +555,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
     private var isGeometryTransitioning: Bool {
         runtime.isGeometryTransitioning
-    }
-
-    private func geometryDescription() -> String {
-        String(describing: runtime.activeGeometry)
-    }
-
-    private func trace(
-        _ event: String,
-        targetFrame: NSRect? = nil,
-        visibleFrame: NSRect? = nil
-    ) {
-        flightRecorder.record(
-            event,
-            windowFrame: window?.frame,
-            targetFrame: targetFrame,
-            visibleFrame: visibleFrame,
-            pointer: NSEvent.mouseLocation,
-            expanded: state.isExpanded,
-            docked: state.isDocked,
-            geometry: geometryDescription()
-        )
     }
 
     private func resolvedVisibleFrame(for frame: NSRect, preferredPoint: NSPoint? = nil) -> NSRect? {
@@ -625,7 +603,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         hostingView.windowController = self
         window.contentView = hostingView
         window.orderFrontRegardless()
-        trace("setup")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.scheduleTuck()
@@ -633,7 +610,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func prepareForPresentationChange() {
-        trace("prepare-presentation")
         cancelDwellTimer()
         cancelTuckTimer()
         collapseTimer?.invalidate()
@@ -665,11 +641,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     // MARK: - Single-owner geometry pipeline
     public func updateWindowFrame(animated: Bool = true) {
         pendingPresentationAnimated = animated
-        trace("presentation-request")
-        guard runtime.requestPresentationGeometry() else {
-            trace("presentation-coalesced")
-            return
-        }
+        guard runtime.requestPresentationGeometry() else { return }
         performPresentationFrameUpdate(animated: animated)
     }
 
@@ -682,7 +654,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         let targetSize = state.isExpanded ? summarySize : bubbleSize
         let currentFrame = window.frame
         guard let visible = presentationVisibleFrame(for: currentFrame) else {
-            trace("presentation-no-screen")
             finishGeometryActivity()
             return
         }
@@ -709,12 +680,10 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         if collapsedAfterAnimation {
             suppressHoverUntilPointerMoves()
         }
-        trace("presentation-target", targetFrame: targetFrame, visibleFrame: visible)
 
         let completed: () -> Void = { [weak self] in
             guard let self else { return }
             self.window.orderFrontRegardless()
-            self.trace("presentation-complete", targetFrame: targetFrame, visibleFrame: visible)
             self.presentationFrameDidSet(targetOrigin: newOrigin, collapsed: collapsedAfterAnimation)
             let startedNext = self.finishGeometryActivity()
             if !startedNext, collapsedAfterAnimation, !self.state.isExpanded {
@@ -746,7 +715,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private func finishGeometryActivity() -> Bool {
         let shouldRunPendingPresentation = runtime.completeGeometry()
         if shouldRunPendingPresentation {
-            trace("presentation-replay")
             performPresentationFrameUpdate(animated: pendingPresentationAnimated)
             return true
         }
@@ -791,7 +759,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
               !isGeometryTransitioning else { return }
 
         state.dockEdge = .right
-        trace("tuck-scheduled")
         tuckTimer = Timer.scheduledTimer(withTimeInterval: edgeTuckIdleInterval, repeats: false) { [weak self] _ in
             self?.tuckBubble(animated: true)
         }
@@ -819,7 +786,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         state.dockEdge = .right
         suppressHoverUntilPointerMoves()
         state.isDocked = true
-        trace("tucked")
     }
 
     public func unTuckBubble(pointerLocationInHost: NSPoint? = nil, animated: Bool = true) {
@@ -827,7 +793,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         guard state.isDocked, !isGeometryTransitioning else { return }
         state.dockEdge = .right
         state.isDocked = false
-        trace("untucked")
 
         if let pointerLocationInHost,
            OverlayCompactHitRegion.contains(
@@ -927,7 +892,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         }
 
         guard let visible = resolvedVisibleFrame(for: window.frame, preferredPoint: pointerLocation) else {
-            trace("snap-no-screen")
             let startedNext = finishGeometryActivity()
             if !startedNext, !state.isExpanded {
                 scheduleTuck()
@@ -975,12 +939,10 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
         let targetFrame = NSRect(origin: targetOrigin, size: frame.size)
         suppressHoverUntilPointerMoves()
-        trace("snap-target", targetFrame: targetFrame, visibleFrame: visible)
 
         let completed: () -> Void = { [weak self] in
             guard let self else { return }
             self.window.orderFrontRegardless()
-            self.trace("snap-complete", targetFrame: targetFrame, visibleFrame: visible)
             self.saveWindowPosition(targetOrigin)
             let startedNext = self.finishGeometryActivity()
             if !startedNext, !self.state.isExpanded {
