@@ -416,6 +416,11 @@ def run_showcase_generation() -> bool:
     return True
 
 
+def handle_generate_showcase() -> None:
+    run_showcase_generation()
+    pause_prompt()
+
+
 def handle_manage_overlay() -> None:
     if sys.platform != "darwin":
         print(f"\n{style.YELLOW}⚠️ {T('The native FlowPilot floating window is available only on macOS.', 'FlowPilot 原生悬浮窗仅支持 macOS 系统。')}{style.RESET}")
@@ -452,7 +457,6 @@ def handle_manage_overlay() -> None:
         if is_running:
             print(f"  [{style.CYAN}4{style.RESET}] {T('🔄 Toggle expanded / collapsed', '🔄 切换展开 / 折叠 (Toggle)')}")
             print(f"  [{style.CYAN}5{style.RESET}] {T('⚡ Push latest data and expand', '⚡️ 发送最新数据并展开 (Push Last Summary)')}")
-        print(f"  [{style.CYAN}6{style.RESET}] {T('🖼 Regenerate showcase / promotional images', '🖼 重新生成 Showcase / 宣传图')}")
 
         print(f"  [{style.CYAN}0{style.RESET}] 🔙 {T('Back to main menu', '返回主菜单')}\n")
 
@@ -548,10 +552,6 @@ def handle_manage_overlay() -> None:
                 print(f"{style.RED}{T('Push failed', '推送失败')}: {exc}{style.RESET}")
             pause_prompt()
 
-        elif choice == "6":
-            run_showcase_generation()
-            pause_prompt()
-
         else:
             print(f"{style.RED}❌ {T('Invalid option', '无效选项')}{style.RESET}")
             pause_prompt()
@@ -597,12 +597,13 @@ def main_menu() -> int:
             ("7", T("⚡ Local quick Benchmark", "⚡ 本地快速 Benchmark"), "benchmark-local quick"),
             ("8", update_label, "update"),
             ("9", T("🛠️ Repair telemetry history", "🛠️ 修复历史遥测数据"), "telemetry repair"),
+            ("10", T("🖼 Regenerate Showcase / promotional images", "🖼 重新生成 Showcase / 宣传图"), "showcase"),
         ]
         for key, label, command in items:
             print(f"  [{style.CYAN}{key}{style.RESET}] {label} {style.DIM}({command}){style.RESET}")
         print(f"  [{style.CYAN}0{style.RESET}] 🚪 {T('Exit', '退出')}\n")
         try:
-            choice = input(f"{style.CYAN}{T('Enter option [0-9]', '请输入选项 [0-9]')}: {style.RESET}").strip()
+            choice = input(f"{style.CYAN}{T('Enter option [0-10]', '请输入选项 [0-10]')}: {style.RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n" + T("👋 Exited codex-flow console.", "👋 已退出 codex-flow 控制台。"))
             return 0
@@ -619,12 +620,13 @@ def main_menu() -> int:
             "7": handle_run_benchmark,
             "8": handle_update,
             "9": handle_repair_history,
+            "10": handle_generate_showcase,
         }
         handler = handlers.get(choice)
         if handler:
             handler()
         else:
-            print(f"{style.RED}❌ {T('Invalid option; enter 0-9', '无效选项，请输入 0-9')}{style.RESET}")
+            print(f"{style.RED}❌ {T('Invalid option; enter 0-10', '无效选项，请输入 0-10')}{style.RESET}")
             pause_prompt()
     return 0
 
