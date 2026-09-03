@@ -13,6 +13,7 @@ worker_model = "gpt-5.6-luna"
 # FlowPilot is the strategy runtime. The default profile preserves the historical
 # codex-flow objective while offloading more deep execution to cheap workers.
 [strategy]
+enabled = true
 profile = "efficient"
 
 # Routing is an execution constraint, not a strategy. Prompt-level explicit

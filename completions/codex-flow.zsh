@@ -21,7 +21,7 @@ _codex_flow() {
     if (( CURRENT == 2 )); then
         _describe 'command' commands
     elif (( CURRENT == 3 )) && [[ "${words[2]}" == strategy ]]; then
-        _describe 'strategy command' '(show profiles set routing plan)'
+        _describe 'strategy command' '(show profiles enabled enable disable set routing plan)'
     elif (( CURRENT == 4 )) && [[ "${words[2]}" == strategy && "${words[3]}" == set ]]; then
         _describe 'strategy profile' '(efficient balanced quality speed)'
     elif (( CURRENT == 4 )) && [[ "${words[2]}" == strategy && "${words[3]}" == routing ]]; then

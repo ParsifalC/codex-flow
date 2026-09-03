@@ -31,6 +31,7 @@ schema_version = 4
 language = "auto"
 
 [strategy]
+enabled = true
 profile = "efficient"
 
 [routing]
@@ -76,6 +77,7 @@ The asymmetric reasoning defaults are deliberate: the expensive high-capability 
 Schema-v3 policies remain semantically compatible. Missing strategy/routing/modifier sections resolve to:
 
 ```text
+strategy_enabled = true
 strategy = efficient
 routing = adaptive
 review = auto
@@ -90,6 +92,8 @@ Installer/update migrates to schema v4 while preserving supported existing value
 ---
 
 ## Policy precedence
+
+`[strategy].enabled` is a global master gate above normal strategy precedence. When `false`, FlowPilot does not build a TaskProfile, compile an ExecutionPlan, or automatically dispatch Workers. Repository policy and current-task overrides cannot re-enable it. Stored profile/routing/modifier values are retained and resume when the switch is enabled again.
 
 ```text
 hard runtime / safety ceilings
@@ -106,6 +110,18 @@ Task-level overrides can choose strategy/routing/modifiers but cannot raise a re
 ## Strategy, routing, and modifiers
 
 ### `[strategy]`
+
+`enabled` controls FlowPilot automatic strategy dispatch and defaults to `true`:
+
+```bash
+codex-flow strategy enabled
+codex-flow strategy disable
+codex-flow strategy enable
+```
+
+Disabling it turns off **codex-flow automatic planning and dispatch only**. It does not change Codex's native `[agents].enabled`, so explicit native-subagent use remains available.
+
+Repository `.codex-flow.toml` may override profile/routing/modifiers while the master switch is enabled, but it cannot override a global `enabled = false`. This prevents a repository from silently re-enabling distribution after the user turned it off globally.
 
 - `efficient` — minimize expensive Parent use and total waste while offloading deep execution to efficient Workers.
 - `balanced` — balance quality, quota, and wall-clock latency with moderate safe Worker fan-out.

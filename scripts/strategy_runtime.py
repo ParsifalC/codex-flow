@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - standalone installs always bundle it
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 DEFAULT_POLICY = CODEX_HOME / "codex-flow.toml"
 REPO_POLICY_NAME = ".codex-flow.toml"
+TEMPORARY_BYPASS_NAME = ".strategy-bypass-once"
 
 STRATEGIES = strategy_names()
 ROUTING_MODES = ("adaptive", "direct", "delegate")
@@ -145,6 +147,7 @@ class PolicySnapshot:
 
 @dataclass(frozen=True)
 class ResolvedPolicy:
+    enabled: bool
     strategy: str
     routing: str
     modifiers: Modifiers
@@ -258,6 +261,33 @@ def _policy_int(path: Path | None, section: str, key: str, default: int) -> int:
         return default
 
 
+def _policy_bool(path: Path | None, section: str, key: str, default: bool, *, strict: bool = False) -> bool:
+    if strict and path is not None:
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except OSError:
+            return default
+        match = _section_body(text, section)
+        if not match:
+            return default
+        key_match = re.search(rf"(?m)^\s*{re.escape(key)}\s*=\s*(.*?)\s*$", match.group(1))
+        if not key_match:
+            return default
+        raw = re.sub(r"\s+#.*$", "", key_match.group(1)).strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+            raw = raw[1:-1]
+    else:
+        raw = policy_value(path, section, key, "true" if default else "false")
+    raw = raw.strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if strict:
+        raise ValueError(f"invalid [{section}].{key}: {raw or '<empty>'}; expected true or false")
+    return default
+
+
 def _release_value(section: str, key: str, fallback: str = "") -> str:
     return policy_value(_release_defaults_path(), section, key, fallback)
 
@@ -266,16 +296,20 @@ def _release_int(section: str, key: str, fallback: int) -> int:
     return _policy_int(_release_defaults_path(), section, key, fallback)
 
 
+def _release_bool(section: str, key: str, fallback: bool) -> bool:
+    return _policy_bool(_release_defaults_path(), section, key, fallback)
+
+
 def _quoted(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def set_policy_value(path: Path, section: str, key: str, value: str) -> None:
+def set_policy_value(path: Path, section: str, key: str, value: str, *, quote: bool = True) -> None:
     if not path.exists():
         raise FileNotFoundError(f"policy not found: {path}")
     text = path.read_text(encoding="utf-8-sig")
     match = _section_body(text, section)
-    line = f"{key} = {_quoted(value)}"
+    line = f"{key} = {_quoted(value) if quote else value}"
     if match:
         body = match.group(1)
         key_re = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$")
@@ -396,6 +430,13 @@ def _raise_capability_floors(base: PolicySnapshot, repo: Path | None) -> PolicyS
 def resolve_policy(user_policy: Path, repo_policy: Path | None = None) -> ResolvedPolicy:
     """Resolve release + user + already-selected repository policy."""
     repo = repo_policy
+    enabled = _policy_bool(
+        user_policy,
+        "strategy",
+        "enabled",
+        _release_bool("strategy", "enabled", True),
+        strict=True,
+    )
     strategy = policy_value(user_policy, "strategy", "profile", _release_value("strategy", "profile"))
     routing = policy_value(user_policy, "routing", "mode", _release_value("routing", "mode"))
     review = policy_value(user_policy, "modifiers", "review", _release_value("modifiers", "review"))
@@ -422,6 +463,7 @@ def resolve_policy(user_policy: Path, repo_policy: Path | None = None) -> Resolv
                 pass
 
     resolved = ResolvedPolicy(
+        enabled=enabled,
         strategy=strategy,
         routing=routing,
         modifiers=Modifiers(review=review, fanout=fanout),
@@ -801,6 +843,56 @@ def compile_plan(
     )
 
 
+
+def _temporary_bypass_path() -> Path:
+    return CODEX_HOME / "codex-flow" / TEMPORARY_BYPASS_NAME
+
+
+def arm_temporary_bypass() -> None:
+    """Arm a one-shot strategy bypass without mutating persistent policy."""
+    path = _temporary_bypass_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text("1\n", encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def temporary_bypass_pending() -> bool:
+    return _temporary_bypass_path().exists()
+
+
+def consume_temporary_bypass() -> bool:
+    """Atomically consume the token. At most one concurrent task can succeed."""
+    path = _temporary_bypass_path()
+    claim = path.with_name(f".{path.name}.{os.getpid()}.claim")
+    try:
+        os.replace(path, claim)
+    except FileNotFoundError:
+        return False
+    try:
+        return True
+    finally:
+        try:
+            claim.unlink()
+        except FileNotFoundError:
+            pass
+
+def configured_strategy_enabled(path: Path) -> bool:
+    return _policy_bool(
+        path,
+        "strategy",
+        "enabled",
+        _release_bool("strategy", "enabled", True),
+        strict=True,
+    )
+
+
 def configured_strategy(path: Path) -> str:
     return policy_value(path, "strategy", "profile", _release_value("strategy", "profile"))
 
@@ -849,6 +941,12 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--effective", action="store_true")
     show.add_argument("--repo-policy", default="auto")
 
+    sub.add_parser("enabled")
+    sub.add_parser("enable")
+    sub.add_parser("disable")
+    sub.add_parser("bypass-once")
+    sub.add_parser("bypass-pending")
+    sub.add_parser("consume-bypass")
     set_cmd = sub.add_parser("set")
     set_cmd.add_argument("profile", choices=STRATEGIES)
 
@@ -893,8 +991,16 @@ def main(argv: Iterable[str] | None = None) -> int:
     if command == "show":
         if getattr(ns, "effective", False):
             repo, _disabled = _repo_arg(getattr(ns, "repo_policy", "auto"))
-            resolved = resolve_policy(ns.policy, repo)
+            try:
+                resolved = resolve_policy(ns.policy, repo)
+            except ValueError as exc:
+                if getattr(ns, "json", False):
+                    print(json.dumps({"enabled": False, "valid": False, "error": str(exc)}, ensure_ascii=False, indent=2))
+                else:
+                    print(str(exc), file=sys.stderr)
+                return 2
             result = {
+                "enabled": resolved.enabled,
                 "strategy": resolved.strategy,
                 "routing": resolved.routing,
                 "review": resolved.modifiers.review,
@@ -912,12 +1018,56 @@ def main(argv: Iterable[str] | None = None) -> int:
             return 0
         strategy = configured_strategy(ns.policy)
         routing_mode = configured_routing(ns.policy)
-        valid = strategy in STRATEGIES and routing_mode in ROUTING_MODES
+        try:
+            enabled = configured_strategy_enabled(ns.policy)
+            enabled_valid = True
+            enabled_error = None
+        except ValueError as exc:
+            enabled = False
+            enabled_valid = False
+            enabled_error = str(exc)
+        valid = enabled_valid and strategy in STRATEGIES and routing_mode in ROUTING_MODES
         if getattr(ns, "json", False):
-            print(json.dumps({"strategy": strategy, "routing": routing_mode, "valid": valid}, ensure_ascii=False, indent=2))
+            result = {"enabled": enabled, "strategy": strategy, "routing": routing_mode, "valid": valid}
+            if enabled_error is not None:
+                result["error"] = enabled_error
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif enabled_error is not None:
+            print(enabled_error, file=sys.stderr)
         else:
-            print(f"strategy={strategy} routing={routing_mode}")
+            print(f"enabled={'true' if enabled else 'false'} strategy={strategy} routing={routing_mode}")
         return 0 if valid else 2
+    if command == "enabled":
+        try:
+            enabled = configured_strategy_enabled(ns.policy)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print("true" if enabled else "false")
+        return 0
+    if command == "bypass-once":
+        try:
+            enabled = configured_strategy_enabled(ns.policy)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if not enabled:
+            print("strategy dispatch is globally disabled; temporary bypass is unnecessary", file=sys.stderr)
+            return 3
+        arm_temporary_bypass()
+        print("armed=true")
+        return 0
+    if command == "bypass-pending":
+        print("true" if temporary_bypass_pending() else "false")
+        return 0
+    if command == "consume-bypass":
+        print("true" if consume_temporary_bypass() else "false")
+        return 0
+    if command in {"enable", "disable"}:
+        enabled = command == "enable"
+        set_policy_value(ns.policy, "strategy", "enabled", "true" if enabled else "false", quote=False)
+        print(f"enabled={'true' if enabled else 'false'}")
+        return 0
     if command == "set":
         set_policy_value(ns.policy, "strategy", "profile", ns.profile)
         print(f"strategy={ns.profile}")
@@ -931,7 +1081,17 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 0
     if command == "plan":
         repo, _disabled = _repo_arg(ns.repo_policy)
-        resolved = resolve_policy(ns.policy, repo)
+        try:
+            resolved = resolve_policy(ns.policy, repo)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 3
+        if not resolved.enabled:
+            print(
+                "codex-flow strategy dispatch is disabled; run `codex-flow strategy enable` to re-enable it.",
+                file=sys.stderr,
+            )
+            return 3
         strategy = ns.profile or resolved.strategy
         routing_mode = ns.routing or resolved.routing
         modifiers = Modifiers(

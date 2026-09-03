@@ -116,6 +116,7 @@ case "$cmd" in
     command -v git >/dev/null 2>&1 || fail "$(cf_t 'git is required for update' '更新需要 git')"
     [[ -f "$POLICY" ]] || fail "$(cf_t 'missing policy; reinstall codex-flow' '策略文件缺失，请重新安装 codex-flow')"
 
+    strategy_enabled="$(read_policy_value strategy enabled "$POLICY")"; [[ -n "$strategy_enabled" ]] || strategy_enabled=true
     strategy_profile="$(read_policy_value strategy profile "$POLICY")"; [[ -n "$strategy_profile" ]] || strategy_profile=efficient
     routing_mode="$(read_policy_value routing mode "$POLICY")"; [[ -n "$routing_mode" ]] || routing_mode=adaptive
     review_modifier="$(read_policy_value modifiers review "$POLICY")"; [[ -n "$review_modifier" ]] || review_modifier=auto
@@ -142,7 +143,7 @@ case "$cmd" in
     fi
     after="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"
 
-    CODEX_FLOW_STRATEGY="$strategy_profile" CODEX_FLOW_ROUTING_MODE="$routing_mode" \
+    CODEX_FLOW_STRATEGY_ENABLED="$strategy_enabled" CODEX_FLOW_STRATEGY="$strategy_profile" CODEX_FLOW_ROUTING_MODE="$routing_mode" \
     CODEX_FLOW_REVIEW_MODIFIER="$review_modifier" CODEX_FLOW_FANOUT_MODIFIER="$fanout_modifier" \
     CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \
     CODEX_FLOW_WORKER_MODEL_POLICY="$worker_policy" CODEX_FLOW_WORKER_MODEL="$worker_model" CODEX_FLOW_WORKER_MIN_EFFORT="$worker_effort" \

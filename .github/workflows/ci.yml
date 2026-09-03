@@ -138,9 +138,9 @@ jobs:
           & (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') status
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $strategyOutput = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') strategy show | Out-String).Trim()
-          if ($strategyOutput -ne 'strategy=efficient routing=adaptive') { throw "unexpected strategy output: $strategyOutput" }
+          if ($strategyOutput -ne 'enabled=true strategy=efficient routing=adaptive') { throw "unexpected strategy output: $strategyOutput" }
           $bareStrategyOutput = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') strategy | Out-String).Trim()
-          if ($bareStrategyOutput -ne 'strategy=efficient routing=adaptive') { throw "unexpected bare strategy output: $bareStrategyOutput" }
+          if ($bareStrategyOutput -ne 'enabled=true strategy=efficient routing=adaptive') { throw "unexpected bare strategy output: $bareStrategyOutput" }
           $doctorOutput = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') doctor 2>&1 | Out-String)
           $doctorExit = $LASTEXITCODE
           if ($doctorExit -ne 0) { exit $doctorExit }

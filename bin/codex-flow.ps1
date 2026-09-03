@@ -120,6 +120,9 @@ switch ($cmd) {
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw (L 'git is required for update' '更新需要 git') }
         if (-not (Test-Path $Policy)) { throw (L 'missing policy; reinstall codex-flow' '策略文件缺失，请重新安装 codex-flow') }
 
+        $strategyEnabled = Get-PolicyValue strategy enabled
+        if (-not $strategyEnabled) { $strategyEnabled = 'true' }
+        $env:CODEX_FLOW_STRATEGY_ENABLED = $strategyEnabled
         $strategyProfile = Get-PolicyValue strategy profile
         if (-not $strategyProfile) { $strategyProfile = 'efficient' }
         $routingMode = Get-PolicyValue routing mode

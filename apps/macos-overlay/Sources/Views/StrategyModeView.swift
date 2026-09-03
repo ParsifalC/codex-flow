@@ -49,6 +49,7 @@ public struct StrategyProfileInfo: Identifiable, Equatable {
 }
 
 public struct StrategyModeSnapshot {
+    public let enabled: Bool
     public let configured: String
     public let routing: String?
     public let valid: Bool
@@ -85,6 +86,7 @@ public enum StrategyModeService {
             throw serviceError(L("Unable to parse the current strategy.", "无法解析当前策略。"))
         }
 
+        let enabled = (json["enabled"] as? NSNumber)?.boolValue ?? true
         let routing = json["routing"] as? String
         let valid = (json["valid"] as? NSNumber)?.boolValue ?? false
         let profilesOutput = try run(["strategy", "profiles"])
@@ -94,6 +96,7 @@ public enum StrategyModeService {
         }
 
         return StrategyModeSnapshot(
+            enabled: enabled,
             configured: configured,
             routing: routing,
             valid: valid,
@@ -113,6 +116,30 @@ public enum StrategyModeService {
             throw serviceError(L("Strategy change could not be verified.", "策略切换后无法验证配置结果。"))
         }
         return verified
+    }
+
+    public static func setEnabled(_ enabled: Bool) throws -> StrategyModeSnapshot {
+        _ = try run(["strategy", enabled ? "enable" : "disable"])
+        let verified = try load()
+        guard verified.enabled == enabled else {
+            throw serviceError(L(
+                "Strategy master switch change could not be verified.",
+                "策略总开关修改后无法验证配置结果。"
+            ))
+        }
+        return verified
+    }
+
+    public static func armTemporaryBypass() throws {
+        _ = try run(["strategy", "bypass-once"])
+        let pending = try run(["strategy", "bypass-pending"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard pending == "true" else {
+            throw serviceError(L(
+                "Temporary strategy bypass could not be verified.",
+                "临时关闭策略分发后无法验证一次性状态。"
+            ))
+        }
     }
 
     private struct CommandResult {
@@ -225,6 +252,8 @@ public struct StrategyModeCard: View {
     @State private var snapshot: StrategyModeSnapshot?
     @State private var isLoading = false
     @State private var applyingProfile: String?
+    @State private var applyingEnabled = false
+    @State private var showDisableConfirmation = false
     @State private var message: String?
     @State private var isError = false
 
@@ -245,10 +274,10 @@ public struct StrategyModeCard: View {
                     }
                     Text(localizedConfiguredName(snapshot))
                         .font(.system(size: 7.5, weight: .heavy, design: .rounded))
-                        .foregroundColor(snapshot.valid ? .cyan : .orange)
+                        .foregroundColor(statusColor(snapshot))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill((snapshot.valid ? Color.cyan : Color.orange).opacity(0.12)))
+                        .background(Capsule().fill(statusColor(snapshot).opacity(0.12)))
                 }
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
@@ -256,7 +285,7 @@ public struct StrategyModeCard: View {
                         .foregroundColor(.white.opacity(0.48))
                 }
                 .buttonStyle(.plain)
-                .disabled(isLoading || applyingProfile != nil)
+                .disabled(isLoading || applyingProfile != nil || applyingEnabled)
             }
 
             if isLoading && snapshot == nil {
@@ -268,6 +297,31 @@ public struct StrategyModeCard: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 48)
             } else if let snapshot {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L("Enable strategy dispatch", "启用策略分发"))
+                            .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.84))
+                        Text(L(
+                            "Turn off FlowPilot automatic planning and Worker dispatch while keeping the selected profile.",
+                            "关闭 FlowPilot 自动策略规划和 Worker 分发，同时保留当前策略配置。"
+                        ))
+                        .font(.system(size: 7.2))
+                        .foregroundColor(.white.opacity(0.36))
+                    }
+                    Spacer()
+                    if applyingEnabled {
+                        ProgressView().controlSize(.mini)
+                    }
+                    Toggle("", isOn: strategyEnabledBinding)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .disabled(isLoading || applyingProfile != nil || applyingEnabled)
+                }
+                .padding(7)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.025)))
+
                 if !snapshot.valid {
                     Text(L("The stored strategy is invalid. Choose a supported mode below to repair it.", "当前保存的策略无效，请在下方选择一个受支持模式进行修复。"))
                         .font(.system(size: 7.8, weight: .medium))
@@ -276,15 +330,16 @@ public struct StrategyModeCard: View {
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                     ForEach(snapshot.profiles) { profile in
-                        strategyButton(profile, current: snapshot.configured)
+                        strategyButton(profile, current: snapshot.configured, enabled: snapshot.enabled)
                     }
                 }
+                .opacity(snapshot.enabled ? 1 : 0.42)
 
                 HStack(alignment: .top, spacing: 4) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 7.5))
                         .padding(.top, 1)
-                    Text(L("This changes the global policy through `codex-flow strategy set`. A repository `.codex-flow.toml` remains higher priority for tasks in that repository.", "这里通过 `codex-flow strategy set` 修改全局策略；具体仓库中的 `.codex-flow.toml` 对该仓库任务仍具有更高优先级。"))
+                    Text(L("The master switch has global priority. When enabled, repository `.codex-flow.toml` may still override profile/routing; when disabled, repository policy cannot re-enable automatic dispatch.", "总开关具有全局最高优先级。开启时，仓库 `.codex-flow.toml` 仍可覆盖 profile/routing；关闭时，仓库策略不能重新开启自动分发。"))
                         .font(.system(size: 7.5))
                 }
                 .foregroundColor(.white.opacity(0.35))
@@ -309,10 +364,47 @@ public struct StrategyModeCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
         )
         .onAppear(perform: refresh)
+        .confirmationDialog(
+            L("Keep strategy dispatch available?", "要关闭策略分发吗？"),
+            isPresented: $showDisableConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(L("Temporary — next task only", "临时关闭 · 仅下一次任务")) {
+                armTemporaryBypass()
+            }
+            Button(L("Permanently disable", "永久关闭"), role: .destructive) {
+                applyEnabled(false)
+            }
+            Button(L("Cancel", "取消"), role: .cancel) {}
+        } message: {
+            Text(L(
+                "If you only want one task to run without FlowPilot distribution, use Temporary. Strategy dispatch will automatically return for the task after that.",
+                "如果只是想让下一次任务不经过 FlowPilot 分发，建议选择临时关闭；该任务消费后会自动恢复策略分发。"
+            ))
+        }
+    }
+
+    private var strategyEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { snapshot?.enabled ?? true },
+            set: { requested in
+                if requested {
+                    applyEnabled(true)
+                } else if snapshot?.enabled == true {
+                    showDisableConfirmation = true
+                }
+            }
+        )
+    }
+
+    private func statusColor(_ snapshot: StrategyModeSnapshot) -> Color {
+        guard snapshot.enabled else { return .white.opacity(0.45) }
+        return snapshot.valid ? .cyan : .orange
     }
 
     private func localizedConfiguredName(_ snapshot: StrategyModeSnapshot) -> String {
-        snapshot.profiles.first(where: { $0.name == snapshot.configured })?.localizedName
+        guard snapshot.enabled else { return L("Off", "已关闭") }
+        return snapshot.profiles.first(where: { $0.name == snapshot.configured })?.localizedName
             ?? snapshot.configured.capitalized
     }
 
@@ -325,7 +417,7 @@ public struct StrategyModeCard: View {
         }
     }
 
-    private func strategyButton(_ profile: StrategyProfileInfo, current: String) -> some View {
+    private func strategyButton(_ profile: StrategyProfileInfo, current: String, enabled: Bool) -> some View {
         let selected = profile.name == current
         let pending = applyingProfile == profile.name
         return Button {
@@ -369,11 +461,11 @@ public struct StrategyModeCard: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(applyingProfile != nil || selected)
+        .disabled(applyingProfile != nil || applyingEnabled || !enabled || selected)
     }
 
     private func refresh() {
-        guard !isLoading, applyingProfile == nil else { return }
+        guard !isLoading, applyingProfile == nil, !applyingEnabled else { return }
         isLoading = true
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -395,7 +487,7 @@ public struct StrategyModeCard: View {
     }
 
     private func apply(_ profile: String) {
-        guard applyingProfile == nil else { return }
+        guard applyingProfile == nil, !applyingEnabled else { return }
         applyingProfile = profile
         message = nil
         DispatchQueue.global(qos: .userInitiated).async {
@@ -411,6 +503,56 @@ public struct StrategyModeCard: View {
             } catch {
                 DispatchQueue.main.async {
                     applyingProfile = nil
+                    isError = true
+                    message = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func armTemporaryBypass() {
+        guard !applyingEnabled, applyingProfile == nil else { return }
+        applyingEnabled = true
+        message = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try StrategyModeService.armTemporaryBypass()
+                DispatchQueue.main.async {
+                    applyingEnabled = false
+                    isError = false
+                    message = L(
+                        "Strategy dispatch will be skipped for the next task only.",
+                        "已临时关闭：仅下一次任务跳过策略分发，之后自动恢复。"
+                    )
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    applyingEnabled = false
+                    isError = true
+                    message = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func applyEnabled(_ enabled: Bool) {
+        guard !applyingEnabled, applyingProfile == nil else { return }
+        applyingEnabled = true
+        message = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let verified = try StrategyModeService.setEnabled(enabled)
+                DispatchQueue.main.async {
+                    snapshot = verified
+                    applyingEnabled = false
+                    isError = false
+                    message = enabled
+                        ? L("Strategy dispatch enabled.", "策略分发已开启。")
+                        : L("Strategy dispatch disabled. FlowPilot will use ordinary Codex execution.", "策略分发已关闭，FlowPilot 将使用普通 Codex 执行。")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    applyingEnabled = false
                     isError = true
                     message = error.localizedDescription
                 }

@@ -45,6 +45,7 @@ $DefaultWorkerModel = Get-TomlValue $defaultsText 'models' 'worker_model'
 $DefaultWorkerPolicy = Get-TomlValue $defaultsText 'models' 'worker_policy'
 $DefaultParentPolicy = Get-TomlValue $defaultsText 'models' 'parent_policy'
 $DefaultParentMinModel = Get-TomlValue $defaultsText 'models' 'parent_min_model'
+$DefaultStrategyEnabled = Get-TomlValue $defaultsText 'strategy' 'enabled'
 $DefaultStrategy = Get-TomlValue $defaultsText 'strategy' 'profile'
 $DefaultRoutingMode = Get-TomlValue $defaultsText 'routing' 'mode'
 $DefaultReviewModifier = Get-TomlValue $defaultsText 'modifiers' 'review'
@@ -63,6 +64,7 @@ $DefaultTelemetryEnabled = Get-TomlValue $defaultsText 'telemetry' 'enabled'
 $DefaultTelemetryNotifications = Get-TomlValue $defaultsText 'telemetry' 'notifications'
 $DefaultTelemetryRetentionDays = Get-TomlValue $defaultsText 'telemetry' 'retention_days'
 
+$ExistingStrategyEnabled = Existing-OrDefault $existingText 'strategy' 'enabled' $DefaultStrategyEnabled
 $ExistingStrategy = Existing-OrDefault $existingText 'strategy' 'profile' $DefaultStrategy
 $ExistingRouting = Existing-OrDefault $existingText 'routing' 'mode' $DefaultRoutingMode
 $ExistingReview = Existing-OrDefault $existingText 'modifiers' 'review' $DefaultReviewModifier
@@ -91,6 +93,7 @@ $ExistingUpdateNotifyCli = Existing-OrDefault $existingText 'update' 'notify_cli
 $ExistingUpdateNotifyApp = Existing-OrDefault $existingText 'update' 'notify_app' 'true'
 $ExistingUpdateAutoInstall = Existing-OrDefault $existingText 'update' 'auto_install' 'false'
 
+$StrategyEnabled = if ($env:CODEX_FLOW_STRATEGY_ENABLED) { $env:CODEX_FLOW_STRATEGY_ENABLED } else { $ExistingStrategyEnabled }
 $StrategyProfile = if ($env:CODEX_FLOW_STRATEGY) { $env:CODEX_FLOW_STRATEGY } else { $ExistingStrategy }
 $RoutingMode = if ($env:CODEX_FLOW_ROUTING_MODE) { $env:CODEX_FLOW_ROUTING_MODE } else { $ExistingRouting }
 $ReviewModifier = if ($env:CODEX_FLOW_REVIEW_MODIFIER) { $env:CODEX_FLOW_REVIEW_MODIFIER } else { $ExistingReview }
@@ -125,6 +128,7 @@ if (Test-Path $Policy) {
 }
 $UiLanguage = (& python3 $Localization --normalize $UiLanguage | Out-String).Trim()
 
+if ($StrategyEnabled -notin @('true','false')) { throw 'CODEX_FLOW_STRATEGY_ENABLED must be true or false' }
 if ($StrategyProfile -notin @('efficient','balanced','quality','speed')) { throw 'CODEX_FLOW_STRATEGY must be efficient, balanced, quality, or speed' }
 if ($RoutingMode -notin @('adaptive','direct','delegate')) { throw 'CODEX_FLOW_ROUTING_MODE must be adaptive, direct, or delegate' }
 if ($ReviewModifier -notin @('auto','standard','strict')) { throw 'CODEX_FLOW_REVIEW_MODIFIER must be auto, standard, or strict' }
@@ -180,6 +184,7 @@ schema_version = 4
 language = "$UiLanguage"
 
 [strategy]
+enabled = $StrategyEnabled
 profile = "$StrategyProfile"
 
 [routing]
@@ -269,7 +274,7 @@ Write-Host (L '  +-- Summary ---------------------------------------------------
 Write-Host "  |  * Policy:     $dispPolicy"
 Write-Host "  |  * CLI:        $dispBin"
 Write-Host "  |  * Skill:      FlowPilot (flow-pilot)"
-Write-Host "  |  * Strategy:   $StrategyProfile / $RoutingMode"
+Write-Host "  |  * Strategy:   $StrategyProfile / $RoutingMode (enabled=$StrategyEnabled)"
 Write-Host "  |  * Modifiers:  review=$ReviewModifier / fanout=$FanoutModifier"
 Write-Host "  |  * Models:     parent ($ParentModelPolicy) -> worker ($WorkerModel)"
 Write-Host "  |  * Language:   $UiLanguage (effective: $UiLang)"

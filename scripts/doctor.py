@@ -147,10 +147,17 @@ def main() -> int:
         else:
             warn(T(f"policy schema is {schema or 'unknown'}; reinstall recommended", f"策略 schema 为 {schema or 'unknown'}；建议重新安装"))
 
+        strategy_enabled = policy_value("strategy", "enabled", "true")
         strategy = policy_value("strategy", "profile", "efficient")
         routing = policy_value("routing", "mode", "adaptive")
         review = policy_value("modifiers", "review", "auto")
         fanout = policy_value("modifiers", "fanout", "auto")
+        if strategy_enabled == "true":
+            ok(T("strategy dispatch: enabled", "策略分发：已启用"))
+        elif strategy_enabled == "false":
+            ok(T("strategy dispatch: disabled by policy", "策略分发：已由策略禁用"))
+        else:
+            fail(T(f"invalid strategy dispatch switch: {strategy_enabled or 'missing'}", f"无效策略分发开关：{strategy_enabled or 'missing'}"))
         if strategy in {"efficient", "balanced", "quality", "speed"}:
             ok(T(f"strategy profile: {strategy}", f"执行策略：{strategy}"))
         else:
