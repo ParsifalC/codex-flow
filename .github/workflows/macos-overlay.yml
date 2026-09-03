@@ -26,6 +26,13 @@ jobs:
             apps/macos-overlay/Tests/OverlayScreenGeometryTests.swift \
             -o "$RUNNER_TEMP/overlay-runtime-tests"
           "$RUNNER_TEMP/overlay-runtime-tests"
+      - name: Test weekly quota analytics semantics
+        run: |
+          swiftc \
+            apps/macos-overlay/Sources/Models/TelemetryData.swift \
+            apps/macos-overlay/Tests/TelemetryQuotaSelectionTests.swift \
+            -o "$RUNNER_TEMP/telemetry-quota-tests"
+          "$RUNNER_TEMP/telemetry-quota-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
       - name: Smoke test overlay lifecycle
