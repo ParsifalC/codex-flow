@@ -41,6 +41,13 @@ struct OverlayScreenGeometryTests {
         precondition(clamped.x == rightUpper.maxX - 76 - 8)
         precondition(clamped.y == rightUpper.minY + 8)
 
+        // Collapsed/tucked presentation now has one horizontal host position.
+        // The visible circular bubble already has its own internal safe inset,
+        // so the transparent 76pt host itself is flush with the display edge.
+        let canonicalCollapsedX = rightUpper.maxX - 76
+        precondition(canonicalCollapsedX == 3092)
+        precondition(canonicalCollapsedX + 76 == rightUpper.maxX)
+
         print("OverlayScreenGeometryTests passed")
     }
 }
