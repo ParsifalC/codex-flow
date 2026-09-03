@@ -34,9 +34,6 @@ public class OverlayState: ObservableObject {
 
     public weak var windowController: OverlayWindowController?
 
-    // All mutations to these request generations are marshalled onto the main
-    // queue. They prevent slower, older queries from overwriting a newer filter
-    // or time-range selection after the background work completes.
     private var historyLoadGeneration = 0
     private var statsLoadGeneration = 0
 
@@ -142,8 +139,7 @@ public class OverlayState: ObservableObject {
     }
 
     public func expandAllChats() {
-        let allIds = historyChats.map { $0.sessionId }
-        expandedChatIds = Set(allIds)
+        expandedChatIds = Set(historyChats.map { $0.sessionId })
         self.windowController?.updateWindowFrame(animated: true)
     }
 
@@ -200,10 +196,7 @@ public class OverlayState: ObservableObject {
         let project = selectedProject
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let stats = TelemetryQueryEngine.shared.computeStats(
-                days: days,
-                project: project
-            )
+            let stats = TelemetryQueryEngine.shared.computeStats(days: days, project: project)
             DispatchQueue.main.async {
                 guard generation == self.statsLoadGeneration else { return }
                 self.statsData = stats
@@ -489,8 +482,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private enum GeometryTransition {
         case resize
         case snap
-        case tuck
-        case untuck
     }
 
     public let state: OverlayState
@@ -502,9 +493,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var tuckTimer: Timer?
     private let edgeTuckIdleInterval: TimeInterval = 30.0
 
-    // Programmatic moves can synthesize tracking enter/exit/move events. A
-    // pointer-distance gate filters those events, while the geometry generation
-    // below prevents an older animation completion from changing newer state.
     private var hoverRearmPointerLocation: NSPoint?
     private let hoverRearmDistance: CGFloat = 6.0
     private var geometryGeneration = 0
@@ -657,63 +645,35 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         return true
     }
 
+    /// Tucking is deliberately visual-only. The 76x76 host window stays fixed at
+    /// the right edge; BubbleView swaps its centered 58pt circle for a right-
+    /// aligned 44pt pill inside that same host. Moving NSWindow here creates a
+    /// second geometry target and turns AppKit tracking events into an oscillator.
     public func tuckBubble(animated: Bool = true) {
-        guard let window,
-              !state.isExpanded,
+        guard !state.isExpanded,
               !state.isPinned,
               !isInteractingOrDragging,
               !state.isDocked,
-              !isGeometryTransitioning,
-              let visible = resolvedVisibleFrame(for: window.frame) else { return }
+              !isGeometryTransitioning else { return }
 
         cancelTuckTimer()
         state.dockEdge = .right
-        let y = max(visible.minY, min(window.frame.origin.y, visible.maxY - bubbleSize.height))
-        let targetOrigin = NSPoint(x: visible.maxX - bubbleSize.width, y: y)
-        let targetFrame = NSRect(origin: targetOrigin, size: bubbleSize)
+        suppressHoverUntilPointerMoves()
         state.isDocked = true
-
-        animateWindow(
-            to: targetFrame,
-            animated: animated,
-            duration: 0.18,
-            timing: .easeInEaseOut,
-            transition: .tuck,
-            suppressHover: true
-        )
     }
 
+    /// Untucking only changes the content rendered inside the already-stationary
+    /// host window. There is intentionally no NSWindow frame animation here.
     public func unTuckBubble(animated: Bool = true) {
         cancelTuckTimer()
-        guard let window,
-              state.isDocked,
-              !isGeometryTransitioning,
-              let visible = resolvedVisibleFrame(for: window.frame) else { return }
-
+        guard state.isDocked, !isGeometryTransitioning else { return }
         state.dockEdge = .right
-        let y = max(visible.minY, min(window.frame.origin.y, visible.maxY - bubbleSize.height))
-        let targetOrigin = NSPoint(
-            x: visible.maxX - bubbleSize.width - snapMargin,
-            y: y
-        )
-        let targetFrame = NSRect(origin: targetOrigin, size: bubbleSize)
         state.isDocked = false
 
-        animateWindow(
-            to: targetFrame,
-            animated: animated,
-            duration: 0.14,
-            timing: .easeOut,
-            transition: .untuck,
-            suppressHover: false
-        ) { [weak self] in
-            guard let self else { return }
-            self.saveWindowPosition(targetOrigin)
-            if !self.state.isExpanded,
-               !self.isInteractingOrDragging,
-               self.window.frame.contains(NSEvent.mouseLocation) {
-                self.resetDwellTimer()
-            }
+        if !state.isExpanded,
+           !isInteractingOrDragging,
+           window.frame.contains(NSEvent.mouseLocation) {
+            resetDwellTimer()
         }
     }
 
@@ -817,7 +777,10 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             )
         } else {
             state.dockEdge = .right
-            targetOrigin.x = visible.maxX - frame.width - snapMargin
+            // The host itself sits flush to the right edge. The 58pt circular
+            // content is centered inside 76pt, giving it a natural 9pt margin;
+            // the tucked 44pt pill is right-aligned and therefore truly flush.
+            targetOrigin.x = visible.maxX - frame.width
             if distTop < snapThreshold {
                 targetOrigin.y = visible.maxY - frame.height - snapMargin
             } else if distBottom < snapThreshold {
@@ -869,7 +832,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             )
         } else {
             state.dockEdge = .right
-            newOrigin.x = visible.maxX - targetSize.width - snapMargin
+            newOrigin.x = visible.maxX - targetSize.width
             newOrigin.y = max(visible.minY, min(newOrigin.y, visible.maxY - targetSize.height))
         }
 
@@ -913,14 +876,14 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         let visible = OverlayScreenGeometry.bestVisibleFrame(for: frame, among: visibleFrames)
             ?? NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let x = visible.maxX - bubbleSize.width - snapMargin
+        let x = visible.maxX - bubbleSize.width
         let y = max(visible.minY, min(frame.origin.y, visible.maxY - bubbleSize.height))
         return NSRect(origin: NSPoint(x: x, y: y), size: bubbleSize)
     }
 
     private func defaultPosition(for size: NSSize) -> NSRect {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let x = screen.maxX - size.width - 32
+        let x = screen.maxX - size.width
         let y = screen.maxY - size.height - 32
         return NSRect(x: x, y: y, width: size.width, height: size.height)
     }
