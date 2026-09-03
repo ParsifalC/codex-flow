@@ -151,11 +151,21 @@ def _localized_send_system_notification(run: dict) -> None:
 _ORIGINAL_RATE_LIMITS = AppServer.rate_limits
 
 
+def _has_rate_limit_snapshot(value: object) -> bool:
+    """Return whether a response contains either supported rate-limit shape."""
+    if not isinstance(value, dict):
+        return False
+    if isinstance(value.get("rateLimits"), dict):
+        return True
+    by_id = value.get("rateLimitsByLimitId")
+    return isinstance(by_id, dict) and isinstance(by_id.get("codex"), dict)
+
+
 def _rate_limits_with_retry(self: AppServer):
     last = None
     for attempt in range(3):
         last = _ORIGINAL_RATE_LIMITS(self)
-        if isinstance(last, dict) and isinstance(last.get("rateLimits"), dict):
+        if _has_rate_limit_snapshot(last):
             return last
         if attempt < 2:
             time.sleep(0.08 * (attempt + 1))

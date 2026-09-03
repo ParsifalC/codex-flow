@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import re
@@ -65,7 +66,100 @@ def app_server_command() -> list[str]:
     override = os.environ.get("CODEX_FLOW_APP_SERVER_COMMAND")
     if override:
         return shlex.split(override)
+    explicit = os.environ.get("CODEX_FLOW_CODEX_PATH")
+    explicit_path = Path(explicit).expanduser() if explicit else None
+    if explicit_path and os.access(explicit_path, os.X_OK):
+        explicit_dir = str(explicit_path.parent)
+        current_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = (
+            explicit_dir
+            if not current_path
+            else os.pathsep.join((explicit_dir, current_path))
+        )
+        return [str(explicit_path), "app-server"]
+
+    home = Path.home()
+    codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex")).expanduser()
+    directories: list[Path] = []
+    candidates: list[Path] = []
+
+    def add_directory(path: Path) -> None:
+        if path not in directories:
+            directories.append(path)
+
+    def add_candidate(path: Path) -> None:
+        if path not in candidates:
+            candidates.append(path)
+
+    for raw in os.environ.get("PATH", "").split(os.pathsep):
+        if raw:
+            directory = Path(raw)
+            add_directory(directory)
+            add_candidate(directory / "codex")
+
+    for directory in (
+        home / ".local/bin",
+        home / ".npm-global/bin",
+        home / "Library/pnpm",
+        home / ".volta/bin",
+        home / ".bun/bin",
+        codex_home / "bin",
+        home / "Applications/ChatGPT.app/Contents/Resources",
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+        Path("/Applications/ChatGPT.app/Contents/Resources"),
+        Path("/usr/bin"),
+        Path("/bin"),
+    ):
+        add_directory(directory)
+        add_candidate(directory / "codex")
+
+    nvm_roots = [
+        Path(os.environ["NVM_DIR"]).expanduser() if os.environ.get("NVM_DIR") else None,
+        home / ".nvm",
+        home / ".config/nvm",
+    ]
+    for root in (path for path in nvm_roots if path is not None):
+        for alias in ("current", "default"):
+            directory = root / alias / "bin"
+            add_directory(directory)
+            add_candidate(directory / "codex")
+        versions = root / "versions/node"
+        try:
+            entries = sorted(
+                (path for path in versions.iterdir() if path.is_dir()),
+                key=_nvm_version_sort_key,
+                reverse=True,
+            )
+        except OSError:
+            entries = []
+        for version in entries:
+            directory = version / "bin"
+            add_directory(directory)
+            add_candidate(directory / "codex")
+
+    prefix = os.environ.get("npm_config_prefix") or os.environ.get("PREFIX")
+    if prefix:
+        directory = Path(prefix).expanduser() / "bin"
+        add_directory(directory)
+        add_candidate(directory / "codex")
+
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            if directories:
+                os.environ["PATH"] = os.pathsep.join(str(path) for path in directories)
+            return [str(candidate), "app-server"]
+
+    # Keep an enriched PATH for launchd/Finder launches when no direct path was
+    # found; shell sessions still use the normal codex lookup behavior.
+    if directories:
+        os.environ["PATH"] = os.pathsep.join(str(path) for path in directories)
     return ["codex", "app-server"]
+
+
+def _nvm_version_sort_key(path: Path) -> tuple[tuple[int, ...], str]:
+    """Order versioned nvm candidates numerically, with a stable name tie-break."""
+    return tuple(int(part) for part in re.findall(r"\d+", path.name)), path.name
 
 
 class AppServer:
@@ -227,25 +321,124 @@ class AppServer:
 
 
 def quota_windows(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not snapshot:
+    """Return deterministic logical windows from current and legacy API views.
+
+    Newer Codex responses expose ``rateLimitsByLimitId.codex`` while older
+    responses put the same slots in ``rateLimits``. Codex fields win and each
+    missing field is filled from the legacy slot. Duplicate logical rows are
+    then collapsed by duration/reset while preserving same-reset rows whose
+    durations differ.
+    """
+    if not isinstance(snapshot, dict):
         return []
-    rate_limits = snapshot.get("rateLimits")
-    if not isinstance(rate_limits, dict):
-        return []
-    result: list[dict[str, Any]] = []
-    for slot in ("primary", "secondary"):
-        window = rate_limits.get(slot)
-        if not isinstance(window, dict):
+
+    legacy = snapshot.get("rateLimits")
+    if not isinstance(legacy, dict):
+        legacy = {}
+    by_id = snapshot.get("rateLimitsByLimitId")
+    if not isinstance(by_id, dict):
+        by_id = {}
+    codex = by_id.get("codex")
+    if not isinstance(codex, dict):
+        codex = {}
+
+    candidates: list[tuple[tuple[int, int], str, dict[str, Any]]] = []
+    for slot_index, slot in enumerate(("primary", "secondary")):
+        codex_window = codex.get(slot)
+        legacy_window = legacy.get(slot)
+        codex_window = codex_window if isinstance(codex_window, dict) else None
+        legacy_window = legacy_window if isinstance(legacy_window, dict) else None
+        if codex_window is None and legacy_window is None:
             continue
-        result.append(
-            {
-                "slot": slot,
-                "used_percent": window.get("usedPercent"),
-                "window_duration_mins": window.get("windowDurationMins"),
-                "resets_at": window.get("resetsAt"),
-            }
+
+        duration = _first_quota_number(
+            codex_window,
+            legacy_window,
+            ("windowDurationMins", "windowMinutes", "window_duration_mins"),
+            integer=True,
         )
-    return result
+        reset = _first_quota_number(codex_window, legacy_window, ("resetsAt", "resets_at"))
+        used = _first_quota_number(codex_window, legacy_window, ("usedPercent", "used_percent"))
+        if duration is None and reset is None and used is None:
+            continue
+        normalized = {
+            "slot": slot,
+            "used_percent": used,
+            "window_duration_mins": duration,
+            "resets_at": reset,
+        }
+        candidates.append(
+            ((0 if codex_window is not None else 1, slot_index), slot, normalized)
+        )
+
+    def logical_key(row: dict[str, Any], slot: str) -> tuple[Any, ...]:
+        duration = row.get("window_duration_mins")
+        reset = row.get("resets_at")
+        if reset is not None:
+            reset_key = reset / 1000.0 if reset > 1_000_000_000_000 else reset
+            return (duration, reset_key)
+        # Without a reset timestamp there is not enough information to know
+        # whether two same-duration slots are duplicates. Keep their slot
+        # identity (and, for malformed responses, the observed usage) so an
+        # incomplete bucket cannot hide another incomplete bucket.
+        return (duration, reset, slot, row.get("used_percent"))
+
+    selected: dict[tuple[Any, ...], tuple[tuple[int, int], dict[str, Any]]] = {}
+    for rank, slot, row in candidates:
+        key = logical_key(row, slot)
+        current = selected.get(key)
+        if current is None or rank < current[0]:
+            selected[key] = (rank, row)
+
+    return [
+        row
+        for _, row in sorted(
+            selected.values(),
+            key=lambda item: (
+                item[1].get("window_duration_mins")
+                if isinstance(item[1].get("window_duration_mins"), (int, float))
+                else float("inf"),
+                item[1].get("resets_at") if item[1].get("resets_at") is not None else float("inf"),
+                item[1].get("slot", ""),
+            ),
+        )
+    ]
+
+
+def _quota_number(value: Any, *, integer: bool = False) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            return None
+        return int(value) if integer else value
+    if isinstance(value, str):
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return None
+        if not math.isfinite(parsed):
+            return None
+        return int(parsed) if integer else parsed
+    return None
+
+
+def _first_quota_number(
+    primary: dict[str, Any] | None,
+    fallback: dict[str, Any] | None,
+    keys: tuple[str, ...],
+    *,
+    integer: bool = False,
+) -> int | float | None:
+    """Use the first valid value, allowing malformed codex fields to fall back."""
+    for source in (primary, fallback):
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            parsed = _quota_number(source.get(key), integer=integer)
+            if parsed is not None:
+                return parsed
+    return None
 
 
 def usage_summary(usage: dict[str, Any] | None) -> dict[str, Any] | None:

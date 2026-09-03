@@ -12,6 +12,7 @@ public struct SummaryView: View {
     @State private var showingAccount = false
     @State private var copiedSummary = false
     @State private var showUpdatePopover = false
+    @State private var executionDetailsExpanded = false
 
     public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
@@ -52,6 +53,9 @@ public struct SummaryView: View {
         )
         .onChange(of: state.activeTab) { _, _ in
             if showingAccount { showingAccount = false }
+        }
+        .onChange(of: currentRun?.id) { _, _ in
+            executionDetailsExpanded = false
         }
     }
 
@@ -538,55 +542,81 @@ public struct SummaryView: View {
     }
 
     private func executionDetailCard(_ run: TaskRun) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            sectionHeader("point.filled.topleft.down.curvedto.point.bottomright.up", L("Execution Details", "执行详情"), .indigo)
+        let stepCount = run.trajectory?.count ?? 0
+        let logCount = run.logs?.count ?? 0
+        return VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    executionDetailsExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "point.filled.topleft.down.curvedto.point.bottomright.up")
+                        .font(.system(size: 8))
+                        .foregroundColor(.indigo)
+                    Text(L("Execution Details", "执行详情"))
+                        .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.7))
+                    Spacer()
+                    Text(L("\(stepCount) steps · \(logCount) logs", "\(stepCount) 步 · \(logCount) 条日志"))
+                        .font(.system(size: 7.3, weight: .medium))
+                        .foregroundColor(.white.opacity(0.38))
+                    Image(systemName: executionDetailsExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(.white.opacity(0.35))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
-            ForEach(Array((run.trajectory ?? []).prefix(6))) { step in
-                HStack(alignment: .top, spacing: 5) {
-                    Circle()
-                        .fill(step.status == "error" ? Color.orange : Color.cyan)
-                        .frame(width: 4.5, height: 4.5)
-                        .padding(.top, 4)
+            if executionDetailsExpanded {
+                ForEach(Array((run.trajectory ?? []).prefix(6))) { step in
+                    HStack(alignment: .top, spacing: 5) {
+                        Circle()
+                            .fill(step.status == "error" ? Color.orange : Color.cyan)
+                            .frame(width: 4.5, height: 4.5)
+                            .padding(.top, 4)
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        HoverRevealText(
-                            step.title ?? step.name ?? "Step",
-                            font: .system(size: 8.6, weight: .semibold),
-                            foregroundColor: .white.opacity(0.82),
-                            lineLimit: 1,
-                            popoverWidth: 360
-                        )
-
-                        if let detail = step.detail, !detail.isEmpty {
+                        VStack(alignment: .leading, spacing: 1) {
                             HoverRevealText(
-                                detail,
-                                font: .system(size: 7.8, design: .monospaced),
-                                foregroundColor: .white.opacity(0.5),
+                                step.title ?? step.name ?? "Step",
+                                font: .system(size: 8.6, weight: .semibold),
+                                foregroundColor: .white.opacity(0.82),
                                 lineLimit: 1,
-                                privacyBlur: state.isPrivacyMode,
-                                popoverWidth: 410
+                                popoverWidth: 360
                             )
+
+                            if let detail = step.detail, !detail.isEmpty {
+                                HoverRevealText(
+                                    detail,
+                                    font: .system(size: 7.8, design: .monospaced),
+                                    foregroundColor: .white.opacity(0.5),
+                                    lineLimit: 1,
+                                    privacyBlur: state.isPrivacyMode,
+                                    popoverWidth: 410
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            ForEach(Array((run.logs ?? []).suffix(4))) { entry in
-                HStack(alignment: .top, spacing: 5) {
-                    Circle()
-                        .fill(entry.level == "error" ? Color.orange : Color.green)
-                        .frame(width: 4, height: 4)
-                        .padding(.top, 4)
+                ForEach(Array((run.logs ?? []).suffix(4))) { entry in
+                    HStack(alignment: .top, spacing: 5) {
+                        Circle()
+                            .fill(entry.level == "error" ? Color.orange : Color.green)
+                            .frame(width: 4, height: 4)
+                            .padding(.top, 4)
 
-                    HoverRevealText(
-                        entry.message ?? "",
-                        font: .system(size: 7.7, design: .monospaced),
-                        foregroundColor: entry.level == "error" ? .orange.opacity(0.85) : .white.opacity(0.58),
-                        lineLimit: 2,
-                        privacyBlur: state.isPrivacyMode,
-                        popoverWidth: 420
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                        HoverRevealText(
+                            entry.message ?? "",
+                            font: .system(size: 7.7, design: .monospaced),
+                            foregroundColor: entry.level == "error" ? .orange.opacity(0.85) : .white.opacity(0.58),
+                            lineLimit: 2,
+                            privacyBlur: state.isPrivacyMode,
+                            popoverWidth: 420
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }
@@ -815,11 +845,6 @@ public struct QuotaWindowsView: View {
                     .font(.system(size: 8.8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
                 Spacer()
-                if let reset = ordered.first?.localizedFormattedResetsAt {
-                    Text(reset)
-                        .font(.system(size: 7.4, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.4))
-                }
             }
 
             ForEach(ordered) { quotaRow($0) }
@@ -838,7 +863,7 @@ public struct QuotaWindowsView: View {
         let tint: Color = used >= 85 ? .orange : (used >= 60 ? .yellow : .cyan)
 
         return VStack(spacing: 3) {
-            HStack {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(window.label)
                     .font(.system(size: 8, weight: .heavy, design: .monospaced))
                     .foregroundColor(tint)
@@ -848,12 +873,17 @@ public struct QuotaWindowsView: View {
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.72))
 
-                Spacer()
+                Spacer(minLength: 2)
 
                 if let reset = window.localizedFormattedResetsAt {
                     Text(reset)
                         .font(.system(size: 7.3, weight: .medium, design: .monospaced))
                         .foregroundColor(.white.opacity(0.42))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.62)
+                        .allowsTightening(true)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 132, alignment: .trailing)
                 }
             }
 

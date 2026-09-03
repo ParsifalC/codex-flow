@@ -175,7 +175,7 @@ public struct AutostartCard: View {
             HStack(spacing: 7) {
                 Image(systemName: "power.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(status.enabled ? .green : .white.opacity(0.38))
+                    .foregroundColor(status.enabled ? .green : .orange.opacity(0.72))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L("Launch at Login", "登录时启动"))
@@ -192,6 +192,19 @@ public struct AutostartCard: View {
                     ProgressView().controlSize(.mini)
                 }
 
+                HStack(spacing: 3) {
+                    Image(systemName: status.enabled ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.system(size: 7.5, weight: .bold))
+                    Text(status.enabled ? L("ON", "开") : L("OFF", "关"))
+                        .font(.system(size: 7.2, weight: .heavy, design: .rounded))
+                }
+                .foregroundColor(status.enabled ? .green : .white.opacity(0.52))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule().fill(status.enabled ? Color.green.opacity(0.14) : Color.white.opacity(0.07))
+                )
+
                 Toggle("", isOn: Binding(
                     get: { status.enabled },
                     set: { setEnabled($0) }
@@ -199,6 +212,10 @@ public struct AutostartCard: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
+                .tint(status.enabled ? .green : .white.opacity(0.28))
+                .accessibilityLabel(L("Launch at Login", "登录时启动"))
+                .accessibilityValue(status.enabled ? L("On", "已开启") : L("Off", "已关闭"))
+                .accessibilityHint(L("Toggle automatic launch when you log in.", "切换登录时自动启动。"))
                 .disabled(isChanging)
             }
 
