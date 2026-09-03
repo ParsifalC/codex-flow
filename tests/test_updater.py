@@ -8,6 +8,8 @@ import re
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -208,6 +210,30 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue(lock.exists())
         lock.unlink()
 
+    def test_install_waits_for_inflight_background_check(self) -> None:
+        acquired_writer: list[bool] = []
+        errors: list[Exception] = []
+        with updater.update_lock() as acquired:
+            self.assertTrue(acquired)
+
+            def acquire_writer() -> None:
+                try:
+                    with updater.install_lock(timeout_seconds=1.0, poll_interval=0.01):
+                        acquired_writer.append(True)
+                except Exception as exc:
+                    errors.append(exc)
+
+            thread = threading.Thread(target=acquire_writer)
+            thread.start()
+            time.sleep(0.05)
+            self.assertTrue(thread.is_alive())
+            self.assertEqual(acquired_writer, [])
+
+        thread.join(timeout=2.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(acquired_writer, [True])
+
     def test_flowpilot_restart_ack_is_independent_from_codex_restart(self) -> None:
         state = updater.load_state()
         state.restart_required = True
@@ -228,8 +254,8 @@ class UpdaterTest(unittest.TestCase):
 
     def test_install_lock_rejects_concurrent_writer(self) -> None:
         with updater.install_lock():
-            with self.assertRaisesRegex(RuntimeError, "already running"):
-                with updater.install_lock():
+            with self.assertRaisesRegex(RuntimeError, "still running"):
+                with updater.install_lock(timeout_seconds=0):
                     pass
 
     def test_legacy_fallback_is_only_allowed_for_missing_ota_manifest(self) -> None:
@@ -292,8 +318,6 @@ class UpdaterTest(unittest.TestCase):
         commands = [call.args[0] for call in run.call_args_list]
         self.assertFalse(any("pull" in command for command in commands))
         self.assertTrue(any(("install.ps1" in " ".join(command)) or ("install.sh" in " ".join(command)) for command in commands))
-
-
 
     def test_rollback_uses_exact_snapshot_without_previous_package(self) -> None:
         original_source = self.root / "original-checkout"
@@ -364,6 +388,7 @@ class UpdaterTest(unittest.TestCase):
         self.assertIn("apps/macos-overlay/build.sh", mac)
         self.assertIn("apps/macos-overlay/Sources/main.swift", mac)
         self.assertIn("apps/macos-overlay/bin/FlowPilot", mac)
+
 
 if __name__ == "__main__":
     unittest.main()
