@@ -10,6 +10,7 @@ cat > "$POLICY" <<'EOF'
 schema_version = 4
 
 [strategy]
+enabled = true
 profile = "efficient"
 
 [routing]
@@ -49,9 +50,106 @@ python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" show --json > "$T
 python3 - "$TMP/show.json" <<'PY'
 import json, sys
 obj=json.load(open(sys.argv[1]))
-assert obj == {"strategy":"efficient","routing":"adaptive","valid":True}, obj
+assert obj == {"enabled":True,"strategy":"efficient","routing":"adaptive","valid":True}, obj
 PY
-[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY")" == "strategy=efficient routing=adaptive" ]]
+[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY")" == "enabled=true strategy=efficient routing=adaptive" ]]
+[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" enabled)" == "true" ]]
+
+# Missing master-switch state in older policies remains backward-compatible.
+cp "$POLICY" "$TMP/legacy-policy.toml"
+python3 - "$TMP/legacy-policy.toml" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); p.write_text(p.read_text().replace("enabled = true\n", "", 1))
+PY
+[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/legacy-policy.toml" enabled)" == "true" ]]
+
+# A present-but-invalid master switch fails closed instead of silently enabling dispatch.
+for invalid_value in flase '""'; do
+  cp "$POLICY" "$TMP/invalid-enabled.toml"
+  python3 - "$TMP/invalid-enabled.toml" "$invalid_value" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); value=sys.argv[2]
+p.write_text(p.read_text().replace("enabled = true\n", f"enabled = {value}\n", 1))
+PY
+  set +e
+  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/invalid-enabled.toml" show --json > "$TMP/invalid-enabled.json" 2> "$TMP/invalid-enabled.err"
+  invalid_show_rc=$?
+  set -e
+  [[ "$invalid_show_rc" -eq 2 ]]
+  python3 - "$TMP/invalid-enabled.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+assert p["enabled"] is False and p["valid"] is False, p
+assert "invalid [strategy].enabled" in p["error"], p
+PY
+  if python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/invalid-enabled.toml" enabled >/dev/null 2>"$TMP/invalid-enabled-command.err"; then
+    echo "invalid strategy switch unexpectedly reported a usable state" >&2
+    exit 1
+  fi
+  grep -Fq "invalid [strategy].enabled" "$TMP/invalid-enabled-command.err"
+  if python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/invalid-enabled.toml" plan --repo-policy none --quota-pressure unknown >/dev/null 2>"$TMP/invalid-enabled-plan.err"; then
+    echo "invalid strategy switch unexpectedly compiled a plan" >&2
+    exit 1
+  fi
+  grep -Fq "invalid [strategy].enabled" "$TMP/invalid-enabled-plan.err"
+done
+
+# The global master switch bypasses FlowPilot planning and cannot be re-enabled by repository policy.
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" disable >/dev/null
+[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" enabled)" == "false" ]]
+[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY")" == "enabled=false strategy=efficient routing=adaptive" ]]
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" show --json > "$TMP/disabled-show.json"
+python3 - "$TMP/disabled-show.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+assert p["enabled"] is False and p["strategy"] == "efficient" and p["routing"] == "adaptive", p
+PY
+mkdir -p "$TMP/repo"
+cat > "$TMP/repo/.codex-flow.toml" <<'EOF'
+[strategy]
+enabled = true
+profile = "quality"
+[routing]
+mode = "delegate"
+EOF
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" show --effective --repo-policy "$TMP/repo/.codex-flow.toml" --json > "$TMP/disabled-effective.json"
+python3 - "$TMP/disabled-effective.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+assert p["enabled"] is False and p["strategy"] == "quality" and p["routing"] == "delegate", p
+PY
+if python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy "$TMP/repo/.codex-flow.toml" --quota-pressure unknown >"$TMP/disabled-plan.json" 2>"$TMP/disabled-plan.err"; then
+  echo "disabled strategy unexpectedly compiled a plan" >&2
+  exit 1
+fi
+grep -q "strategy dispatch is disabled" "$TMP/disabled-plan.err"
+if python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --profile quality --routing delegate --quota-pressure unknown >/dev/null 2>&1; then
+  echo "current-task overrides unexpectedly bypassed the disabled master switch" >&2
+  exit 1
+fi
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" enable >/dev/null
+[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" enabled)" == "true" ]]
+
+# Temporary bypass is one-shot, does not mutate the global switch, and is atomically consumed.
+BYPASS_HOME="$TMP/bypass-home"
+[[ "$(CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" bypass-pending)" == "false" ]]
+CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" bypass-once >/dev/null
+[[ "$(CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" bypass-pending)" == "true" ]]
+[[ "$(python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" enabled)" == "true" ]]
+[[ "$(CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" consume-bypass)" == "true" ]]
+[[ "$(CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" consume-bypass)" == "false" ]]
+
+CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" bypass-once >/dev/null
+CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" consume-bypass > "$TMP/consume-a" &
+pid_a=$!
+CODEX_HOME="$BYPASS_HOME" python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" consume-bypass > "$TMP/consume-b" &
+pid_b=$!
+wait "$pid_a" "$pid_b"
+[[ "$(cat "$TMP/consume-a") $(cat "$TMP/consume-b")" == "true false" || "$(cat "$TMP/consume-a") $(cat "$TMP/consume-b")" == "false true" ]]
+grep -Fq "consume-bypass" "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq "task only" "$ROOT/templates/skills/flow-pilot/SKILL.md"
 
 # Registry owns topology/resource/lifecycle preferences. Generic Runtime only normalizes them.
 python3 - "$ROOT" <<'PY'

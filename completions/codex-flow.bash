@@ -5,7 +5,7 @@ _codex_flow_completion() {
     if [[ "${COMP_CWORD}" -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 2 && "${COMP_WORDS[1]}" == "strategy" ]]; then
-        COMPREPLY=( $(compgen -W "show profiles set routing plan" -- "$cur") )
+        COMPREPLY=( $(compgen -W "show profiles enabled enable disable set routing plan" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 3 && "${COMP_WORDS[1]}" == "strategy" && "${COMP_WORDS[2]}" == "set" ]]; then
         COMPREPLY=( $(compgen -W "efficient balanced quality speed" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 3 && "${COMP_WORDS[1]}" == "strategy" && "${COMP_WORDS[2]}" == "routing" ]]; then

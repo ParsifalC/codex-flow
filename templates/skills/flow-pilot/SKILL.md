@@ -17,6 +17,42 @@ Default compatibility remains `strategy = efficient` plus `routing = adaptive`.
 
 ## 0. Policy precedence and current-task intent
 
+### Global strategy master switch
+
+Before TaskProfile construction or any automatic Worker delegation, read the installed global strategy state:
+
+```bash
+python3 ~/.codex/codex-flow/strategy_runtime.py \
+  --policy ~/.codex/codex-flow.toml \
+  show --json
+```
+
+If the returned `enabled` field is `true`, consume any armed one-shot bypass before TaskProfile construction:
+
+```bash
+python3 ~/.codex/codex-flow/strategy_runtime.py \
+  --policy ~/.codex/codex-flow.toml \
+  consume-bypass
+```
+
+If that command prints `true`, **stop FlowPilot strategy processing for this task only** and continue with ordinary Codex execution. The token is consumed atomically, so concurrent tasks cannot both claim the same temporary bypass. The persistent global master switch remains enabled and the following task returns to normal strategy processing.
+
+If the returned `enabled` field is `false`, **stop FlowPilot strategy processing for this task**:
+
+- do not build a FlowPilot TaskProfile;
+- do not compile an ExecutionPlan;
+- do not apply codex-flow strategy, routing, modifier, WorkerBudget, lifecycle, repair, or role-capability decisions;
+- do not automatically spawn/delegate Workers on behalf of FlowPilot;
+- continue with ordinary Codex execution using the active Codex runtime/configuration.
+
+The switch disables codex-flow automatic distribution, not Codex's native Agent capability. If the user explicitly asks to use native subagents outside FlowPilot, that explicit request may still be honored when appropriate.
+
+`[strategy].enabled` is a **global master gate**. Repository policy and current-task strategy/routing/modifier overrides cannot re-enable it. Existing profile/routing/modifier values remain stored while disabled and become effective again after the user re-enables the switch.
+
+Missing `enabled` in an older policy is backward-compatible and resolves to `true`.
+
+When the switch is enabled, normal planner precedence applies:
+
 The planner resolves policy in this order, from strongest to weakest:
 
 ```text

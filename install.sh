@@ -51,6 +51,7 @@ DEFAULT_WORKER_MODEL="$(read_default models worker_model)"
 DEFAULT_WORKER_POLICY="$(read_default models worker_policy)"
 DEFAULT_PARENT_POLICY="$(read_default models parent_policy)"
 DEFAULT_PARENT_MIN_MODEL="$(read_default models parent_min_model)"
+DEFAULT_STRATEGY_ENABLED="$(read_default strategy enabled)"
 DEFAULT_STRATEGY="$(read_default strategy profile)"
 DEFAULT_ROUTING_MODE="$(read_default routing mode)"
 DEFAULT_REVIEW_MODIFIER="$(read_default modifiers review)"
@@ -69,6 +70,7 @@ DEFAULT_TELEMETRY_ENABLED="$(read_default telemetry enabled)"
 DEFAULT_TELEMETRY_NOTIFICATIONS="$(read_default telemetry notifications)"
 DEFAULT_TELEMETRY_RETENTION_DAYS="$(read_default telemetry retention_days)"
 
+EXISTING_STRATEGY_ENABLED="$(policy_or_default strategy enabled "$DEFAULT_STRATEGY_ENABLED")"
 EXISTING_STRATEGY="$(policy_or_default strategy profile "$DEFAULT_STRATEGY")"
 EXISTING_ROUTING="$(policy_or_default routing mode "$DEFAULT_ROUTING_MODE")"
 EXISTING_REVIEW="$(policy_or_default modifiers review "$DEFAULT_REVIEW_MODIFIER")"
@@ -97,6 +99,7 @@ EXISTING_UPDATE_NOTIFY_CLI="$(policy_or_default update notify_cli true)"
 EXISTING_UPDATE_NOTIFY_APP="$(policy_or_default update notify_app true)"
 EXISTING_UPDATE_AUTO_INSTALL="$(policy_or_default update auto_install false)"
 
+STRATEGY_ENABLED="${CODEX_FLOW_STRATEGY_ENABLED:-$EXISTING_STRATEGY_ENABLED}"
 STRATEGY_PROFILE="${CODEX_FLOW_STRATEGY:-$EXISTING_STRATEGY}"
 ROUTING_MODE="${CODEX_FLOW_ROUTING_MODE:-$EXISTING_ROUTING}"
 REVIEW_MODIFIER="${CODEX_FLOW_REVIEW_MODIFIER:-$EXISTING_REVIEW}"
@@ -129,6 +132,7 @@ UI_LANGUAGE="auto"
 if [[ -f "$POLICY" ]]; then UI_LANGUAGE="$(python3 "$LOCALIZATION" --policy "$POLICY" --configured 2>/dev/null || echo auto)"; fi
 UI_LANGUAGE="$(python3 "$LOCALIZATION" --normalize "$UI_LANGUAGE")"
 
+case "$STRATEGY_ENABLED" in true|false) ;; *) echo "CODEX_FLOW_STRATEGY_ENABLED must be true or false" >&2; exit 2 ;; esac
 case "$STRATEGY_PROFILE" in efficient|balanced|quality|speed) ;; *) echo "CODEX_FLOW_STRATEGY must be efficient, balanced, quality, or speed" >&2; exit 2 ;; esac
 case "$ROUTING_MODE" in adaptive|direct|delegate) ;; *) echo "CODEX_FLOW_ROUTING_MODE must be adaptive, direct, or delegate" >&2; exit 2 ;; esac
 case "$REVIEW_MODIFIER" in auto|standard|strict) ;; *) echo "CODEX_FLOW_REVIEW_MODIFIER must be auto, standard, or strict" >&2; exit 2 ;; esac
@@ -182,6 +186,7 @@ schema_version = 4
 language = "$UI_LANGUAGE"
 
 [strategy]
+enabled = $STRATEGY_ENABLED
 profile = "$STRATEGY_PROFILE"
 
 [routing]

@@ -115,8 +115,9 @@ grep -Fxq "$(cat "$ROOT_DIR/VERSION")" "$CODEX_HOME/codex-flow/version"
 
 codex-flow status
 strategy_show="$(codex-flow strategy show)"
-[[ "$strategy_show" == "strategy=efficient routing=adaptive" ]]
-[[ "$(codex-flow strategy)" == "strategy=efficient routing=adaptive" ]]
+[[ "$strategy_show" == "enabled=true strategy=efficient routing=adaptive" ]]
+[[ "$(codex-flow strategy)" == "enabled=true strategy=efficient routing=adaptive" ]]
+[[ "$(codex-flow strategy enabled)" == "true" ]]
 codex-flow strategy plan --complexity complex --uncertainty high > "$TMP/installed-plan.json"
 python3 - "$TMP/installed-plan.json" <<'PY'
 import json, sys
@@ -176,6 +177,7 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text()
 replacements = {
+    'enabled = true': 'enabled = false',
     'profile = "efficient"': 'profile = "balanced"',
     'mode = "adaptive"': 'mode = "delegate"',
     'review = "auto"': 'review = "strict"',
@@ -195,6 +197,7 @@ p.write_text(s)
 PY
 
 bash "$ROOT_DIR/install.sh"
+[[ "$(codex-flow strategy enabled)" == "false" ]]
 grep -Fq 'profile = "balanced"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'mode = "delegate"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'review = "strict"' "$CODEX_HOME/codex-flow.toml"
@@ -219,6 +222,7 @@ assert any(hook.get("command") == "user-stop-handler" for hook in stop_hooks), s
 PY
 
 roundtrip_doctor="$(codex-flow doctor 2>&1)"
+[[ "$roundtrip_doctor" == *"strategy dispatch: disabled by policy"* ]]
 [[ "$roundtrip_doctor" == *"strategy profile: balanced"* ]]
 [[ "$roundtrip_doctor" == *"routing mode: delegate"* ]]
 [[ "$roundtrip_doctor" == *"review modifier: strict"* ]]
@@ -248,7 +252,8 @@ else
   grep -Fq 'compdef _codex_flow codex-flow' "$CODEX_HOME/codex-flow/shell/codex-flow.zsh"
 fi
 
-CODEX_FLOW_STRATEGY=quality CODEX_FLOW_ROUTING_MODE=direct CODEX_FLOW_WORKER_MODEL=gpt-test-worker CODEX_FLOW_WORKER_MIN_EFFORT=xhigh CODEX_FLOW_PARENT_MIN_EFFORT=xhigh bash "$ROOT_DIR/install.sh"
+CODEX_FLOW_STRATEGY_ENABLED=true CODEX_FLOW_STRATEGY=quality CODEX_FLOW_ROUTING_MODE=direct CODEX_FLOW_WORKER_MODEL=gpt-test-worker CODEX_FLOW_WORKER_MIN_EFFORT=xhigh CODEX_FLOW_PARENT_MIN_EFFORT=xhigh bash "$ROOT_DIR/install.sh"
+[[ "$(codex-flow strategy enabled)" == "true" ]]
 grep -Fq 'profile = "quality"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'mode = "direct"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'review = "strict"' "$CODEX_HOME/codex-flow.toml"

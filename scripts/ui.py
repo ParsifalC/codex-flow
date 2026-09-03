@@ -91,6 +91,7 @@ def status(lang: str) -> int:
     print(box_line(f"• {T('Runtime', '运行时', lang)}:     FlowPilot (flow-pilot)"))
     if POLICY.exists():
         print("  ├─ " + T("Strategy & Model Routing", "策略与模型路由", lang) + " " + "─" * (40 if lang == "en" else 46) + "┤")
+        strategy_enabled = policy_value("strategy", "enabled", "true")
         strategy = policy_value("strategy", "profile", "efficient")
         routing = policy_value("routing", "mode", "adaptive")
         p_policy = policy_value("parent", "model_policy", "unknown")
@@ -102,7 +103,8 @@ def status(lang: str) -> int:
         retention = policy_value("telemetry", "retention_days", "30")
         configured = configured_language(POLICY)
         effective = resolve_language(POLICY)
-        print(box_line(f"• {T('Strategy', '执行策略', lang)}:    {strategy}"))
+        state = "● " + T("enabled", "已启用", lang) if strategy_enabled == "true" else "○ " + T("disabled", "已禁用", lang)
+        print(box_line(f"• {T('Strategy', '执行策略', lang)}:    {strategy} ({state})"))
         print(box_line(f"• {T('Routing', '路由模式', lang)}:     {routing}"))
         print(box_line(f"• {T('Parent', '父 Agent', lang)}:      {p_policy} ({T('min effort', '最低推理', lang)}: {p_effort})"))
         print(box_line(f"• {T('Worker', '子 Agent', lang)}:      {w_model} ({T('min effort', '最低推理', lang)}: {w_effort})"))
@@ -161,6 +163,9 @@ def help_text(lang: str) -> int:
     strategy show               查看持久化 strategy / routing
     strategy profiles           查看 efficient/balanced/quality/speed
     strategy set <profile>      设置默认执行策略
+    strategy enabled            查看策略分发总开关
+    strategy enable             开启 FlowPilot 自动策略分发
+    strategy disable            关闭 FlowPilot 自动策略分发
     strategy routing <mode>     设置 adaptive/direct/delegate 路由约束
     strategy plan [选项]        从结构化 TaskProfile 生成 ExecutionPlan(JSON)
     language [auto|zh|en]       查看或设置界面语言（默认 auto 跟随系统）
@@ -184,6 +189,7 @@ def help_text(lang: str) -> int:
 
   提示:
     默认策略为 efficient，路由为 adaptive；这与旧版 FlowPilot 行为兼容。
+    strategy disable 只关闭 codex-flow 自动分发，不关闭 Codex 原生 Agent 能力。
     对话中的明确策略/路由指令只覆盖当前任务，不修改持久化配置。
 """)
     else:
@@ -198,6 +204,9 @@ Usage: codex-flow <command> [options]
     strategy show               Show persistent strategy / routing
     strategy profiles           List efficient/balanced/quality/speed profiles
     strategy set <profile>      Set the default execution strategy
+    strategy enabled            Show the strategy dispatch master switch
+    strategy enable             Enable FlowPilot automatic strategy dispatch
+    strategy disable            Disable FlowPilot automatic strategy dispatch
     strategy routing <mode>     Set adaptive/direct/delegate routing constraint
     strategy plan [options]     Compile a structured TaskProfile to ExecutionPlan JSON
     language [auto|zh|en]       Show or set UI language (auto follows the system)
@@ -221,6 +230,7 @@ Usage: codex-flow <command> [options]
 
   Tip:
     The default is efficient + adaptive, preserving previous FlowPilot behavior.
+    strategy disable turns off codex-flow auto-dispatch, not Codex native Agent capability.
     Explicit strategy/routing instructions in a prompt override only the current task.
 """)
     return 0

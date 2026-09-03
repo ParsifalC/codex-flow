@@ -31,6 +31,7 @@ schema_version = 4
 language = "auto"
 
 [strategy]
+enabled = true
 profile = "efficient"
 
 [routing]
@@ -76,6 +77,7 @@ source = "hooks+app-server"
 旧 schema v3 缺少策略/路由/Modifier 字段时，语义兼容为：
 
 ```text
+strategy_enabled = true
 strategy = efficient
 routing = adaptive
 review = auto
@@ -90,6 +92,8 @@ quality_intent = normal
 ---
 
 ## 配置优先级
+
+`[strategy].enabled` 是全局总开关。它位于下面的普通策略优先级之上：当值为 `false` 时，FlowPilot 不构造 TaskProfile、不编译 ExecutionPlan、也不做自动 Worker 分发；仓库策略和当前任务覆盖都不能重新开启它。关闭时 profile/routing/modifier 配置仍会保留，重新开启后继续生效。
 
 Planner 按以下优先级解析：
 
@@ -110,6 +114,18 @@ Planner 按以下优先级解析：
 三个维度彼此正交。
 
 ### `[strategy]`
+
+`enabled`：FlowPilot 自动策略分发总开关，默认 `true`。可通过 CLI 直接控制：
+
+```bash
+codex-flow strategy enabled
+codex-flow strategy disable
+codex-flow strategy enable
+```
+
+关闭只会停用 **codex-flow 自动规划与自动分发**，不会修改 Codex 原生 `[agents].enabled`，因此不会剥夺用户显式使用原生子 Agent 的能力。
+
+仓库 `.codex-flow.toml` 可以在总开关开启时覆盖 `profile` / routing / modifiers，但不能覆盖全局 `enabled = false`。这可以避免用户全局关闭后，进入某个仓库又被静默重新开启。
 
 `profile` 支持：
 
