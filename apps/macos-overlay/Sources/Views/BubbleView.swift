@@ -31,25 +31,25 @@ public struct BubbleView: View {
             }
         }
         .frame(width: 76, height: 76)
-        .contentShape(Rectangle())
         .animation(.spring(response: 0.16, dampingFraction: 0.82), value: state.isDocked)
         .animation(.spring(response: 0.22, dampingFraction: 0.78), value: updateService.hasUpdateBadge)
-        .onHover { hovered in
-            withAnimation(.easeInOut(duration: 0.25)) {
-                isHovered = hovered
-            }
-            if hovered {
-                withAnimation(.linear(duration: 2.0).repeatForever(autoreverses: false)) {
-                    shimmerAngle = 360.0
-                }
-            } else {
-                shimmerAngle = 0.0
-            }
-        }
         .onAppear {
             withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
                 breathePhase = 1.0
             }
+        }
+    }
+
+    private func handleHover(_ hovered: Bool) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            isHovered = hovered
+        }
+        if hovered {
+            withAnimation(.linear(duration: 2.0).repeatForever(autoreverses: false)) {
+                shimmerAngle = 360.0
+            }
+        } else {
+            shimmerAngle = 0.0
         }
     }
 
@@ -76,7 +76,7 @@ public struct BubbleView: View {
         .accessibilityLabel(updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
     }
 
-    // MARK: - Dedicated Edge Dock Tab View (Visible metrics when tucked)
+    // MARK: - Dedicated Edge Dock Tab View
     private var dockTabView: some View {
         HStack(spacing: 0) {
             if state.dockEdge == .right {
@@ -165,6 +165,8 @@ public struct BubbleView: View {
                 )
         )
         .shadow(color: statusGlowColor.opacity(0.45), radius: 4)
+        .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .onHover { handleHover($0) }
     }
 
     // MARK: - Full Circular Bubble View
@@ -256,6 +258,9 @@ public struct BubbleView: View {
                 .shadow(color: statusColor.opacity(isHovered ? 0.9 : 0.7), radius: isHovered ? 3 : 1.5)
                 .offset(x: 20, y: -20)
         }
+        .frame(width: 58, height: 58)
+        .contentShape(Circle())
+        .onHover { handleHover($0) }
     }
 
     private var borderGradient: AnyShapeStyle {
@@ -295,9 +300,8 @@ public struct BubbleView: View {
         } else if let run = state.latestRun {
             if run.isError {
                 return .orange
-            } else {
-                return Color(red: 0.2, green: 0.85, blue: 0.45)
             }
+            return Color(red: 0.2, green: 0.85, blue: 0.45)
         }
         return Color(red: 0.2, green: 0.85, blue: 0.45)
     }
