@@ -23,26 +23,12 @@ public enum FlowPilotAutostartService {
     private static var launchAgentsDirectory: URL { home.appendingPathComponent("Library/LaunchAgents") }
     private static var plistURL: URL { launchAgentsDirectory.appendingPathComponent("\(label).plist") }
 
-    /// Reconcile the registration when FlowPilot starts. The first launch opts in
-    /// by default; an explicit user disable is persisted and never overwritten by
-    /// later app launches or updates.
-    public static func reconcileAtLaunch() {
-        do {
-            if configuredPreference() == false {
-                try removeRegistration()
-            } else {
-                try writePreference(enabled: true)
-                try writeRegistration()
-            }
-        } catch {
-            // Startup must remain non-fatal. The Account card and CLI surface the
-            // registration error when the user explicitly interacts with it.
-        }
-    }
-
     public static func status() -> FlowPilotAutostartStatus {
-        let configured = configuredPreference() ?? true
+        // New installations are explicit opt-in, but a pre-existing LaunchAgent
+        // without the newer preference file is still an enabled registration and
+        // must be reported honestly instead of appearing disabled in the UI.
         let exists = FileManager.default.fileExists(atPath: plistURL.path)
+        let configured = configuredPreference() ?? exists
         return FlowPilotAutostartStatus(
             enabled: configured && exists,
             plistExists: exists,
@@ -227,8 +213,8 @@ public struct AutostartCard: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 7.2))
                 Text(L(
-                    "Registered as a user LaunchAgent; disabling it does not close the currently running widget.",
-                    "使用用户级 LaunchAgent 注册；关闭开机启动不会退出当前正在运行的悬浮窗。"
+                    "Registered as a user LaunchAgent; enabling it affects the next login and does not restart the current widget.",
+                    "使用用户级 LaunchAgent 注册；开启后从下次登录生效，不会重启当前悬浮窗。"
                 ))
                     .font(.system(size: 7.2))
             }

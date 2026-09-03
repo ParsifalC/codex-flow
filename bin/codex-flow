@@ -169,11 +169,34 @@ case "$cmd" in
     sub="${1:-toggle}"
     case "$sub" in
       start|restart)
-        "$overlay_bin" stop >/dev/null 2>&1 || true
-        pkill -f "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot" 2>/dev/null || true
-        sleep 0.2
-        nohup "$overlay_bin" start >/dev/null 2>&1 &
-        printf '%s\n' "$(cf_t '🚀 Launched FlowPilot in background.' '🚀 FlowPilot 已在后台启动。')"
+        # FlowPilot owns single-instance restart semantics through IPC. Verify
+        # the exact process we just launched rather than accepting a successful
+        # status response from the old instance during the handover window.
+        mkdir -p "$STATE_DIR/logs"
+        start_log="$STATE_DIR/logs/flowpilot-start.log"
+        : >"$start_log"
+        nohup "$overlay_bin" start >>"$start_log" 2>&1 &
+        start_pid=$!
+        started=false
+        for _ in {1..50}; do
+          status_json="$("$overlay_bin" status --json 2>/dev/null || true)"
+          status_pid="$(printf '%s\n' "$status_json" | sed -nE 's/.*"pid"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')"
+          if [[ -n "$status_pid" && "$status_pid" == "$start_pid" ]]; then
+            started=true
+            break
+          fi
+          if ! kill -0 "$start_pid" 2>/dev/null; then
+            break
+          fi
+          sleep 0.1
+        done
+        if [[ "$started" == "true" ]]; then
+          printf '%s\n' "$(cf_t '🚀 Launched FlowPilot in background.' '🚀 FlowPilot 已在后台启动。')"
+        else
+          printf '%s\n' "$(cf_t 'FlowPilot failed to start. Recent log output:' 'FlowPilot 启动失败，最近日志如下：')" >&2
+          tail -n 40 "$start_log" >&2 2>/dev/null || true
+          fail "$(cf_t "startup verification failed; log: $start_log" "启动校验失败；日志：$start_log")"
+        fi
         ;;
       *) exec "$overlay_bin" "$@" ;;
     esac
