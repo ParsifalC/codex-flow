@@ -6,10 +6,12 @@ import AppKit
 public struct SummaryView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
+    @ObservedObject private var updateService = FlowPilotUpdateService.shared
     public var isFullHeight: Bool = false
 
     @State private var showingAccount = false
     @State private var copiedSummary = false
+    @State private var showUpdatePopover = false
 
     public init(state: OverlayState, isFullHeight: Bool = false) {
         self.state = state
@@ -70,6 +72,31 @@ public struct SummaryView: View {
             }
 
             Spacer()
+
+            Button {
+                showUpdatePopover.toggle()
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: updateService.isRestartRequired ? "arrow.clockwise.circle" : "arrow.down.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(updateService.hasUpdateBadge ? .cyan : .white.opacity(0.55))
+                        .frame(width: 23, height: 23)
+                        .background(Circle().fill(Color.white.opacity(0.045)))
+
+                    if updateService.hasUpdateBadge {
+                        Circle()
+                            .fill(updateService.isRestartRequired ? Color.orange : Color.red)
+                            .frame(width: 6.5, height: 6.5)
+                            .overlay(Circle().stroke(Color.black.opacity(0.65), lineWidth: 1))
+                            .offset(x: 1.5, y: -1.5)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help(L("Software Update", "软件更新"))
+            .popover(isPresented: $showUpdatePopover, arrowEdge: .top) {
+                FlowPilotUpdateView()
+            }
 
             chromeButton(
                 state.isPrivacyMode ? "eye.slash.fill" : "eye.fill",
