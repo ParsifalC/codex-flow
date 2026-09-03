@@ -146,7 +146,8 @@ printf '%s\n' "$doctor_output"
 [[ "$doctor_output" == *"release policy defaults installed"* ]]
 [[ "$doctor_output" == *"FlowPilot lifecycle hooks installed"* ]]
 [[ "$doctor_output" == *"thread-attributed telemetry may be unavailable"* ]]
-[[ "$doctor_output" == *"Ready. FlowPilot strategy runtime and deterministic telemetry are installed."* ]]
+[[ "$doctor_output" == *"FlowPilot hook authorization: approval required"* ]]
+[[ "$doctor_output" == *"Installed with action required"* ]]
 
 for CODEX_TEST_VERSION in 0.151.0 0.151.0-alpha.1; do
   export CODEX_TEST_VERSION
@@ -157,7 +158,8 @@ done
 no_cli_output="$(env PATH="$CODEX_FLOW_BIN_DIR:/usr/bin:/bin" "$CODEX_FLOW_BIN_DIR/codex-flow" doctor 2>&1)"
 printf '%s\n' "$no_cli_output"
 [[ "$no_cli_output" == *"Codex CLI not found in PATH"* ]]
-[[ "$no_cli_output" == *"Core FlowPilot strategy runtime is installed and healthy"* ]]
+[[ "$no_cli_output" == *"Hook review is required, but Codex CLI is not in PATH"* ]]
+[[ "$no_cli_output" == *"Installed with action required"* ]]
 
 python3 - "$CODEX_HOME/hooks.json" <<'PY'
 import json, sys
