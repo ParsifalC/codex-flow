@@ -2,12 +2,19 @@ import Cocoa
 import SwiftUI
 import CoreGraphics
 
+private enum ShowcaseMetrics {
+    // Keep showcase captures aligned with OverlayRootView / OverlayWindowController.
+    static let panelWidth: CGFloat = 384
+    static let panelHeight: CGFloat = 490
+}
+
 @MainActor
 func renderViewToPNG<V: View>(
     view: V,
     targetWidth: CGFloat? = nil,
     targetHeight: CGFloat? = nil,
     scale: CGFloat = 2.0,
+    requiresLiveHosting: Bool = false,
     settleTime: TimeInterval = 0.45,
     outputPath: String
 ) {
@@ -24,16 +31,37 @@ func renderViewToPNG<V: View>(
         sizedView = AnyView(darkView)
     }
 
-    // Keep the view attached to a real AppKit window so controls, AccountView's
-    // onAppear refresh, menus and progress indicators all finish layout before
-    // the snapshot is taken. Privacy-sensitive text is semantically redacted by
-    // HoverRevealText before blur is applied, so bitmap snapshots stay private
-    // even if an AppKit capture path drops the blur compositing effect.
+    // The original showcase pipeline used ImageRenderer. Keep that as the
+    // default because it preserves SwiftUI effects (notably privacy blur) and
+    // produces deterministic logical-size × scale pixel dimensions.
+    if !requiresLiveHosting {
+        let renderer = ImageRenderer(content: sizedView)
+        renderer.scale = scale
+        if let cgImage = renderer.cgImage {
+            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+            if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                let url = URL(fileURLWithPath: outputPath)
+                try? FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try? pngData.write(to: url)
+                print("✅ Rendered [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
+                return
+            }
+        }
+        print("❌ ImageRenderer failed for \(outputPath)")
+        return
+    }
+
+    // AccountView needs a real AppKit lifecycle so onAppear can start its Codex
+    // app-server request. Wait for that async work, then capture at an explicit
+    // pixel scale instead of inheriting the current monitor's backing scale.
     let hostingView = NSHostingView(rootView: sizedView)
-    let fitting = hostingView.fittingSize
-    let width = targetWidth ?? max(fitting.width, 10)
-    let height = targetHeight ?? max(fitting.height, 10)
-    let contentRect = NSRect(x: 0, y: 0, width: width, height: height)
+    let initialFitting = hostingView.fittingSize
+    var width = targetWidth ?? max(initialFitting.width, 10)
+    var height = targetHeight ?? max(initialFitting.height, 10)
+    var contentRect = NSRect(x: 0, y: 0, width: width, height: height)
     hostingView.frame = contentRect
 
     let window = NSWindow(
@@ -51,34 +79,50 @@ func renderViewToPNG<V: View>(
     RunLoop.current.run(until: Date(timeIntervalSinceNow: settleTime))
     window.layoutIfNeeded()
 
-    if let rep = hostingView.bitmapImageRepForCachingDisplay(in: contentRect) {
-        hostingView.cacheDisplay(in: contentRect, to: rep)
-        if let pngData = rep.representation(using: .png, properties: [:]) {
-            let url = URL(fileURLWithPath: outputPath)
-            try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? pngData.write(to: url)
-            print("✅ Rendered [\(rep.pixelsWide)x\(rep.pixelsHigh)] -> \(outputPath)")
-            return
-        }
+    // Full-height Account/Poster content can grow after async data arrives.
+    // Re-measure unspecified dimensions after settling to avoid clipping or an
+    // oversized loading-state canvas.
+    if targetWidth == nil || targetHeight == nil {
+        let settledFitting = hostingView.fittingSize
+        if targetWidth == nil { width = max(settledFitting.width, 10) }
+        if targetHeight == nil { height = max(settledFitting.height, 10) }
+        contentRect = NSRect(x: 0, y: 0, width: width, height: height)
+        hostingView.frame = contentRect
+        window.setContentSize(contentRect.size)
+        window.layoutIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.12))
     }
 
-    // Fallback remains useful for simple SwiftUI-only compositions.
-    let renderer = ImageRenderer(content: sizedView)
-    renderer.scale = scale
-    if let cgImage = renderer.cgImage {
-        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-        if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
-            let url = URL(fileURLWithPath: outputPath)
-            try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? pngData.write(to: url)
-            print("✅ Rendered fallback [\(cgImage.width)x\(cgImage.height)] -> \(outputPath)")
-        }
+    let pixelsWide = max(1, Int((width * scale).rounded()))
+    let pixelsHigh = max(1, Int((height * scale).rounded()))
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: pixelsWide,
+        pixelsHigh: pixelsHigh,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ) else {
+        print("❌ Failed to allocate bitmap for \(outputPath)")
+        return
+    }
+    rep.size = NSSize(width: width, height: height)
+    hostingView.cacheDisplay(in: contentRect, to: rep)
+
+    if let pngData = rep.representation(using: .png, properties: [:]) {
+        let url = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? pngData.write(to: url)
+        print("✅ Rendered live [\(rep.pixelsWide)x\(rep.pixelsHigh)] -> \(outputPath)")
+    } else {
+        print("❌ Failed to encode PNG for \(outputPath)")
     }
 }
 
@@ -222,7 +266,7 @@ struct PosterPromoView: View {
                             .foregroundColor(.white)
                     }
 
-                    Text("Inspector · History · Analytics · Account · Privacy-safe Showcase")
+                    Text("Inspector · History · Analytics · Account · Privacy-blurred Showcase")
                         .font(.system(size: 14, weight: .medium, design: .rounded))
                         .foregroundColor(.white.opacity(0.65))
                 }
@@ -266,7 +310,7 @@ struct PosterPromoView: View {
                         Text("🟢 灵动微胶囊 (Micro Capsule)")
                             .font(.system(size: 12.5, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
-                        Text("闲置自动吸附屏幕边缘；宣传物料默认强制隐私模式，真实项目名、任务内容和账户标识不会进入截图像素。")
+                        Text("闲置自动吸附屏幕边缘；宣传物料默认强制隐私模式，敏感项目、任务与账户标识统一做真实模糊处理。")
                             .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.6))
                     }
@@ -297,7 +341,7 @@ struct PosterPromoView: View {
             }
 
             view
-                .frame(width: 384)
+                .frame(width: ShowcaseMetrics.panelWidth)
                 .shadow(color: Color.black.opacity(0.45), radius: 24, x: 0, y: 12)
         }
     }
@@ -353,7 +397,7 @@ struct BannerPromoView: View {
                         featurePill("brain.head.profile", "FlowPilot 动态自适应任务复杂度路由")
                         featurePill("chart.pie.fill", "确定性 Token 归因 + 实时 Quota 水位")
                         featurePill("person.crop.circle.fill", "账户级 Plan / 额度 / Reset / 每日消耗")
-                        featurePill("eye.slash.fill", "宣传截图默认隐私脱敏，不渲染敏感源文本")
+                        featurePill("eye.slash.fill", "宣传截图默认隐私模式，敏感信息统一模糊")
                     }
 
                     HStack(spacing: 14) {
@@ -474,7 +518,7 @@ struct DesktopScenePromoView: View {
 
 @MainActor
 func runGenerator() {
-    print("🎨 Starting FlowPilot privacy-safe screenshot & promo generation...")
+    print("🎨 Starting FlowPilot privacy-blurred screenshot & promo generation...")
 
     let engine = TelemetryQueryEngine.shared
     let allRuns = engine.loadAllRuns()
@@ -532,10 +576,9 @@ func runGenerator() {
     stateBubble.isExpanded = false
     stateBubble.isPrivacyMode = true
 
-    // AccountView performs an async Codex app-server request on appearance. The
-    // RPC itself may take up to four seconds, so account-containing captures get
-    // a wider settle window than the purely local telemetry views.
-    let accountSettleTime: TimeInterval = 5.0
+    // AccountSnapshotService bounds the complete app-server flow at 10 seconds.
+    // Give the Account view enough time to leave its loading state before capture.
+    let accountSettleTime = AccountSnapshotService.outerTimeout + 0.75
 
     renderViewToPNG(
         view: FlowPilotLogoView(size: 512, showGlow: true, withBolt: true),
@@ -551,31 +594,23 @@ func runGenerator() {
 
     renderViewToPNG(
         view: SummaryView(state: stateInspector, isFullHeight: true),
-        targetWidth: 384,
+        targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/inspector_full.png"
     )
 
     renderViewToPNG(
         view: SummaryView(state: stateHistoryFull, isFullHeight: true),
-        targetWidth: 384,
+        targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/history_full.png"
     )
 
     renderViewToPNG(
         view: SummaryView(state: stateAnalytics, isFullHeight: true),
-        targetWidth: 384,
+        targetWidth: ShowcaseMetrics.panelWidth,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/analytics_full.png"
-    )
-
-    renderViewToPNG(
-        view: AccountPromoCard(state: stateAccount, isFullHeight: true),
-        targetWidth: 384,
-        scale: 2.0,
-        settleTime: accountSettleTime,
-        outputPath: "docs/assets/screenshots/account_full.png"
     )
 
     renderViewToPNG(
@@ -586,33 +621,45 @@ func runGenerator() {
 
     renderViewToPNG(
         view: SummaryView(state: stateInspector, isFullHeight: false),
-        targetWidth: 384,
-        targetHeight: 490,
+        targetWidth: ShowcaseMetrics.panelWidth,
+        targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/inspector_window.png"
     )
 
     renderViewToPNG(
         view: SummaryView(state: stateHistoryFull, isFullHeight: false),
-        targetWidth: 384,
-        targetHeight: 490,
+        targetWidth: ShowcaseMetrics.panelWidth,
+        targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/history_window.png"
     )
 
     renderViewToPNG(
         view: SummaryView(state: stateAnalytics, isFullHeight: false),
-        targetWidth: 384,
-        targetHeight: 490,
+        targetWidth: ShowcaseMetrics.panelWidth,
+        targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
         outputPath: "docs/assets/screenshots/analytics_window.png"
     )
 
+    // Render Account captures later and with a real hosting lifecycle, because
+    // the view fetches live Codex account/quota data on appearance.
+    renderViewToPNG(
+        view: AccountPromoCard(state: stateAccount, isFullHeight: true),
+        targetWidth: ShowcaseMetrics.panelWidth,
+        scale: 2.0,
+        requiresLiveHosting: true,
+        settleTime: accountSettleTime,
+        outputPath: "docs/assets/screenshots/account_full.png"
+    )
+
     renderViewToPNG(
         view: AccountPromoCard(state: stateAccount, isFullHeight: false),
-        targetWidth: 384,
-        targetHeight: 490,
+        targetWidth: ShowcaseMetrics.panelWidth,
+        targetHeight: ShowcaseMetrics.panelHeight,
         scale: 2.0,
+        requiresLiveHosting: true,
         settleTime: accountSettleTime,
         outputPath: "docs/assets/screenshots/account_window.png"
     )
@@ -626,6 +673,7 @@ func runGenerator() {
             stateBubble: stateBubble
         ),
         scale: 2.0,
+        requiresLiveHosting: true,
         settleTime: accountSettleTime,
         outputPath: "docs/assets/promo/flowpilot_promo_poster.png"
     )
@@ -649,7 +697,7 @@ func runGenerator() {
     )
 
     optimizeAssetsWithCrunch()
-    print("✨ All privacy-safe screenshots and promo graphics generated into docs/assets!")
+    print("✨ All privacy-blurred screenshots and promo graphics generated into docs/assets!")
 }
 
 func optimizeAssetsWithCrunch() {
