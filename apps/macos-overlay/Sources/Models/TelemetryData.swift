@@ -652,13 +652,45 @@ public struct TaskRun: Codable, Identifiable {
         }
         return quotaBefore ?? []
     }
+
+    public static let shortQuotaWindowMinutes = 300
+    public static let weeklyQuotaWindowMinutes = 10_080
+
+    private func quotaWindow(durationMinutes: Int) -> QuotaWindow? {
+        return effectiveQuotaWindows.first { $0.windowDurationMins == durationMinutes }
+    }
+
+    public var shortWindowQuotaDelta: Double? {
+        return quotaWindow(durationMinutes: Self.shortQuotaWindowMinutes)?.deltaPercentagePoints
+    }
+
+    public var weeklyQuotaDelta: Double? {
+        return quotaWindow(durationMinutes: Self.weeklyQuotaWindowMinutes)?.deltaPercentagePoints
+    }
+
+    /// Canonical quota movement used by task, project, model, chat and trend analytics.
+    /// Never fall back to the short window: a 5h percentage point is not comparable
+    /// with a weekly percentage point when account capacities differ.
+    public var canonicalQuotaDelta: Double? {
+        return weeklyQuotaDelta
+    }
     
+    /// Backward-compatible name used by existing analytics consumers. Its semantic
+    /// value is now the canonical weekly quota delta, not the first/shortest window.
     public var primaryQuotaDelta: Double? {
-        return effectiveQuotaWindows.first?.deltaPercentagePoints
+        return canonicalQuotaDelta
+    }
+
+    public var shortWindowQuotaRemaining: Double? {
+        return quotaWindow(durationMinutes: Self.shortQuotaWindowMinutes)?.remainingPercent
+    }
+
+    public var weeklyQuotaRemaining: Double? {
+        return quotaWindow(durationMinutes: Self.weeklyQuotaWindowMinutes)?.remainingPercent
     }
     
     public var primaryQuotaRemaining: Double? {
-        return effectiveQuotaWindows.first?.remainingPercent
+        return shortWindowQuotaRemaining
     }
     
     public var aggregatedUsage: TokenUsage {
@@ -793,12 +825,12 @@ public struct TaskRun: Codable, Identifiable {
                 )
             ],
             quotaBefore: [
-                QuotaWindow(slot: "primary", usedPercent: 12.0, windowDurationMins: 5, resetsAt: Date().addingTimeInterval(180).timeIntervalSince1970),
-                QuotaWindow(slot: "secondary", usedPercent: 34.0, windowDurationMins: 60, resetsAt: Date().addingTimeInterval(2400).timeIntervalSince1970)
+                QuotaWindow(slot: "primary", usedPercent: 12.0, windowDurationMins: 300, resetsAt: Date().addingTimeInterval(180).timeIntervalSince1970),
+                QuotaWindow(slot: "secondary", usedPercent: 34.0, windowDurationMins: 10_080, resetsAt: Date().addingTimeInterval(2400).timeIntervalSince1970)
             ],
             quotaChangeDuringRun: [
-                QuotaWindow(slot: "primary", usedPercent: 18.0, windowDurationMins: 5, resetsAt: Date().addingTimeInterval(180).timeIntervalSince1970, deltaPercentagePoints: 6.0),
-                QuotaWindow(slot: "secondary", usedPercent: 39.0, windowDurationMins: 60, resetsAt: Date().addingTimeInterval(2400).timeIntervalSince1970, deltaPercentagePoints: 5.0)
+                QuotaWindow(slot: "primary", usedPercent: 18.0, windowDurationMins: 300, resetsAt: Date().addingTimeInterval(180).timeIntervalSince1970, deltaPercentagePoints: 6.0),
+                QuotaWindow(slot: "secondary", usedPercent: 39.0, windowDurationMins: 10_080, resetsAt: Date().addingTimeInterval(2400).timeIntervalSince1970, deltaPercentagePoints: 5.0)
             ]
         )
     }
@@ -929,7 +961,7 @@ public struct ChatSession: Identifiable {
         var total: Double = 0
         var hasDelta = false
         for r in runs {
-            if let d = r.primaryQuotaDelta {
+            if let d = r.canonicalQuotaDelta {
                 total += d
                 hasDelta = true
             }
