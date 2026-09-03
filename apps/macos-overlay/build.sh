@@ -20,9 +20,22 @@ if [ "$CORES" -gt 4 ]; then
     CORES=4
 fi
 
+# The Intel Swift 6 solver can hit its default expression budget on the
+# refreshed HistoryChatRow SwiftUI result builder even though the same source
+# type-checks on arm64. Keep the larger budget scoped to Intel builds so the
+# release matrix remains deterministic without weakening normal diagnostics.
+SWIFT_FRONTEND_FLAGS=()
+if [[ "$(uname -m)" == "x86_64" ]]; then
+    SWIFT_FRONTEND_FLAGS+=(
+        -Xfrontend
+        -solver-expression-time-threshold=180
+    )
+fi
+
 swiftc \
     -num-threads "$CORES" \
     -j "$CORES" \
+    "${SWIFT_FRONTEND_FLAGS[@]}" \
     -framework Cocoa \
     -framework SwiftUI \
     -framework Combine \
