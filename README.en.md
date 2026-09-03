@@ -12,6 +12,7 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-quick-start)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.en.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.en.md)
+[![LinuxDo](https://img.shields.io/badge/LinuxDo-Public%20Beta-5046e6.svg?style=flat-square)](https://linux.do)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 <br />
@@ -21,6 +22,10 @@
 <br /><br />
 
 [**简体中文**](README.md) · [**Strategy Runtime**](docs/strategy-runtime.md) · [**Configuration**](docs/configuration.en.md) · [**Telemetry**](docs/telemetry.en.md) · [**Native Overlay**](docs/overlay.en.md) · [**Benchmarks**](docs/benchmark.en.md)
+
+<br />
+
+> 📢 **Community Beta**: `codex-flow` is currently in public beta on [**LINUX DO**](https://linux.do). Feedback, suggestions, and discussions are welcome!
 
 <br />
 
@@ -87,6 +92,19 @@ However, v1.7 fresh-install resource policy is intentionally more Worker-centric
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+> 💡 **Note**: The Codex CLI is **only required for initial installation checks and one-time hook authorization**. Once initial setup is complete, you can use the **Codex Desktop App exclusively** for daily workflows without ever touching the CLI.
+
+Ensure the Codex CLI is installed for initial bootstrap:
+```bash
+# via npm
+npm install -g @openai/codex
+
+# or via macOS Homebrew
+brew install codex
+```
+
 ### One-Line Installation
 
 Fresh installs use the matching GitHub Release artifact directly; cloning the repository is not required.
@@ -103,7 +121,9 @@ irm https://raw.githubusercontent.com/ParsifalC/codex-flow/main/install-release.
 
 The bootstrap detects OS/CPU, resolves the Latest Stable Release, downloads the matching artifact, verifies SHA-256, installs it under `~/.codex/codex-flow/versions/<version>`, and runs health checks. Windows automatically selects the x86_64 or ARM64 ZIP. macOS uses the prebuilt FlowPilot binary from the Release and starts the floating widget automatically without running `build.sh` locally.
 
-> ⚠️ **Final step**: fully quit and restart Codex so the new Agent / Skill / Hook / policy snapshot is loaded. On macOS, FlowPilot is already running after installation.
+> ⚠️ **Final step**:
+> 1. **One-time authorization**: Launch `codex` in your terminal once, type `/hooks` in the conversation prompt, and approve FlowPilot telemetry (required only once for permanent trust).
+> 2. **Restart Codex Desktop**: Fully quit and relaunch your Codex Desktop App. FlowPilot is already running on macOS; you can now perform all daily tasks directly in the Codex Desktop App.
 
 ---
 

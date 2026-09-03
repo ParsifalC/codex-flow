@@ -12,6 +12,7 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-快速安装)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.md)
+[![LinuxDo](https://img.shields.io/badge/LinuxDo-公测中-5046e6.svg?style=flat-square)](https://linux.do)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 <br />
@@ -21,6 +22,10 @@
 <br /><br />
 
 [**English Documentation**](README.en.md) · [**多策略运行时**](docs/strategy-runtime.md) · [**深入配置**](docs/configuration.md) · [**遥测机制**](docs/telemetry.md) · [**原生悬浮窗**](docs/overlay.md) · [**基准评测**](docs/benchmark.md)
+
+<br />
+
+> 📢 **社区公测**：`codex-flow` 现已正式在 [**LINUX DO**](https://linux.do) 开启公测，欢迎各位佬友前往体验、讨论与反馈！
 
 <br />
 
@@ -87,6 +92,19 @@ routing = adaptive
 
 ## 🚀 快速安装
 
+### 前置要求 (Prerequisites)
+
+> 💡 **特别说明**：Codex CLI **仅用于首次安装的环境校验与一次性 Hook 授权**。初始化完成后，**日常使用完全使用 Codex 桌面端 APP 即可**，无需在终端中启动或使用 CLI。
+
+确保环境拥有 Codex CLI（用于首次安装与授权）：
+```bash
+# npm 全局安装
+npm install -g @openai/codex
+
+# 或 macOS Homebrew 安装
+brew install codex
+```
+
 ### 一键安装
 
 首次安装统一使用 GitHub Release 中与你的系统和 CPU 架构匹配的正式 artifact，不需要 clone 仓库。
@@ -103,7 +121,9 @@ irm https://raw.githubusercontent.com/ParsifalC/codex-flow/main/install-release.
 
 安装器会自动识别 OS / CPU、解析 Latest Stable Release、下载对应 artifact、校验 SHA-256、安装到 `~/.codex/codex-flow/versions/<version>`，并运行健康检查。Windows 自动选择 x86_64 / ARM64 ZIP；macOS 直接使用 Release 中已经预编译好的 FlowPilot，**安装完成后悬浮按钮会自动启动**，不会在本机执行 `build.sh`。
 
-> ⚠️ **最后一步**：安装完成后请**完整重启 Codex**（完全退出后重新打开）。FlowPilot 在 macOS 上已经自动运行；重启 Codex 用于激活新的 Agent / Skill / Hook / policy snapshot。
+> ⚠️ **最后一步**：
+> 1. **首次一次性授权**：在终端启动一次 `codex`，在对话框中输入 `/hooks` 批准 FlowPilot telemetry（仅需做一次，完成永久信任）。
+> 2. **重启 Codex 桌面端**：完全退出 Codex 桌面应用后重新打开。FlowPilot 悬浮窗已在 macOS 桌面自动运行，后续所有日常工作**直接在 Codex 桌面端使用即可**，无需再打开终端。
 
 ---
 
