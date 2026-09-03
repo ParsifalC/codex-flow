@@ -360,6 +360,62 @@ def run_overlay_build() -> bool:
         return False
 
 
+def run_showcase_generation() -> bool:
+    src = get_source_dir()
+    sources_dir = src / "apps" / "macos-overlay" / "Sources"
+    showcase_script = src / "scripts" / "generate_showcase.swift"
+    output_bin = src / "bin" / "generate_showcase"
+
+    if not sources_dir.exists():
+        print(f"\n{style.RED}❌ {T('Overlay source directory not found', '未找到浮窗源码目录')}: {sources_dir}{style.RESET}")
+        return False
+    if not showcase_script.exists():
+        print(f"\n{style.RED}❌ {T('Showcase generator not found', '未找到 Showcase 生成脚本')}: {showcase_script}{style.RESET}")
+        return False
+
+    swift_files = sorted(
+        p for p in sources_dir.rglob("*.swift")
+        if p.name != "main.swift"
+    )
+    if not swift_files:
+        print(f"\n{style.RED}❌ {T('No Swift source files found for showcase generation.', '未找到可用于生成 Showcase 的 Swift 源码。')}{style.RESET}")
+        return False
+
+    output_bin.parent.mkdir(parents=True, exist_ok=True)
+    compile_cmd = [
+        "swiftc",
+        "-framework", "Cocoa",
+        "-framework", "SwiftUI",
+        "-framework", "Combine",
+        *[str(path) for path in swift_files],
+        str(showcase_script),
+        "-o", str(output_bin),
+    ]
+
+    print(f"\n{style.BOLD}{T('🖼 Rebuilding showcase and promotional images...', '🖼 正在重新生成 Showcase / 宣传图...')}{style.RESET}")
+    print(f"{style.DIM}{T('Compiling the native SwiftUI showcase renderer first.', '先编译原生 SwiftUI Showcase 渲染器。')}{style.RESET}\n")
+    try:
+        compile_res = subprocess.run(compile_cmd, cwd=src)
+        if compile_res.returncode != 0:
+            print(f"\n{style.RED}❌ {T('Showcase renderer build failed. Please check the logs above.', 'Showcase 渲染器编译失败，请检查上方日志。')}{style.RESET}")
+            return False
+
+        generate_res = subprocess.run([str(output_bin)], cwd=src)
+        if generate_res.returncode != 0:
+            print(f"\n{style.RED}❌ {T('Showcase generation failed. Please check the logs above.', 'Showcase 图片生成失败，请检查上方日志。')}{style.RESET}")
+            return False
+    except FileNotFoundError as exc:
+        print(f"\n{style.RED}❌ {T('Required command not found', '缺少必要命令')}: {exc}{style.RESET}")
+        return False
+    except Exception as exc:
+        print(f"\n{style.RED}❌ {T('Showcase generation error', '执行 Showcase 生成失败')}: {exc}{style.RESET}")
+        return False
+
+    print(f"\n{style.GREEN}✨ {T('Showcase generation completed.', 'Showcase / 宣传图生成完成。')}{style.RESET}")
+    print(f"{style.DIM}{T('Updated:', '已更新:')} docs/assets/screenshots/ · docs/assets/promo/{style.RESET}")
+    return True
+
+
 def handle_manage_overlay() -> None:
     if sys.platform != "darwin":
         print(f"\n{style.YELLOW}⚠️ {T('The native FlowPilot floating window is available only on macOS.', 'FlowPilot 原生悬浮窗仅支持 macOS 系统。')}{style.RESET}")
@@ -396,6 +452,7 @@ def handle_manage_overlay() -> None:
         if is_running:
             print(f"  [{style.CYAN}4{style.RESET}] {T('🔄 Toggle expanded / collapsed', '🔄 切换展开 / 折叠 (Toggle)')}")
             print(f"  [{style.CYAN}5{style.RESET}] {T('⚡ Push latest data and expand', '⚡️ 发送最新数据并展开 (Push Last Summary)')}")
+        print(f"  [{style.CYAN}6{style.RESET}] {T('🖼 Regenerate showcase / promotional images', '🖼 重新生成 Showcase / 宣传图')}")
 
         print(f"  [{style.CYAN}0{style.RESET}] 🔙 {T('Back to main menu', '返回主菜单')}\n")
 
@@ -489,6 +546,10 @@ def handle_manage_overlay() -> None:
                 print(f"{style.GREEN}{T('Latest Summary pushed and expanded.', '已向浮窗推送最新 Summary 并展开。')}{style.RESET}")
             except Exception as exc:
                 print(f"{style.RED}{T('Push failed', '推送失败')}: {exc}{style.RESET}")
+            pause_prompt()
+
+        elif choice == "6":
+            run_showcase_generation()
             pause_prompt()
 
         else:
