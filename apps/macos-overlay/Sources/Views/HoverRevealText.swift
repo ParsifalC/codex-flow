@@ -4,11 +4,10 @@ import Foundation
 /// A compact text label that keeps the normal layout truncated, but reveals the
 /// complete value in a small native popover after a short hover dwell.
 ///
-/// Privacy mode deliberately never draws the source string. This matters for
-/// screenshots: AppKit bitmap snapshots can bypass Core Animation blur effects,
-/// so blurring the real text is not a sufficient privacy boundary. Instead we
-/// render a shape-preserving placeholder and blur that placeholder for the same
-/// visual treatment without ever exposing the sensitive source pixels.
+/// Privacy mode uses SwiftUI's semantic redaction before applying blur. This
+/// preserves the original text footprint and the familiar blurred-mask look,
+/// while ensuring bitmap screenshots still contain a redacted placeholder even
+/// if an AppKit capture path drops the visual blur effect.
 public struct HoverRevealText: View {
     public let text: String
     public let font: Font
@@ -45,13 +44,15 @@ public struct HoverRevealText: View {
     public var body: some View {
         Group {
             if privacyBlur {
-                Text(Self.privacyPlaceholder(for: text))
+                Text(text.isEmpty ? " " : text)
                     .font(font)
-                    .foregroundColor(foregroundColor.opacity(0.62))
+                    .foregroundColor(foregroundColor.opacity(0.78))
                     .lineLimit(lineLimit)
                     .truncationMode(truncationMode)
                     .multilineTextAlignment(alignment)
-                    .blur(radius: 3.2)
+                    .redacted(reason: .placeholder)
+                    .compositingGroup()
+                    .blur(radius: 4.5)
                     .accessibilityLabel(Text("Private content"))
             } else {
                 Text(text)
@@ -86,16 +87,6 @@ public struct HoverRevealText: View {
             .preferredColorScheme(.dark)
             .onHover(perform: handlePopoverHover)
         }
-    }
-
-    /// Keeps roughly the same line count and text footprint while ensuring the
-    /// original source string is never part of the rendered privacy-mode view.
-    private static func privacyPlaceholder(for source: String) -> String {
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
-        return lines.map { line in
-            let visibleLength = min(max(line.count, 8), 42)
-            return String(repeating: "●", count: visibleLength)
-        }.joined(separator: "\n")
     }
 
     /// Native Foundation Markdown parsing keeps headings, lists, fenced code,
