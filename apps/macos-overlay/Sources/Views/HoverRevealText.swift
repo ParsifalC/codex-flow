@@ -4,10 +4,10 @@ import Foundation
 /// A compact text label that keeps the normal layout truncated, but reveals the
 /// complete value in a small native popover after a short hover dwell.
 ///
-/// Privacy mode uses SwiftUI's semantic redaction before applying blur. This
-/// preserves the original text footprint and the familiar blurred-mask look,
-/// while ensuring bitmap screenshots still contain a redacted placeholder even
-/// if an AppKit capture path drops the visual blur effect.
+/// Privacy mode intentionally keeps the original text layout and applies the
+/// same 4.5pt blur used by the earlier showcase pipeline. A drawing group bakes
+/// the blur into an offscreen texture so AppKit-backed screenshots preserve the
+/// visual mask instead of degrading it into placeholder bars.
 public struct HoverRevealText: View {
     public let text: String
     public let font: Font
@@ -44,15 +44,14 @@ public struct HoverRevealText: View {
     public var body: some View {
         Group {
             if privacyBlur {
-                Text(text.isEmpty ? " " : text)
+                Text(text)
                     .font(font)
-                    .foregroundColor(foregroundColor.opacity(0.78))
+                    .foregroundColor(foregroundColor)
                     .lineLimit(lineLimit)
                     .truncationMode(truncationMode)
                     .multilineTextAlignment(alignment)
-                    .redacted(reason: .placeholder)
-                    .compositingGroup()
                     .blur(radius: 4.5)
+                    .drawingGroup(opaque: false, colorMode: .linear)
                     .accessibilityLabel(Text("Private content"))
             } else {
                 Text(text)
