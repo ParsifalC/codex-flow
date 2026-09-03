@@ -552,12 +552,24 @@ def update_lock(stale_seconds: int = 600):
 
 
 @contextlib.contextmanager
-def install_lock():
-    """Require exclusive ownership for update/rollback writers."""
-    with update_lock() as acquired:
-        if not acquired:
-            raise RuntimeError("another codex-flow update or rollback is already running")
-        yield
+def install_lock(timeout_seconds: float = 20.0, poll_interval: float = 0.25):
+    """Wait briefly for a background check, then require exclusive writer ownership.
+
+    Checks and writers intentionally share the PID lock so an update can never
+    mutate managed files while a checker is updating shared state. A user action
+    should not fail merely because a short detached check was already in flight,
+    so writers retry for a bounded interval before reporting real contention.
+    """
+
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        with update_lock() as acquired:
+            if acquired:
+                yield
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("another codex-flow update, rollback, or update check is still running")
+        time.sleep(max(0.01, poll_interval))
 
 
 def start_background_check() -> bool:
