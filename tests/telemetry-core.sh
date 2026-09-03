@@ -6,6 +6,7 @@ trap 'rm -rf "$TMP"' EXIT
 export CODEX_HOME="$TMP/.codex"
 export FAKE_COUNTER="$TMP/counter"
 export CODEX_FLOW_TELEMETRY_NOTIFICATIONS=false
+export CODEX_FLOW_LANGUAGE="${CODEX_FLOW_LANGUAGE:-en}"
 
 # A current Codex response may omit the legacy single-bucket field entirely;
 # the telemetry retry wrapper must treat the canonical codex bucket as usable.
