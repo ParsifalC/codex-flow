@@ -46,7 +46,6 @@ def independent_review(task) -> bool:
 
 
 def capability(task, role: str) -> str:
-    """Select Parent-class capability only where it adds decision value."""
     critical = task.complexity == "critical" or task.risk == "critical"
     if role == "explorer":
         return "parent" if critical else "worker"
@@ -140,7 +139,6 @@ def implementation_maximum_work_units(task) -> int:
 
 
 def task_budget(task) -> TaskBudgetPolicy:
-    """Keep correctness-first tasks finite without imposing efficient deadlines."""
     maximum_work_units = implementation_maximum_work_units(task)
     if (
         task.quality_intent == "absolute"
@@ -167,6 +165,8 @@ def task_budget(task) -> TaskBudgetPolicy:
         max_implementation_attempts=maximum_work_units + 3,
         max_replans=3,
         max_replacements=3,
+        max_review_attempts=worker_budget(task).max_reviewers * 2,
+        parent_finalization_seconds=300,
     )
 
 
@@ -177,13 +177,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
         maximum_work_units = implementation_maximum_work_units(task)
         bounded_mode = maximum_work_units > 1
         return StagePolicy(
-            "required",
-            1,
-            300,
-            3600,
-            False,
-            False,
-            "replan",
+            "required", 1, 300, 3600, False, False, "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
             checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
             max_worker_repair_attempts=implementation_repair_attempts(task),
@@ -194,7 +188,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        return StagePolicy("required", 2, 300, 3000, False, False, "replan")
+        return StagePolicy("required", 2, 300, 3000, False, False, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
