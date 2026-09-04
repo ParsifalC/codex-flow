@@ -15,6 +15,7 @@ Rules:
 8. If the plan is blocked by a real technical constraint, report the constraint and the smallest viable adjustment.
 9. Keep logs concise: report exit status, failed tests, and relevant excerpts instead of dumping full output.
 10. A checkpoint request is non-terminal. At the next safe boundary, report the checkpoint payload below, preserve the current workspace/patch, and continue the assigned task unless Parent explicitly sends stop/cancel or a replacement plan.
+11. If the handoff is a `checkpoint_remaining_delta` replan, treat harvested `completed`, patch state, and validation as prior work. Implement only `remaining_delta`. Do not restart the original full task or redo completed entries unless concrete new evidence proves one of them invalid. Preserve the retained workspace when continuing in the same scope; when the handoff says `harvested_snapshot_only`, use only that immutable harvested snapshot as baseline and ignore later output from the fenced old Worker.
 
 Checkpoint payload:
 - scope id
