@@ -18,11 +18,29 @@ def worker_budget(task) -> WorkerBudget:
     return WorkerBudget(1, 1, 1, 2, "low")
 
 
-def lifecycle(_task, stage: str) -> StagePolicy:
+def implementation_soft_timeout(task) -> int:
+    """Advisory convergence budget; the hard implementation ceiling stays unchanged."""
+    if task.complexity == "critical" or task.risk == "critical":
+        return 1200
+    if task.complexity == "complex" or task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
+        return 900
+    return 600
+
+
+def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 1, 120, 900, True, True, "parent_delta")
     if stage == "implementation":
-        return StagePolicy("required", 1, 180, 1800, False, False, "replan")
+        return StagePolicy(
+            "required",
+            1,
+            180,
+            1800,
+            False,
+            False,
+            "replan",
+            soft_timeout_seconds=implementation_soft_timeout(task),
+        )
     if stage == "review":
         return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
     raise ValueError(f"invalid lifecycle stage: {stage}")
