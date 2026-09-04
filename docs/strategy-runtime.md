@@ -43,10 +43,11 @@ The Skill must not keep a second copy of strategy topology, Worker counts, role 
 11. ExecutionPlan is the only canonical task-budget source. Phase runtime validates and executes it; it does not derive a second budget.
 12. Required review and Parent finalization have explicit time windows.
 13. Review failure retries are read-only `retry_review`, not writable implementation replans.
-14. A returned checkpoint is harvested before any fallback that could discard useful work.
-15. `wait()` timeouts are not Worker timeouts.
-16. Telemetry is observational and never calls a model only to estimate usage or latency.
-17. The new task-ledger contract has no grandfather/adoption path because no earlier persisted-task format containing this feature was released. Incompatible task-ledger schema/policy fails closed.
+14. `action=finalize_parent` closes reviewer admission; it does not prove that a required/quorum reviewer join succeeded. Unsatisfied required review fails closed.
+15. A returned checkpoint is harvested before any fallback that could discard useful work.
+16. `wait()` timeouts are not Worker timeouts.
+17. Telemetry is observational and never calls a model only to estimate usage or latency.
+18. The new task-ledger contract has no grandfather/adoption path because no earlier persisted-task format containing this feature was released. Incompatible task-ledger schema/policy fails closed.
 
 ## Strategy registry
 
@@ -144,14 +145,14 @@ When no reviewer Worker is planned, canonical `max_review_attempts=0`.
 
 ## Shared Worker lifecycle
 
-All four strategies use the same lifecycle mechanics. Strategies tune only thresholds and maximum logical units.
+All four strategies use the same lifecycle mechanics. Strategies tune thresholds and semantic logical-unit baselines; already-proven isolated writable topology may raise the total logical-unit envelope within the strategy WorkerBudget.
 
-| Strategy | Implementation soft checkpoint | Rearm | Worker-local repairs | Max logical units | Worker hard ceiling |
+| Strategy | Implementation soft checkpoint | Rearm | Worker-local repairs | Logical-unit envelope | Worker hard ceiling |
 | --- | --- | --- | --- | --- | --- |
-| `efficient` | 600 / 900 / 1200s | 180 / 240 / 300s | 1–2 | 1–3 | 1800s |
-| `balanced` | 1200 / 1500 / 1800s | 240 / 300 / 360s | 1–2 | 1–3 | 2400s |
-| `quality` | 1800 / 2400 / 2700s | 360 / 480 / 600s | 2–3 | 1–4 | 3600s |
-| `speed` | 420 / 600 / 720s | 180s | 1 | 1–4 | 1200s |
+| `efficient` | 600 / 900 / 1200s | 180 / 240 / 300s | 1–2 | semantic 1–3; topology-backed ≤2 where applicable | 1800s |
+| `balanced` | 1200 / 1500 / 1800s | 240 / 300 / 360s | 1–2 | semantic 1–3; topology-backed ≤3 | 2400s |
+| `quality` | 1800 / 2400 / 2700s | 360 / 480 / 600s | 2–3 | semantic 1–4; topology-backed ≤4 | 3600s |
+| `speed` | 420 / 600 / 720s | 180s | 1 | semantic 1 / 3 / 4; topology-backed ≤8 | 1200s |
 
 Lifecycle semantics:
 
@@ -178,7 +179,7 @@ review failure
   → no writer fence
 ```
 
-A reviewer retry can occur only while phase admission says `permits_review_start=true`.
+A reviewer retry can occur only while phase admission says `permits_review_start=true`. For required/quorum review, successful completion still requires at least `review_stage.min_successful_workers` accepted reviewer results; reaching `review_deadline` does not satisfy that join by itself.
 
 ## Evidence-based bounded implementation
 
@@ -192,7 +193,7 @@ maximum_work_units | none
 require_write_paths
 ```
 
-All built-in strategies keep `minimum_work_units=1`. Complexity/risk/scope/quality may raise only the maximum.
+All built-in strategies keep `minimum_work_units=1`. Complexity/risk/scope/quality may raise the semantic maximum, while already-proven isolated writable topology may raise the total envelope only within the strategy's implementer budget.
 
 A split is valid only when Parent has evidence for an independent acceptance delta, validation boundary, ownership/dependency boundary, or already-proven isolated writable stream. Do not split solely to satisfy a number.
 
@@ -203,7 +204,7 @@ topology_floor = min(writable_workstreams, strategy.max_implementers)
 maximum_work_units = max(semantic_maximum, topology_floor)
 ```
 
-This prevents impossible plans such as four proven implementers with only one logical unit/attempt budget.
+This prevents impossible plans such as four proven implementers with only one logical unit/attempt budget. The resulting logical-unit count may exceed simultaneous `implementation_workers`; planned slots are reused across serial waves. Speed is the clearest example: its routine semantic baseline is one unit, but eight independently proven writable workstreams may produce an eight-unit envelope even when runtime concurrency executes them in smaller waves.
 
 The deterministic manifest validator checks:
 
@@ -225,10 +226,10 @@ Typical raw general-work envelopes:
 
 | Strategy | Soft | Base hard | Work units | Implementation attempts | Replans | Replacements | Review attempts | Parent finalization |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `efficient` | 1500s | 1800s | 1–3 | units + 1 | 1 | 1 | 2 | 150s |
-| `speed` | 1200s | 1800s | 1–4 | units + 1 | 1 | 1 | 2 | 120s |
-| `balanced` | 2400–3000s | 3000–3600s | 1–3 | units + 2 | 2 | 2 | 2 | 180s |
-| `quality` | 4800–6000s | 6000–7200s | 1–4 | units + 3 | 3 | 3 | 2–4 | 300s |
+| `efficient` | 1500s | 1800s | semantic 1–3; topology-backed ≤2 where applicable | units + 1 | 1 | 1 | 2 | 150s |
+| `speed` | 1200s | 1800s | semantic 1 / 3 / 4; topology-backed ≤8 | units + 1 | 1 | 1 | 2 | 120s |
+| `balanced` | 2400–3000s | 3000–3600s | semantic/topology ≤3 | units + 2 | 2 | 2 | 2 | 180s |
+| `quality` | 4800–6000s | 6000–7200s | semantic/topology ≤4 | units + 3 | 3 | 3 | 2–4 | 300s |
 
 When reviewer Workers are planned:
 
@@ -291,6 +292,8 @@ replacement
 
 They must use `phase=implementation`. New general reservations are rejected at soft deadline. Exact replay of an already-recorded reservation stays idempotent because the durable ledger checks identity before its deadline gate.
 
+Existing writable Workers may need bounded convergence after soft, but they do not gain permission to open new general reservations. Before Parent-only finalization begins, every writer must be terminal/cancel-confirmed or safely fenced and every returned checkpoint must have been harvested.
+
 ### Required review
 
 Reviewer starts/retries reserve:
@@ -302,6 +305,8 @@ kind=review_attempt
 
 A new reviewer is admitted only before `review_deadline`. At/after that boundary, phase action becomes `finalize_parent`; no reviewer start/retry may consume the Parent finalization reserve.
 
+`action=finalize_parent` is only an admission-state transition. It does **not** prove that required review completed. If `review_stage.join_policy` requires/quorums reviewer evidence and fewer than `review_stage.min_successful_workers` accepted results exist at `review_deadline`, fail/escalate from the collected evidence rather than silently downgrade to Parent-only success.
+
 `task_phase_runtime.py` is the mandatory reviewer admission gate. Callers must not bypass it by invoking raw `task_budget_runtime.py reserve --kind review_attempt` directly.
 
 ### Parent finalization
@@ -310,7 +315,9 @@ From `review_deadline` until hard deadline:
 
 - no new reviewer;
 - no reopened writable implementation;
+- no unresolved live writer may continue consuming the finalization reserve;
 - Parent reconciles already-collected review evidence and runs final non-writing verification/delivery work;
+- a required/quorum review that missed its join remains a failure/escalation condition, not a successful Parent-only fallback;
 - at hard deadline action is `stop`.
 
 Important phase output:
