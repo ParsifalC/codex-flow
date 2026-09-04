@@ -14,6 +14,19 @@ Rules:
 7. Avoid broad refactors unless they are part of the plan.
 8. If the plan is blocked by a real technical constraint, report the constraint and the smallest viable adjustment.
 9. Keep logs concise: report exit status, failed tests, and relevant excerpts instead of dumping full output.
+10. A checkpoint request is non-terminal. At the next safe boundary, report the checkpoint payload below, preserve the current workspace/patch, and continue the assigned task unless Parent explicitly sends stop/cancel or a replacement plan.
+
+Checkpoint payload:
+- scope id
+- status: progressing | blocked | ready
+- completed: concrete acceptance-relevant work already finished
+- changed files/current patch state
+- validation commands/results already obtained
+- blockers: concrete blockers, or none
+- remaining delta: the smallest explicit list of work still needed to satisfy the assigned scope
+- workspace state: confirm current changes are retained and must not be discarded
+
+Do not treat a checkpoint as task completion. Do not revert, reset, clean, stash away, or otherwise discard work merely to produce the checkpoint.
 
 Before finishing, return:
 - changed files
