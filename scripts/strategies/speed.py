@@ -1,7 +1,7 @@
 """Wall-clock-latency strategy."""
 from __future__ import annotations
 
-from .base import StagePolicy, StrategySpec, WorkerBudget, never, small_low_risk_is_direct, standard_effort
+from .base import StagePolicy, StrategySpec, TaskBudgetPolicy, WorkerBudget, never, small_low_risk_is_direct, standard_effort
 
 
 def adaptive_route(task) -> str:
@@ -50,6 +50,19 @@ def implementation_maximum_work_units(task) -> int:
     return 1
 
 
+def task_budget(task) -> TaskBudgetPolicy:
+    """Cap total speed-mode execution so replans cannot erase the latency goal."""
+    maximum_work_units = implementation_maximum_work_units(task)
+    return TaskBudgetPolicy(
+        soft_timeout_seconds=1200,
+        hard_timeout_seconds=1800,
+        max_work_units=maximum_work_units,
+        max_implementation_attempts=maximum_work_units + 1,
+        max_replans=1,
+        max_replacements=1,
+    )
+
+
 def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("opportunistic", 0, 60, 600, True, True, "continue_partial")
@@ -87,4 +100,5 @@ STRATEGY = StrategySpec(
     independent_review=never,
     lifecycle=lifecycle,
     allow_parallel_write=True,
+    task_budget=task_budget,
 )
