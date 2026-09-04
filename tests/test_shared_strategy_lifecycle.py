@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-strategy convergence/recovery contract coverage."""
+"""Cross-strategy convergence/recovery and cumulative-budget coverage."""
 from __future__ import annotations
 
 import sys
@@ -168,6 +168,22 @@ def assert_profile(name: str, profile, expected: tuple[int, int, int, int, int])
         raise AssertionError(f"{name}: manifest above maximum_work_units unexpectedly accepted")
 
 
+def assert_task_budget(name: str, profile, expected: tuple[int, int, int, int, int, int]) -> None:
+    soft, hard, max_units, max_attempts, max_replans, max_replacements = expected
+    spec = get(name)
+    assert spec.task_budget is not None, name
+    budget = spec.task_budget(profile)
+    budget.validate()
+    assert budget.soft_timeout_seconds == soft, (name, budget)
+    assert budget.hard_timeout_seconds == hard, (name, budget)
+    assert budget.max_work_units == max_units, (name, budget)
+    assert budget.max_implementation_attempts == max_attempts, (name, budget)
+    assert budget.max_replans == max_replans, (name, budget)
+    assert budget.max_replacements == max_replacements, (name, budget)
+    stage = spec.lifecycle(profile, "implementation")
+    assert budget.max_work_units == stage.maximum_work_units, (name, budget, stage)
+
+
 def main() -> None:
     routine = task()
     complex_cross = task(complexity="complex", scope="cross-module")
@@ -180,7 +196,7 @@ def main() -> None:
         quality_intent="absolute",
     )
 
-    expected = {
+    lifecycle_expected = {
         "efficient": {
             "routine": (600, 180, 1, 1, 1800),
             "complex": (900, 240, 2, 2, 1800),
@@ -203,12 +219,40 @@ def main() -> None:
         },
     }
 
-    for strategy, matrix in expected.items():
-        assert_profile(strategy, routine, matrix["routine"])
-        assert_profile(strategy, complex_cross, matrix["complex"])
-        assert_profile(strategy, demanding, matrix["demanding"])
+    budget_expected = {
+        "efficient": {
+            "routine": (1500, 1800, 1, 2, 1, 1),
+            "complex": (1500, 1800, 2, 3, 1, 1),
+            "demanding": (1500, 1800, 3, 4, 1, 1),
+        },
+        "balanced": {
+            "routine": (2400, 3000, 1, 3, 2, 2),
+            "complex": (2700, 3300, 2, 4, 2, 2),
+            "demanding": (3000, 3600, 3, 5, 2, 2),
+        },
+        "quality": {
+            "routine": (4800, 6000, 1, 4, 3, 3),
+            "complex": (5400, 6600, 3, 6, 3, 3),
+            "demanding": (6000, 7200, 4, 7, 3, 3),
+        },
+        "speed": {
+            "routine": (1200, 1800, 1, 2, 1, 1),
+            "complex": (1200, 1800, 3, 4, 1, 1),
+            "demanding": (1200, 1800, 4, 5, 1, 1),
+        },
+    }
 
-    print("shared strategy lifecycle contract tests passed")
+    profiles = {
+        "routine": routine,
+        "complex": complex_cross,
+        "demanding": demanding,
+    }
+    for strategy, matrix in lifecycle_expected.items():
+        for label, profile in profiles.items():
+            assert_profile(strategy, profile, matrix[label])
+            assert_task_budget(strategy, profile, budget_expected[strategy][label])
+
+    print("shared strategy lifecycle and task-budget contract tests passed")
 
 
 if __name__ == "__main__":
