@@ -127,6 +127,19 @@ assert d["replan_scope"] is None, d
 assert "remaining delta" in d["reason"], d
 PY
 
+# A terminal-success flag does not let Parent consume a returned checkpoint
+# without harvesting it first.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-terminal-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 1005 --last-meaningful-progress-at 1005 \
+  --now 1010 --writable --terminal-success --checkpoint-requested-at 1000 --checkpoint-received-at 1005 \
+  > "$TMP/terminal-checkpoint.json"
+python3 - "$TMP/terminal-checkpoint.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+PY
+
 # A harvested checkpoint is non-terminal; the existing Worker continues instead of being recalled.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
   --stage implementation --started-at 100 --last-progress-at 1010 --last-meaningful-progress-at 1005 \
@@ -155,6 +168,34 @@ assert d["cancel_required"] is False and d["fallback_policy"] is None, d
 assert d["fence_required"] is False and d["replan_scope"] is None, d
 PY
 
+# A requested checkpoint without a returned payload does not defeat a hard
+# timeout: the Worker still needs fallback and cancellation/fencing.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-requested-hard \
+  --stage implementation --started-at 100 --last-progress-at 1895 --now 1900 --writable --in-flight \
+  --checkpoint-requested-at 1850 > "$TMP/requested-hard.json"
+python3 - "$TMP/requested-hard.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["wall_seconds"]==1800 and d["checkpoint_status"]=="requested", d
+assert d["action"]=="request_cancel" and d["cancel_required"] is True, d
+assert d["fence_required"] is True and d["fallback_policy"]=="replan", d
+assert d["replan_scope"]=="uncovered_scope", d
+PY
+
+# The same requested-without-payload state remains a fallback/cancel decision
+# after the hard boundary, not an indefinitely pending checkpoint.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-requested-timeout \
+  --stage implementation --started-at 100 --last-progress-at 1895 --now 2000 --writable \
+  --checkpoint-requested-at 1850 > "$TMP/requested-timeout.json"
+python3 - "$TMP/requested-timeout.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["wall_seconds"]==1900 and d["checkpoint_status"]=="requested", d
+assert d["action"]=="request_cancel" and d["cancel_required"] is True, d
+assert d["fence_required"] is True and d["fallback_policy"]=="replan", d
+assert d["replan_scope"]=="uncovered_scope", d
+PY
+
 # After harvest, hard-timeout cancellation is fenced and the future replan is explicitly restricted to remaining_delta.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
   --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
@@ -169,6 +210,21 @@ assert d["fallback_policy"]=="replan", d
 assert d["replan_scope"]=="checkpoint_remaining_delta", d
 assert d["checkpoint_reuse_mode"]=="retained_workspace", d
 assert "remaining_delta" in d["reason"] and "completed work must be preserved" in d["reason"], d
+PY
+
+# Even an already-harvested checkpoint cannot keep a Worker past hard timeout;
+# the fallback is limited to the harvested remaining delta and is fenced.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-harvested-hard \
+  --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
+  --now 1900 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
+  --checkpoint-harvested-at 1895 > "$TMP/harvested-hard.json"
+python3 - "$TMP/harvested-hard.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["wall_seconds"]==1800 and d["checkpoint_status"]=="harvested", d
+assert d["action"]=="request_cancel" and d["cancel_required"] is True, d
+assert d["fence_required"] is True and d["fallback_policy"]=="replan", d
+assert d["replan_scope"]=="checkpoint_remaining_delta", d
 PY
 
 # Once the old writer is confirmed cancelled, replacement replan still receives only remaining_delta and retains the workspace.

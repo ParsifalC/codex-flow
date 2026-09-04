@@ -66,6 +66,8 @@ def lifecycle(task, stage: str) -> StagePolicy:
             work_unit_mode="bounded" if minimum_work_units > 1 else "single",
             minimum_work_units=minimum_work_units,
             join_between_work_units=minimum_work_units > 1,
+            maximum_work_units=minimum_work_units,
+            require_write_paths=minimum_work_units > 1,
         )
     if stage == "review":
         return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")

@@ -407,6 +407,11 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
 
     idle, _meaningful_idle, wall, _quality = _progress_metrics(policy, observation)
 
+    # Preserve already-returned partial work before any terminal failure, hard
+    # timeout, idle fallback, cancellation, or writer replacement can discard it.
+    if observation.checkpoint_status() == "received":
+        return _checkpoint_harvest_decision(policy, observation)
+
     if observation.terminal_success:
         return _decision(
             policy,
@@ -419,11 +424,6 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
             fence_required=False,
             fallback_policy=None,
         )
-
-    # Preserve already-returned partial work before any terminal failure, hard
-    # timeout, idle fallback, cancellation, or writer replacement can discard it.
-    if observation.checkpoint_status() == "received":
-        return _checkpoint_harvest_decision(policy, observation)
 
     if observation.scope_superseded and policy.cancel_if_superseded:
         return _superseded_decision(policy, observation)

@@ -75,6 +75,9 @@ class StagePolicy:
     `work_unit_mode=bounded` requires Parent to partition implementation into
     multiple acceptance-bounded units and join back to Parent between units.
     This is a logical execution boundary, not permission for overlapping writers.
+    `maximum_work_units`, when set, is a plan-level manifest bound; it does not
+    create additional worker capacity. `require_write_paths` opts a new bounded
+    policy into path-level preflight validation.
     """
 
     join_policy: str
@@ -89,8 +92,18 @@ class StagePolicy:
     work_unit_mode: str = "single"
     minimum_work_units: int = 1
     join_between_work_units: bool = False
+    maximum_work_units: int | None = None
+    require_write_paths: bool = False
 
     def validate(self) -> None:
+        for name, value in (
+            ("min_successful_workers", self.min_successful_workers),
+            ("idle_timeout_seconds", self.idle_timeout_seconds),
+            ("hard_timeout_seconds", self.hard_timeout_seconds),
+            ("minimum_work_units", self.minimum_work_units),
+        ):
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an integer")
         if self.join_policy not in JOIN_POLICIES:
             raise ValueError(f"invalid join policy: {self.join_policy}")
         if self.min_successful_workers < 0:
@@ -104,25 +117,43 @@ class StagePolicy:
         if self.hard_timeout_seconds < self.idle_timeout_seconds:
             raise ValueError("hard_timeout_seconds must be >= idle_timeout_seconds")
         if self.soft_timeout_seconds is not None:
+            if type(self.soft_timeout_seconds) is not int:
+                raise ValueError("soft_timeout_seconds must be an integer when set")
             if self.soft_timeout_seconds < 1:
                 raise ValueError("soft_timeout_seconds must be positive when set")
             if self.soft_timeout_seconds >= self.hard_timeout_seconds:
                 raise ValueError("soft_timeout_seconds must be lower than hard_timeout_seconds")
-        if self.max_worker_repair_attempts is not None and self.max_worker_repair_attempts < 0:
-            raise ValueError("max_worker_repair_attempts cannot be negative")
+        if self.max_worker_repair_attempts is not None:
+            if type(self.max_worker_repair_attempts) is not int:
+                raise ValueError("max_worker_repair_attempts must be an integer when set")
+            if self.max_worker_repair_attempts < 0:
+                raise ValueError("max_worker_repair_attempts cannot be negative")
         if self.work_unit_mode not in WORK_UNIT_MODES:
             raise ValueError(f"invalid work_unit_mode: {self.work_unit_mode}")
         if self.minimum_work_units < 1:
             raise ValueError("minimum_work_units must be positive")
+        if type(self.join_between_work_units) is not bool:
+            raise ValueError("join_between_work_units must be boolean")
+        if self.maximum_work_units is not None:
+            if type(self.maximum_work_units) is not int:
+                raise ValueError("maximum_work_units must be an integer when set")
+            if self.maximum_work_units < 1:
+                raise ValueError("maximum_work_units must be positive when set")
         if self.work_unit_mode == "single":
             if self.minimum_work_units != 1:
                 raise ValueError("single work-unit mode requires minimum_work_units=1")
             if self.join_between_work_units:
                 raise ValueError("single work-unit mode cannot join between work units")
+            if self.maximum_work_units is not None and self.maximum_work_units != 1:
+                raise ValueError("single work-unit mode requires maximum_work_units=1")
         elif self.minimum_work_units < 2:
             raise ValueError("bounded work-unit mode requires at least two work units")
         elif not self.join_between_work_units:
             raise ValueError("bounded work-unit mode requires a Parent join between work units")
+        elif self.maximum_work_units is not None and self.maximum_work_units < self.minimum_work_units:
+            raise ValueError("bounded work-unit mode requires maximum_work_units >= minimum_work_units")
+        if type(self.require_write_paths) is not bool:
+            raise ValueError("require_write_paths must be boolean")
         if self.fallback_policy not in FALLBACK_POLICIES:
             raise ValueError(f"invalid fallback policy: {self.fallback_policy}")
 

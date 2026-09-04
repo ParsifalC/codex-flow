@@ -40,11 +40,28 @@ cancel_if_superseded
 cancel_stragglers_after_quorum
 fallback_policy
   continue_partial | parent_delta | replan | fail
+
+soft_timeout_seconds | none
+max_worker_repair_attempts | none
+work_unit_mode
+  single | bounded
+minimum_work_units
+join_between_work_units
+maximum_work_units | none
+require_write_paths
 ```
 
 `idle_timeout_seconds` 是可续期 progress lease，不是完成 deadline。新的命令、文件读取、搜索、工具事件或明确可见的 in-flight 操作都说明 Worker 仍可能健康。
 
 `hard_timeout_seconds` 是绝对 wall-clock 上限，即使存在 in-flight 操作也不能无限运行。
+
+`work_unit_mode=bounded` 要求 Parent 在 spawn 前提交不少于 `minimum_work_units` 个 acceptance-bounded units；`maximum_work_units`（如果存在）是 manifest 总数上限，并且不得小于 minimum。`require_write_paths=true` 的新 bounded policy 要求每个 unit 提供非负整数 `generation` 和非空、规范化的 repo-relative POSIX `write_paths`。旧 policy 缺少这些可选字段时保留 legacy serial 行为。
+
+每个 bounded unit 的 lineage 是 `(scope_id, unit_id, generation)`。同一 unit 的 checkpoint/continue 不增加 generation；replacement Worker 或 replan superseding 旧尝试必须使用 generation+1，Parent 只接受当前 generation 的结果。
+
+`write_paths` 检查只是静态 lexical preflight：拒绝绝对路径、`.`/`..` traversal、glob、反斜杠、NUL、Windows drive/UNC，并检查同一路径或祖先/后代重叠的依赖顺序。它不是 OS lock，不解析 symlink，也不提供 durable scheduler enforcement。
+
+这些 unit/max/path/generation 字段只描述一次 ExecutionPlan 的 bounded manifest；本 evaluator 不提供 task-wide 累计预算、durable checkpoint store 或跨进程 ledger。Scheduler/runtime 必须自行持久化并执行 lineage、checkpoint harvest、writer fence 和当前 generation 接受规则。
 
 ## Worker 状态
 
@@ -110,11 +127,13 @@ wall_seconds
 fallback_policy
 ```
 
-`cancel_required=true` 表示 Worker 仍是非终态，即使 `action` 已允许 `parent_delta`、`continue_partial` 或 isolated `replan`，Scheduler 仍必须请求回收旧 Worker。这样 read-only fallback 不会把超时 Worker 留在后台继续消耗资源；对 writable Worker，`fence_required` 还会进一步约束任何新的 writer。
+`cancel_required=true` 表示 Worker 仍是非终态，即使 `action` 已允许 `parent_delta`、`continue_partial` 或 isolated `replan`，Scheduler/runtime 仍必须请求回收旧 Worker。这样 read-only fallback 不会把超时 Worker 留在后台继续消耗资源；对 writable Worker，`fence_required` 还会进一步约束任何新的 writer。Evaluator 只返回这些要求，不会自动取消 Worker 或提供 durable scheduler enforcement。
 
 `fallback_policy` 只在失败、取消或 stall 等确实需要 fallback 的决策中返回；成功或已 superseded 且 scope 已满足时为 `null`，避免消费端误以为还需要补做工作。
 
-这样 StagePolicy 是 deterministic 的，状态跃迁、timeout/fallback 和 cancellation requirement 也不再由 Parent 临场重新发明。
+返回的 `checkpoint_status` 按 `not_requested → requested → received → harvested` 单调推进。未 harvest 的 `received` checkpoint 优先于 terminal success、terminal failure、cancel、idle 和 hard timeout；即使 Worker 同时报告成功，也必须先 `harvest_checkpoint`。只有 requested 而没有 payload 时，hard/idle fallback 仍按 policy 生效。
+
+这样 StagePolicy 是 deterministic 的，状态跃迁、timeout/fallback 和 cancellation requirement 也不再由 Parent 临场重新发明；evaluator 本身只报告决策，不执行取消、fence、持久化或 scheduler 调度。
 
 ## Writable writer fencing
 
@@ -163,12 +182,14 @@ Fallback 永远只处理 missing delta：
 
 - `continue_partial`：现有证据已足够时继续。
 - `parent_delta`：Parent 只补缺失 scope；若是 writable implementation delta，必须先满足 writable writer fence。
-- `replan`：只针对剩余 delta 重新 profile/compile；若会产生新的 writable Implementer，同样必须先满足 fence。
+- `replan`：只针对剩余 delta 重新 profile/compile；若会产生新的 writable Implementer，同样必须先满足 fence，并将 superseding bounded unit 的 generation 递增 1。
 - `fail`：报告未解决失败，不静默替换。
 
 对非终态 `stalled` / hard-timeout Worker，fallback 可以继续推进，但 `cancel_required=true` 会同时要求回收旧 Worker。
 
 Worker lifecycle failure 不消耗 `max_repair_cycles`；repair cycle 只用于实现产物本身的缺陷修复。
+
+Checkpoint/continue 不会创建新的 generation，也不消耗 task-wide 累计预算；checkpoint payload 的 durable 存储、跨进程 fencing 和 scheduler 回收由外围 runtime 负责。
 
 ## Built-in strategy defaults
 
@@ -216,4 +237,6 @@ scope 有等价证据且 policy 允许 supersession：`superseded → request_ca
 7. 非终态 lifecycle exit 必须显式表达 `cancel_required=true`，不能让超时 Worker 静默留在后台。
 8. writable downstream writer（Parent 或 replacement）必须满足 `old terminal OR new isolated+fenced`。
 9. lifecycle failure 不消耗 implementation repair cycle。
-10. Strategy-specific lifecycle preference 留在 StrategySpec；hard safety invariants 由 deterministic lifecycle evaluator 统一执行。
+10. bounded lineage 是 `(scope_id, unit_id, generation)`；replacement/replan 使用 generation+1，checkpoint/continue 保持不变，Parent 只接受当前 generation。
+11. `write_paths` 只做静态 lexical preflight，不是 OS lock；不能替代真实跨进程 fence 或 durable store。
+12. Strategy-specific lifecycle preference 留在 StrategySpec；hard safety invariants 由 deterministic lifecycle evaluator 统一计算，但取消、持久化和 scheduler enforcement 由外围 runtime 执行。

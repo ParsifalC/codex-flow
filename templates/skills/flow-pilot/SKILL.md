@@ -200,6 +200,8 @@ ExecutionPlan
     work_unit_mode: single | bounded
     minimum_work_units
     join_between_work_units
+    maximum_work_units | none
+    require_write_paths
     cancel_if_superseded
     cancel_stragglers_after_quorum
     fallback_policy
@@ -215,7 +217,7 @@ ExecutionPlan
 
 `implementation_stage.max_worker_repair_attempts` bounds local Implementer validation/fix loops and is independent from top-level Parent `max_repair_cycles`.
 
-`implementation_stage.work_unit_mode=bounded` is binding. `minimum_work_units` is the minimum number of logical acceptance-bounded implementation transactions. `join_between_work_units=true` means control must return to Parent after each completed unit before a dependent next unit begins. These fields do **not** authorize extra writable concurrency.
+`implementation_stage.work_unit_mode=bounded` is binding. `minimum_work_units` is the minimum number of logical acceptance-bounded implementation transactions. `maximum_work_units`, when present, is a hard manifest count bound and must be at least the minimum. `join_between_work_units=true` means control must return to Parent after each completed unit before a dependent next unit begins. These fields do **not** authorize extra writable concurrency. `require_write_paths=true` opts a new bounded policy into generation and normalized repository-relative `write_paths` validation.
 
 Once compiled, execute the plan. Prohibited duplication includes:
 
@@ -241,7 +243,7 @@ Capability and reasoning are independent. `Luna max` is not automatically Parent
 
 ## 5. Async Worker lifecycle and progress tracking
 
-Lifecycle comes from ExecutionPlan, not Parent heuristics. Every Worker gets a stable bounded `scope_id` before spawn.
+Lifecycle comes from ExecutionPlan, not Parent heuristics. Every Worker gets a stable bounded lineage before spawn: `(scope_id, unit_id, generation)` for bounded implementation units, or `(scope_id, generation)` for legacy/single work. A replacement Worker or replan increments `generation`; checkpoint/continue of the same unit does not. Parent accepts result evidence only for the current generation.
 
 Semantic states:
 
@@ -266,6 +268,8 @@ Do not advance meaningful progress for repeated unchanged search/read/test loops
 Meaningful-progress quality is observational and non-destructive. `activity_only` does not authorize cancellation. Existing liveness lease and hard ceiling remain safety boundaries.
 
 `idle_timeout_seconds` is a renewable liveness lease. `soft_timeout_seconds` is an advisory checkpoint/convergence budget. `hard_timeout_seconds` is the absolute Worker wall-clock ceiling.
+
+The lifecycle helper is a deterministic evaluator, not a durable scheduler, task-wide ledger, or checkpoint store. It reports cancellation and fencing requirements from observed facts; the runtime must enforce them and persist any checkpoint/lineage state it needs.
 
 **A `wait()` timeout is never a Worker timeout.** Repeated Parent waits without terminal output do not by themselves justify stalled/failed/cancelled.
 
@@ -327,6 +331,8 @@ Checkpoint is not completion. Never reset/revert/clean/stash/discard work merely
 
 **Harvest-before-fallback invariant:** a returned but unharvested checkpoint outranks terminal failure, idle fallback, hard timeout, cancellation handling, and writer replacement. Preserve it first, then re-evaluate lifecycle with the real harvested timestamp.
 
+This precedence also applies when the Worker reports terminal success in the same observation: `checkpoint_status=received` must return `harvest_checkpoint` before `consume_result`. A requested checkpoint without a returned payload does not postpone hard/idle fallback.
+
 ### Remaining-delta replan
 
 Fallback always operates on the missing delta, never by restarting the whole stage:
@@ -373,9 +379,11 @@ If `work_unit_mode=bounded`, Parent must create an explicit implementation unit 
 ```text
 unit_id
 scope_id
+generation
 acceptance_delta
 write_scope_id
 validation: non-empty list
+write_paths: normalized repo-relative POSIX paths when required by the plan
 depends_on: unit ids, when ordered
 parallel_group: optional
 ```
@@ -397,10 +405,16 @@ Use the helper result as the gate. If validation fails, fix the manifest; do not
 Safety rules enforced by the manifest/runtime contract:
 
 - same `write_scope_id` units are sequential and each later unit must depend on the previous same-scope unit;
+- same or ancestor/descendant `write_paths` across units require a direct or transitive dependency;
 - `parallel_group` may contain only isolated distinct `write_scope_id`s with no direct or transitive dependency path inside that group;
+- every unit in a `parallel_group` must provide non-empty, normalized `write_paths`, and paths in that group must be completely non-overlapping;
+- path checks reject absolute, traversal, glob, backslash, NUL, and Windows drive/UNC forms;
+- `maximum_work_units`, when present, bounds total manifest units;
 - a parallel group cannot exceed the already-resolved implementation/thread concurrency from ExecutionPlan;
 - bounded mode cannot collapse to fewer than `minimum_work_units`;
 - work-unit partitioning never creates new `writable_workstreams`; existing ExecutionPlan isolation is still authoritative.
+
+`write_paths` are static lexical preflight evidence only. They are not an OS lock, do not resolve symlinks, and do not provide durable scheduler enforcement. Parent still owns real writable-scope fencing and must persist/compare the current `(scope_id, unit_id, generation)` lineage when accepting results.
 
 `implementation_workers` is the maximum concurrent implementer topology for a wave, **not permission to run every logical unit concurrently**. When only one writable workstream is proven, execute bounded units serially even if there are multiple units. When the plan already authorizes isolated parallel implementation workers, independent units may share a validated `parallel_group` up to the existing concurrency ceiling.
 
@@ -416,7 +430,9 @@ Every implementation handoff includes only:
 
 - `scope_id` / isolated writable scope;
 - one `unit_id` and `acceptance_delta` when bounded;
+- current `generation` for that unit;
 - allowed `write_scope_id`;
+- normalized `write_paths` when required by the plan;
 - dependencies and harvested prior-unit evidence;
 - root cause/design decision;
 - relevant files/components;
@@ -426,7 +442,7 @@ Every implementation handoff includes only:
 - required validation;
 - `implementation_stage.max_worker_repair_attempts` when present.
 
-For `checkpoint_remaining_delta`, replace full-scope handoff with same scope/unit lineage, `replan_scope`, `checkpoint_reuse_mode`, harvested completed/validation/patch baseline, and **only** harvested remaining delta. Never paste the original complete task as a second goal.
+For `checkpoint_remaining_delta`, replace full-scope handoff with the same `scope_id`/`unit_id` lineage and unchanged generation, `replan_scope`, `checkpoint_reuse_mode`, harvested completed/validation/patch baseline, and **only** harvested remaining delta. A replacement Worker or replan superseding a prior attempt uses generation+1; checkpoint/continue does not increment. Parent accepts only current-generation evidence. Never paste the original complete task as a second goal.
 
 Prefer fresh/no-history child context when supported.
 
