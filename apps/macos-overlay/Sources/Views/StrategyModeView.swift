@@ -315,8 +315,7 @@ public struct StrategyModeCard: View {
                     }
                     Toggle("", isOn: strategyEnabledBinding)
                         .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
+                        .toggleStyle(SleekSwitchToggleStyle(tint: .cyan))
                         .disabled(isLoading || applyingProfile != nil || applyingEnabled)
                 }
                 .padding(7)

@@ -75,6 +75,8 @@ public struct SummaryView: View {
                     .foregroundColor(statusColor.opacity(0.85))
             }
 
+            GitHubStarButton()
+
             Spacer()
 
             Button {
@@ -197,6 +199,101 @@ public struct SummaryView: View {
         .onHover { isHovered = $0 }
     }
 }
+
+    private struct GitHubStarButton: View {
+        @State private var isHovered = false
+        @State private var hasClicked = false
+
+        var body: some View {
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    hasClicked = true
+                }
+                if let url = URL(string: "https://github.com/ParsifalC/codex-flow") {
+                    NSWorkspace.shared.open(url)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        hasClicked = false
+                    }
+                }
+            } label: {
+                HStack(spacing: 3.5) {
+                    Image(systemName: hasClicked ? "heart.fill" : "star.fill")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(
+                            hasClicked
+                                ? LinearGradient(
+                                    colors: [Color.pink, Color.red],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                : LinearGradient(
+                                    colors: [
+                                        Color(red: 1.0, green: 0.88, blue: 0.35),
+                                        Color(red: 0.98, green: 0.68, blue: 0.16)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                        )
+                        .shadow(
+                            color: (hasClicked ? Color.pink : Color(red: 1.0, green: 0.75, blue: 0.2))
+                                .opacity(isHovered ? 0.7 : 0.3),
+                            radius: isHovered ? 3 : 1.5
+                        )
+
+                    Text(hasClicked ? L("Thanks!", "感谢支持!") : "Star")
+                        .font(.system(size: 9.2, weight: .bold, design: .rounded))
+                        .foregroundColor(isHovered ? .white : .white.opacity(0.88))
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3.5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    (hasClicked ? Color.pink : Color(red: 1.0, green: 0.8, blue: 0.2))
+                                        .opacity(isHovered ? 0.18 : 0.08),
+                                    (hasClicked ? Color.purple : Color(red: 1.0, green: 0.55, blue: 0.1))
+                                        .opacity(isHovered ? 0.12 : 0.04)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    (hasClicked ? Color.pink : Color(red: 1.0, green: 0.85, blue: 0.3))
+                                        .opacity(isHovered ? 0.55 : 0.26),
+                                    (hasClicked ? Color.purple : Color(red: 1.0, green: 0.6, blue: 0.15))
+                                        .opacity(isHovered ? 0.32 : 0.12)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.75
+                        )
+                )
+                .shadow(
+                    color: (hasClicked ? Color.pink : Color(red: 1.0, green: 0.75, blue: 0.15))
+                        .opacity(isHovered ? 0.28 : 0),
+                    radius: 4,
+                    y: 1
+                )
+                .scaleEffect(isHovered ? 1.03 : 1.0)
+            }
+            .buttonStyle(.plain)
+            .help(L("Star FlowPilot on GitHub", "前往 GitHub 为 FlowPilot 点亮 Star"))
+            .onHover { isHovered = $0 }
+            .animation(.spring(response: 0.2, dampingFraction: 0.75), value: isHovered)
+        }
+    }
 
     private var background: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
