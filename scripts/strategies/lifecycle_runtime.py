@@ -5,7 +5,8 @@ This module is copied automatically with the strategy package by both Unix and
 Windows installers. It turns observable Worker facts plus an ExecutionPlan
 StagePolicy into a deterministic lifecycle decision. Semantic scope overlap
 remains a Parent responsibility; timing/state transitions, checkpoint harvest,
-cancellation requirements, and writable replacement fencing do not.
+cancellation requirements, remaining-delta replans, and writable replacement
+fencing do not.
 """
 from __future__ import annotations
 
@@ -26,6 +27,8 @@ WRITER_FALLBACKS = {"parent_delta", "replan"}
 EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000
 PROGRESS_QUALITIES = {"meaningful", "activity_only", "none"}
 CHECKPOINT_STATUSES = {"not_requested", "requested", "received", "harvested"}
+REPLAN_SCOPES = {"uncovered_scope", "checkpoint_remaining_delta"}
+CHECKPOINT_REUSE_MODES = {"retained_workspace", "harvested_snapshot_only"}
 
 
 @dataclass(frozen=True)
@@ -201,6 +204,8 @@ class LifecycleDecision:
     meaningful_idle_seconds: float
     progress_quality: str
     checkpoint_status: str
+    replan_scope: str | None
+    checkpoint_reuse_mode: str | None
     wall_seconds: float
     fallback_policy: str | None
 
@@ -228,6 +233,21 @@ def _progress_metrics(
     return idle, meaningful_idle, wall, quality
 
 
+def _replan_contract(
+    observation: WorkerObservation,
+    fallback_policy: str | None,
+) -> tuple[str | None, str | None]:
+    if fallback_policy != "replan":
+        return None, None
+    if observation.checkpoint_status() != "harvested":
+        return "uncovered_scope", None
+    scope = "checkpoint_remaining_delta"
+    reuse = "harvested_snapshot_only" if observation.replacement_isolated else "retained_workspace"
+    if scope not in REPLAN_SCOPES or reuse not in CHECKPOINT_REUSE_MODES:  # pragma: no cover
+        raise AssertionError("invalid replan checkpoint contract")
+    return scope, reuse
+
+
 def _decision(
     policy: LifecyclePolicy,
     observation: WorkerObservation,
@@ -241,6 +261,7 @@ def _decision(
     fallback_policy: str | None,
 ) -> LifecycleDecision:
     idle, meaningful_idle, wall, quality = _progress_metrics(policy, observation)
+    replan_scope, checkpoint_reuse_mode = _replan_contract(observation, fallback_policy)
     return LifecycleDecision(
         state=state,
         action=action,
@@ -252,6 +273,8 @@ def _decision(
         meaningful_idle_seconds=meaningful_idle,
         progress_quality=quality,
         checkpoint_status=observation.checkpoint_status(),
+        replan_scope=replan_scope,
+        checkpoint_reuse_mode=checkpoint_reuse_mode,
         wall_seconds=wall,
         fallback_policy=fallback_policy,
     )
@@ -305,6 +328,8 @@ def _fallback_decision(
         )
         if fence_required and observation.replacement_isolated and not terminal:
             reason += "; downstream writer is explicitly isolated and old output is fenced from integration"
+    if policy.fallback_policy == "replan" and observation.checkpoint_status() == "harvested":
+        reason += "; replan is restricted to the harvested checkpoint remaining_delta and completed work must be preserved"
     if cancel_required:
         reason += "; non-terminal Worker cancellation is required"
     return _decision(
