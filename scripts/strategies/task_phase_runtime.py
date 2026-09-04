@@ -4,8 +4,14 @@
 The compiler emits one self-consistent task budget. Its soft deadline is the
 end of general writable work. If independent review is planned, its hard
 deadline already includes the review-stage hard window plus an explicit Parent
-finalization reserve. This helper only validates that contract and performs
+finalization reserve. This helper validates that contract and performs
 phase-aware reservations; it never derives a second budget.
+
+Required completion has two admission windows:
+- review may start from the general-work cutoff until ``review_deadline``;
+- Parent finalization retains the remaining tail until the absolute hard stop.
+
+A reviewer retry therefore cannot consume the Parent finalization reserve.
 """
 from __future__ import annotations
 
@@ -98,7 +104,6 @@ def _completion_reserve(plan: dict[str, Any], policy: TaskBudgetPolicy) -> tuple
         if review_stage is not None:
             raise LedgerError("review_stage must be null when reviewer_workers is zero")
         if policy.max_review_attempts != 0:
-            # Parent-only plans must not silently reserve reviewer capacity.
             raise LedgerError("max_review_attempts must be zero when reviewer_workers is zero")
         return 0, 0, 0
     if type(review_stage) is not dict:
@@ -182,11 +187,23 @@ def phase_decision(plan_value: Any, ledger_value: Any, phase: str, now: Any) -> 
     hard_open = (not closed) and current_now < hard_deadline
     permits_general_work = hard_open and current_now < soft_deadline
     permits_required_completion = hard_open and reserve_seconds > 0
+    review_deadline = hard_deadline - parent_finalization if reserve_seconds > 0 else None
+    permits_review_start = (
+        permits_required_completion
+        and review_deadline is not None
+        and current_now < review_deadline
+    )
+    permits_parent_finalization = hard_open
 
     if not hard_open:
         action = "stop"
     elif phase == "required_completion":
-        action = "complete_required" if permits_required_completion else "stop"
+        if not permits_required_completion:
+            action = "stop"
+        elif permits_review_start:
+            action = "complete_required"
+        else:
+            action = "finalize_parent"
     elif permits_general_work:
         action = "continue"
     elif reserve_seconds > 0:
@@ -200,13 +217,17 @@ def phase_decision(plan_value: Any, ledger_value: Any, phase: str, now: Any) -> 
         "permits_phase_start": permits_required_completion if phase == "required_completion" else permits_general_work,
         "permits_general_work": permits_general_work,
         "permits_required_completion": permits_required_completion,
+        "permits_review_start": permits_review_start,
+        "permits_parent_finalization": permits_parent_finalization,
         "reviewer_reserve_seconds": review_hard,
         "parent_finalization_reserve_seconds": parent_finalization,
         "required_completion_reserve_seconds": reserve_seconds,
         "general_work_deadline": soft_deadline,
+        "review_deadline": review_deadline,
         "soft_deadline": soft_deadline,
         "hard_deadline": hard_deadline,
         "remaining_general_work_seconds": max(0.0, soft_deadline - current_now),
+        "remaining_review_seconds": 0.0 if review_deadline is None else max(0.0, review_deadline - current_now),
         "remaining_hard_seconds": max(0.0, hard_deadline - current_now),
         "checkpoint_convergence_required": phase == "implementation" and hard_open and current_now >= soft_deadline,
         "required_completion_handoff": reserve_seconds > 0 and hard_open and current_now >= soft_deadline,
@@ -250,15 +271,19 @@ def reserve_phase(
         raise LedgerError(f"{kind} reservations require phase={expected_phase}")
     if phase == "implementation" and kind not in GENERAL_RESERVATION_KINDS:
         raise LedgerError("implementation phase only accepts general-work reservations")
+
     decision = status(state_file, task_id, plan, phase, now)
-    if not decision["permits_phase_start"]:
+    if kind == "review_attempt":
+        if not decision["permits_review_start"]:
+            raise LedgerError("review admission deadline reached; Parent finalization reserve is protected")
+    elif not decision["permits_phase_start"]:
         raise LedgerError(f"task phase {phase} does not permit a new {kind} reservation")
+
     result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
     result.update(phase_decision(plan, result, phase, now))
     return result
 
 
-# Backward-compatible Python name inside this branch; CLI and schema are v11 only.
 def reserve_implementation(state_file: str, task_id: str, plan: dict[str, Any], kind: str, reservation_id: str, fingerprint: str, now: Any) -> dict[str, Any]:
     return reserve_phase(state_file, task_id, plan, "implementation", kind, reservation_id, fingerprint, now)
 
