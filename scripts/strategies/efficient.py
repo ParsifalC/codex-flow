@@ -40,7 +40,12 @@ def implementation_repair_attempts(task) -> int:
 
 
 def implementation_minimum_work_units(task) -> int:
-    """Keep long implementation transactions bounded without creating unsafe write concurrency."""
+    """Default to one unit; evidence may still opt the stage into bounded mode."""
+    return 1
+
+
+def implementation_maximum_work_units(task) -> int:
+    """Bounded plans reserve room for independently evidenced deltas."""
     if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
         return 3
     if task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
@@ -53,6 +58,8 @@ def lifecycle(task, stage: str) -> StagePolicy:
         return StagePolicy("quorum", 1, 120, 900, True, True, "parent_delta")
     if stage == "implementation":
         minimum_work_units = implementation_minimum_work_units(task)
+        maximum_work_units = implementation_maximum_work_units(task)
+        bounded_mode = maximum_work_units > 1
         return StagePolicy(
             "required",
             1,
@@ -63,11 +70,11 @@ def lifecycle(task, stage: str) -> StagePolicy:
             "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
             max_worker_repair_attempts=implementation_repair_attempts(task),
-            work_unit_mode="bounded" if minimum_work_units > 1 else "single",
+            work_unit_mode="bounded" if bounded_mode else "single",
             minimum_work_units=minimum_work_units,
-            join_between_work_units=minimum_work_units > 1,
-            maximum_work_units=minimum_work_units,
-            require_write_paths=minimum_work_units > 1,
+            join_between_work_units=bounded_mode,
+            maximum_work_units=maximum_work_units,
+            require_write_paths=bounded_mode,
         )
     if stage == "review":
         return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")

@@ -209,8 +209,6 @@ def _policy_contract(value: dict[str, Any]) -> tuple[str, int, bool, int | None,
         if maximum is not None and maximum != 1:
             raise ValueError("single work-unit mode requires maximum_work_units=1")
     else:
-        if minimum < 2:
-            raise ValueError("bounded work-unit mode requires at least two work units")
         if not join_between:
             raise ValueError("bounded work-unit mode requires Parent joins between work units")
         if maximum is not None and maximum < minimum:

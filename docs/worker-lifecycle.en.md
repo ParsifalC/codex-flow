@@ -57,6 +57,8 @@ require_write_paths
 
 `work_unit_mode=bounded` requires Parent to submit at least `minimum_work_units` acceptance-bounded units before spawning implementation work. `maximum_work_units`, when present, caps the total manifest and must be at least the minimum. A new bounded policy with `require_write_paths=true` requires every unit to carry a non-negative integer `generation` plus non-empty, normalized repo-relative POSIX `write_paths`. Older policies that omit these optional fields retain legacy serial behavior.
 
+Plan one unit by default. Split into multiple bounded units only when each split has an independent acceptance delta, validation boundary, and ownership/dependency evidence. Bounded mode permits `minimum_work_units=1` when a natural split is unavailable, while Parent joins, write-scope/path, dependency, and maximum checks remain binding.
+
 The lineage of a bounded unit is `(scope_id, unit_id, generation)`. Checkpoint/continue within the same unit does not increment generation; a replacement Worker or superseding replan must use generation+1, and Parent accepts results only from the current generation.
 
 `write_paths` checks are static lexical preflight only: they reject absolute paths, `.`/`..` traversal, globs, backslashes, NULs, and Windows drive/UNC forms, and check dependency ordering for equal or ancestor/descendant overlap. They are not an OS lock, do not resolve symlinks, and do not provide durable scheduler enforcement.
@@ -125,13 +127,19 @@ fence_required
 idle_seconds
 wall_seconds
 fallback_policy
+checkpoint_generation
+checkpoint_sequence
+next_checkpoint_sequence
+harvested_checkpoint_sequence
 ```
 
 `cancel_required=true` means the Worker is still non-terminal. Even when `action` already permits `parent_delta`, `continue_partial`, or an isolated `replan`, Scheduler/runtime must still request cancellation of the old Worker. That prevents read-only fallback from leaving a timed-out Worker burning resources in the background; writable stages additionally obey `fence_required` for any new writer. The evaluator only reports this requirement; it does not provide automatic cancellation or durable scheduler enforcement.
 
 `fallback_policy` is populated only when failure/cancellation/stall actually requires a fallback decision. It is `null` for successful results and for superseded scopes that are already satisfied, so consumers do not infer duplicate work.
 
-`checkpoint_status` advances monotonically as `not_requested → requested → received → harvested`. An unharvested `received` checkpoint outranks terminal success, terminal failure, cancellation, idle fallback, and hard timeout; even a Worker that reports success must first return `harvest_checkpoint`. A requested checkpoint without a payload does not defer hard/idle fallback.
+Within each checkpoint sequence, `checkpoint_status` advances monotonically as `not_requested → requested → received → harvested`; globally it reports the latest sequence, so starting a new sequence moves from the prior round's `harvested` back to `requested`. An unharvested `received` checkpoint outranks terminal success, terminal failure, cancellation, idle fallback, and hard timeout; even a Worker that reports success must first return `harvest_checkpoint`. A requested checkpoint without a payload does not defer hard/idle fallback.
+
+Multi-round checkpoints use immutable `CheckpointRecord` entries whose `sequence` starts at 1 and is contiguous within the current `generation`. Every entry except the latest must be harvested before another round begins. After the latest harvest, new meaningful progress at the soft budget requests only the next sequence; without a new delta the evaluator continues idempotently. Even when the latest sequence remains requested/received, replan binds to the newest harvested baseline in the current generation; `harvested_checkpoint_sequence` identifies that sequence. The legacy three checkpoint flags remain compatible and normalize to sequence 1; the two input forms cannot be mixed. Replacement/replan uses generation+1 and resets the sequence.
 
 This keeps StagePolicy deterministic and moves timeout/fallback state transitions plus cancellation requirements out of ad-hoc Parent judgment; the evaluator only reports a decision and does not cancel, fence, persist, or schedule Workers itself.
 

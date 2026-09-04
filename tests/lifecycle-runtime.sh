@@ -662,4 +662,107 @@ assert p["parent_reasoning"]=="high", p
 assert p["explorer_reasoning"]=="xhigh" and p["implementer_reasoning"]=="xhigh", p
 PY
 
+# Multi-round checkpoints are immutable, contiguous, and re-arm only after a
+# new meaningful delta. The latest record is the current lifecycle status.
+SEQ='[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":2,"generation":0,"requested_at":950}]'
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
+  --started-at 100 --last-progress-at 960 --last-meaningful-progress-at 960 --now 1000 --writable \
+  --checkpoint-sequence-json "$SEQ" > "$TMP/multi-requested.json"
+python3 - "$TMP/multi-requested.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["checkpoint_generation"] == 0 and d["checkpoint_sequence"] == 2, d
+assert d["checkpoint_status"] == "requested" and d["action"] == "await_checkpoint", d
+assert d["next_checkpoint_sequence"] is None, d
+PY
+
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
+  --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 995 --now 1000 --writable --in-flight \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-rearm.json"
+python3 - "$TMP/multi-rearm.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"] == "request_checkpoint" and d["checkpoint_sequence"] == 1, d
+assert d["next_checkpoint_sequence"] == 2, d
+PY
+
+# A pending later round must not hide the earlier durable baseline from replan.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-hard --stage implementation \
+  --started-at 100 --last-progress-at 995 --now 1900 --writable \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":2,"generation":0,"requested_at":950}]' > "$TMP/multi-hard.json"
+python3 - "$TMP/multi-hard.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"] == "request_cancel" and d["replan_scope"] == "checkpoint_remaining_delta", d
+assert d["checkpoint_sequence"] == 2 and d["harvested_checkpoint_sequence"] == 1, d
+PY
+
+# A returned later checkpoint still wins over hard timeout and must be harvested first.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-hard --stage implementation \
+  --started-at 100 --last-progress-at 1895 --now 1900 --writable \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":2,"generation":0,"requested_at":950,"received_at":1895}]' > "$TMP/multi-received-hard.json"
+python3 - "$TMP/multi-received-hard.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"] == "harvest_checkpoint" and d["checkpoint_status"] == "received", d
+assert d["harvested_checkpoint_sequence"] == 1, d
+PY
+
+# Repeated soft evaluations without a new meaningful delta are idempotent.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-hard --stage implementation \
+  --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 920 --now 1000 --writable \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-no-delta.json"
+python3 - "$TMP/multi-no-delta.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
+assert d["next_checkpoint_sequence"] is None and d["harvested_checkpoint_sequence"] == 1, d
+PY
+
+if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
+  --started-at 100 --last-progress-at 960 --now 1000 --checkpoint-sequence-json \
+  '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":3,"generation":0,"requested_at":950}]' >/dev/null 2>"$TMP/sequence.err"; then
+  echo "checkpoint sequence gap unexpectedly accepted" >&2
+  exit 1
+fi
+grep -Fq "contiguous starting at 1" "$TMP/sequence.err"
+
+# Strict policy coercion and future progress timestamps fail fast, including
+# values arriving through the JSON CLI boundary.
+python3 - "$ROOT" <<'PY'
+import json
+import subprocess
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from strategies.lifecycle_runtime import LifecyclePolicy, WorkerObservation
+from strategies.lifecycle_runtime import CheckpointRecord
+root=sys.argv[1]
+base={"join_policy":"required","min_successful_workers":1,"idle_timeout_seconds":10,"hard_timeout_seconds":20,"cancel_if_superseded":False,"cancel_stragglers_after_quorum":False,"fallback_policy":"replan"}
+for key, value in (("join_policy", 1), ("fallback_policy", 1), ("min_successful_workers", True), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("inf"))):
+    candidate=dict(base); candidate[key]=value
+    try: LifecyclePolicy.from_dict(candidate)
+    except ValueError: pass
+    else: raise AssertionError(key)
+for key, value in (("min_successful_workers", "1"), ("min_successful_workers", 1.0), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("nan")), ("hard_timeout_seconds", float("inf")), ("hard_timeout_seconds", 10**400)):
+    candidate=dict(base); candidate[key]=value
+    result=subprocess.run([sys.executable, root + "/scripts/strategies/lifecycle_runtime.py", "--policy-json", json.dumps(candidate), "--scope-id", "strict", "--stage", "implementation", "--started-at", "0", "--last-progress-at", "0", "--now", "1"], capture_output=True, text=True)
+    if result.returncode == 0:
+        raise AssertionError((key, value, result.stdout))
+for in_flight in (False, True):
+    try: WorkerObservation("future", "implementation", 100, 101, 100, in_flight=in_flight).validate()
+    except ValueError: pass
+    else: raise AssertionError(in_flight)
+for in_flight in (False, True):
+    WorkerObservation("equal", "implementation", 100, 100, 100, in_flight=in_flight).validate()
+for candidate in (
+    WorkerObservation("mismatch", "implementation", 100, 100, 100, generation=1, checkpoint_sequence=(CheckpointRecord(1, 0, 100),)),
+    WorkerObservation("mixed", "implementation", 100, 100, 100, checkpoint_requested_at=100, checkpoint_sequence=()),
+    WorkerObservation("unharvested", "implementation", 100, 100, 100, checkpoint_sequence=(CheckpointRecord(1, 0, 100), CheckpointRecord(2, 0, 100))),
+):
+    try: candidate.validate()
+    except ValueError: pass
+    else: raise AssertionError(candidate)
+print("adversarial lifecycle contract tests passed")
+PY
+
 printf 'lifecycle runtime and restored regression tests passed\n'
