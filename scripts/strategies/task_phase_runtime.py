@@ -272,14 +272,20 @@ def reserve_phase(
     if phase == "implementation" and kind not in GENERAL_RESERVATION_KINDS:
         raise LedgerError("implementation phase only accepts general-work reservations")
 
-    decision = status(state_file, task_id, plan, phase, now)
     if kind == "review_attempt":
+        # Review admission has a stricter boundary than the raw ledger hard
+        # deadline because the final tail belongs exclusively to Parent
+        # finalization. No new reviewer may start at/after review_deadline.
+        decision = status(state_file, task_id, plan, phase, now)
         if not decision["permits_review_start"]:
             raise LedgerError("review admission deadline reached; Parent finalization reserve is protected")
-    elif not decision["permits_phase_start"]:
-        raise LedgerError(f"task phase {phase} does not permit a new {kind} reservation")
+        result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
+    else:
+        # The durable ledger checks idempotency before its soft/hard deadline
+        # gates. Let it remain authoritative so an exact replay is still safe
+        # after convergence starts, while genuinely new general work is rejected.
+        result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
 
-    result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
     result.update(phase_decision(plan, result, phase, now))
     return result
 
