@@ -14,7 +14,7 @@ import time
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("codex_flow_updater", ROOT / "scripts" / "updater.py")
@@ -405,7 +405,15 @@ class UpdaterTest(unittest.TestCase):
                     with patch.object(ssl.SSLContext, "load_verify_locations") as mock_load:
                         ctx = updater._ssl_context()
                         self.assertIsInstance(ctx, ssl.SSLContext)
-                        mock_load.assert_called_once_with(cafile="/etc/ssl/cert.pem")
+                        # Windows' create_default_context() may preload the OS
+                        # certificate store through this method before our
+                        # explicit fallback. The fallback itself must still be
+                        # the final load and use the discovered system bundle.
+                        mock_load.assert_any_call(cafile="/etc/ssl/cert.pem")
+                        self.assertEqual(
+                            mock_load.call_args_list[-1],
+                            call(cafile="/etc/ssl/cert.pem"),
+                        )
 
     def test_release_package_keeps_runtime_dependencies(self) -> None:
         linux = {path.relative_to(ROOT).as_posix() for path in packager.iter_files("linux-x86_64")}
