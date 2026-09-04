@@ -250,26 +250,28 @@ quality     4800..6000 / 6000..7200 1..4          units + 3                 3 / 
 
 The exact values come only from the current immutable ExecutionPlan. Never infer them from the strategy name and never substitute efficient's numbers for another strategy. When both are present, `task_budget.max_work_units` must equal `implementation_stage.maximum_work_units`.
 
-Immediately after the first plan is compiled, initialize the durable ledger **through the phase helper**, not through `task_budget_runtime.py init` directly:
+Immediately after the first plan is compiled, persist that exact plan JSON as the task's **initial budget plan** and initialize the durable ledger **through the phase helper**, not through `task_budget_runtime.py init` directly:
 
 ```bash
 python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py init \
   --state-file <task-ledger-path> \
   --task-id <task-id> \
-  --plan-json '<immutable ExecutionPlan JSON>' \
+  --plan-json '<initial budget plan JSON>' \
   --now <unix-seconds>
 ```
 
-For a plan with reviewer Workers, phase-aware init deterministically derives an effective ledger policy whose soft timeout is:
+The initial budget plan is immutable for task-budget purposes. Every later `task_phase_runtime.py status` and `reserve` call for this task MUST keep passing that same initial budget plan JSON, including after a semantic re-profile/replan compiles a newer ExecutionPlan. The newer plan controls current topology, role resources, lifecycle, validation, and remaining-delta execution, but it never replaces, extends, or reinitializes the durable task budget. If the newer plan needs work outside the remaining original admission envelope, converge/fail closed rather than substituting the newer plan into the phase helper.
+
+For an initial budget plan with reviewer Workers, phase-aware init deterministically derives an effective ledger policy whose soft timeout is:
 
 ```text
 min(
-  ExecutionPlan.task_budget.soft_timeout_seconds,
-  ExecutionPlan.task_budget.hard_timeout_seconds - review_stage.hard_timeout_seconds
+  initial_budget_plan.task_budget.soft_timeout_seconds,
+  initial_budget_plan.task_budget.hard_timeout_seconds - initial_budget_plan.review_stage.hard_timeout_seconds
 )
 ```
 
-All counters and the absolute hard timeout remain unchanged. This derived soft timeout is the actual general-work admission boundary stored by the ledger, so the raw ledger preserves its own atomic limit checks and deadline-after-idempotent-replay semantics. `task_phase_runtime.py` also binds later status/reserve calls to that same effective policy fingerprint and refuses a different ExecutionPlan.
+All counters and the absolute hard timeout remain unchanged. This derived soft timeout is the actual general-work admission boundary stored by the ledger, so the raw ledger preserves its own atomic limit checks and deadline-after-idempotent-replay semantics. `task_phase_runtime.py` binds later status/reserve calls to that budget-policy identity and refuses a different budget plan. A running pre-phase ledger with the original policy fingerprint is grandfathered instead of being shortened retroactively.
 
 After initialization, **do not use the raw ledger `permits_new_work` flag as a Worker-spawn gate**. Every delegated phase must go through `task_phase_runtime.py`.
 
@@ -279,7 +281,7 @@ Before exploration or implementation admission:
 python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py status \
   --state-file <task-ledger-path> \
   --task-id <task-id> \
-  --plan-json '<immutable ExecutionPlan JSON>' \
+  --plan-json '<initial budget plan JSON>' \
   --phase exploration|implementation \
   --now <unix-seconds>
 ```
@@ -290,7 +292,7 @@ Before each logical work-unit start, implementation attempt, replan, or replacem
 python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py reserve \
   --state-file <task-ledger-path> \
   --task-id <task-id> \
-  --plan-json '<immutable ExecutionPlan JSON>' \
+  --plan-json '<initial budget plan JSON>' \
   --now <unix-seconds> \
   --kind work_unit|implementation_attempt|replan|replacement \
   --reservation-id <stable-id> \
@@ -301,20 +303,20 @@ For a bounded manifest, reserve `work_unit` with the validator's stable `logical
 
 At the effective general-work soft deadline, do not open new exploration/implementation work or create implementation/replan/replacement reservations. Existing implementation must checkpoint/converge and return control. If a writable Worker cannot return before it consumes the required-review tail, harvest its latest checkpoint first, then apply the existing lifecycle/writer-fence rules and review only a terminal or immutable harvested snapshot. Never let a moving writable workspace consume a tail already reserved for required review.
 
-Required completion is a separate phase consisting of the immutable plan's already-required read-only independent review plus Parent final verification. Before starting a reviewer Worker, query:
+Required completion is a separate phase consisting of the initial budget plan's already-required read-only independent review plus Parent final verification. Before starting a reviewer Worker, query:
 
 ```bash
 python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py status \
   --state-file <task-ledger-path> \
   --task-id <task-id> \
-  --plan-json '<immutable ExecutionPlan JSON>' \
+  --plan-json '<initial budget plan JSON>' \
   --phase required_completion \
   --now <unix-seconds>
 ```
 
-`required_completion` may start after the effective task soft/general-work deadline and remains permitted until the absolute task hard deadline. Soft convergence must therefore **never** silently skip an `independent+parent` or `strict` review that the immutable ExecutionPlan already requires. At the hard deadline, first harvest any received checkpoint, then apply lifecycle fencing/cancellation; no new reviewer, replacement Worker, or Parent writer may start. Parent may still report already-collected evidence, but the task hard deadline is the absolute execution stop.
+`required_completion` may start after the effective task soft/general-work deadline and remains permitted until the absolute task hard deadline. Soft convergence must therefore **never** silently skip an `independent+parent` or `strict` review that the initial budget plan already requires. Parent should perform non-conflicting final verification while read-only reviewers run when possible, then reconcile their results before the hard boundary. At the hard deadline, first harvest any received checkpoint, then apply lifecycle fencing/cancellation; no new reviewer, replacement Worker, or Parent writer may start. Parent may still report already-collected evidence, but the task hard deadline is the absolute execution stop.
 
-Exploration/review Workers consume wall time but do not consume implementation counters. After every join or wait, re-query the phase gate for the phase you intend to continue. At task completion, call the raw ledger `finish`. A replan reuses the original ledger/state path and remaining counters, never a fresh budget or a newly initialized phase ledger.
+Exploration/review Workers consume wall time but do not consume implementation counters. After every join or wait, re-query the phase gate for the phase you intend to continue, always with the initial budget plan. At task completion, call the raw ledger `finish`. A replan reuses the original ledger/state path and remaining counters, never a fresh budget or a newly initialized phase ledger.
 
 The task-budget helper is a durable ledger/decision boundary and the task-phase helper is an admission boundary; neither schedules Workers. FlowPilot/runtime performs checkpointing, harvesting, fencing, cancellation, spawning, and joins from their deterministic results. The lifecycle helper remains authoritative for Worker-level safety decisions.
 
@@ -406,7 +408,7 @@ Meaningful-progress quality is observational and non-destructive. `activity_only
 
 `idle_timeout_seconds` is a renewable liveness lease. `soft_timeout_seconds` is an advisory checkpoint/convergence budget. `hard_timeout_seconds` is the absolute Worker wall-clock ceiling.
 
-The lifecycle helper is a deterministic evaluator, not a durable scheduler or checkpoint store. The separate task-budget helper is the durable cross-process ledger for task-level reservations; the task-phase helper derives phase admission and completion-tail reservation from the immutable plan. These helpers report decisions/requirements; the runtime must enforce cancellation, checkpoint harvest, writer fencing, and Worker scheduling.
+The lifecycle helper is a deterministic evaluator, not a durable scheduler or checkpoint store. The separate task-budget helper is the durable cross-process ledger for task-level reservations; the task-phase helper derives phase admission and completion-tail reservation from the immutable initial budget plan. These helpers report decisions/requirements; the runtime must enforce cancellation, checkpoint harvest, writer fencing, and Worker scheduling.
 
 **A `wait()` timeout is never a Worker timeout.** Repeated Parent waits without terminal output do not by themselves justify stalled/failed/cancelled.
 
@@ -508,7 +510,7 @@ Parent execution is fork/join, not fork/block: spawn planned Workers, continue n
 
 If `exploration_workers=0`, Parent performs targeted discovery and `exploration_stage` is none.
 
-Otherwise query the task-phase gate with `phase=exploration` before each planned spawn, then delegate exactly the permitted planned count to distinct bounded read-only questions, each with a unique `scope_id`. Respect `max_concurrent_threads` and role capability/model/reasoning. Do not collapse multiple planned explorers merely out of habit, and do not open a new explorer after general-work admission has closed.
+Otherwise query the task-phase gate with `phase=exploration` before each planned spawn, using the initial budget plan JSON, then delegate exactly the permitted planned count to distinct bounded read-only questions, each with a unique `scope_id`. Respect `max_concurrent_threads` and role capability/model/reasoning. Do not collapse multiple planned explorers merely out of habit, and do not open a new explorer after general-work admission has closed.
 
 Execute exploration join/cancellation/fallback only from `exploration_stage`. In particular, do not kill a Luna `xhigh/max` Explorer merely because it has taken multiple Parent wait intervals while continuing to read files, run commands, or produce other observable progress.
 
@@ -566,7 +568,7 @@ Logical work-unit boundaries do not enlarge WorkerBudget. Reuse the same planned
 
 Do not send all bounded units to one Worker in a single “complete everything” handoff. That recreates the long transaction this policy is designed to avoid.
 
-Before every implementation spawn/replan/replacement, query `task_phase_runtime.py` with `phase=implementation` and perform the corresponding reservation through its `reserve` subcommand. `permits_phase_start=false` is binding; the effective ledger soft deadline already includes any required-completion tail reserved by phase-aware init.
+Before every implementation spawn/replan/replacement, query `task_phase_runtime.py` with `phase=implementation` and perform the corresponding reservation through its `reserve` subcommand, always passing the initial budget plan rather than a later recompiled plan. `permits_phase_start=false` is binding; the effective ledger soft deadline already includes any required-completion tail reserved by phase-aware init.
 
 ## 8. Compact implementation handoff
 
@@ -635,7 +637,7 @@ Parent always reviews relevant diff, affected call sites, validation evidence, a
 - `review_mode=parent`: no reviewer Workers;
 - `review_mode=independent+parent`: spawn exactly `reviewer_workers` bounded independent reviewers, execute `review_stage`, then Parent final verification.
 
-Before any independent reviewer spawn, query the phase helper with `phase=required_completion`. A task soft/general-work deadline is **not** permission to skip the planned review; only the absolute task hard deadline closes required completion. Review a terminal workspace or immutable harvested snapshot, never a concurrently mutating writable scope. If the implementation phase reaches its completion handoff boundary with a non-terminal writer, harvest first and apply writer fencing/cancellation according to lifecycle before consuming the reserved review tail.
+Before any independent reviewer spawn, query the phase helper with `phase=required_completion`, passing the initial budget plan. A task soft/general-work deadline is **not** permission to skip the planned review; only the absolute task hard deadline closes required completion. Review a terminal workspace or immutable harvested snapshot, never a concurrently mutating writable scope. If the implementation phase reaches its completion handoff boundary with a non-terminal writer, harvest first and apply writer fencing/cancellation according to lifecycle before consuming the reserved review tail.
 
 Multiple reviewers get complementary scopes, not duplicated prompts. Reviewers are read-only and must not silently implement.
 
@@ -649,7 +651,7 @@ On implementation defect returned to Parent, send the smallest repair delta: exa
 
 Never exceed top-level `max_repair_cycles`. These cycles begin only after Implementer returned control and are separate from local Worker repair attempts.
 
-If repair fails or evidence materially changes the task, update TaskProfile and compile a new ExecutionPlan. Do not mutate old plan ad hoc.
+If repair fails or evidence materially changes the task, update TaskProfile and compile a new ExecutionPlan. Do not mutate old plan ad hoc. Keep the original initial budget plan and ledger for all task-phase admission/reservations; the new ExecutionPlan must fit inside their remaining envelope.
 
 Worker stall/failure/supersession, checkpoint handling, timeout fallback, unit joins, and remaining-delta replan do not themselves consume Parent repair cycles.
 
@@ -692,7 +694,7 @@ Re-profile and invoke planner again when:
 - Parent repair cycles fail;
 - reliable quota/runtime state materially changes.
 
-Replan from evaluator-provided scope, never original task by default. For `checkpoint_remaining_delta`, harvested checkpoint is authoritative boundary. For `uncovered_scope`, derive smallest still-uncovered scope. A new plan never overrides old writable-worker fencing or the existing durable task ledger.
+Replan from evaluator-provided scope, never original task by default. For `checkpoint_remaining_delta`, harvested checkpoint is authoritative boundary. For `uncovered_scope`, derive smallest still-uncovered scope. A new plan never overrides old writable-worker fencing or the existing durable task ledger. It also never replaces the initial budget plan passed to `task_phase_runtime.py`; all phase admission and cumulative reservations remain bound to the initial budget plan for this task.
 
 Completed bounded units remain prior evidence across replan unless concrete new evidence invalidates them. Do not restart already accepted units merely because a later unit failed.
 
@@ -708,4 +710,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan schema v10 adds optional task-level cumulative budget and reasoning-rollout decision fields alongside StagePolicy convergence/repair/work-unit/checkpoint-rearm fields. Older plans without `task_budget`, `reasoning_rollout`, `soft_timeout_seconds`, meaningful-progress/checkpoint state, `checkpoint_rearm_seconds`, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run. In particular, missing checkpoint-rearm policy is safe one-shot behavior and absent task-budget/work-unit/rollout fields resolve to the legacy path; updates must not retroactively split, cancel, change reasoning, reserve completion tail, or reset already-running Workers.
+Persistent policy remains schema v4. ExecutionPlan schema v10 adds optional task-level cumulative budget and reasoning-rollout decision fields alongside StagePolicy convergence/repair/work-unit/checkpoint-rearm fields. Older plans without `task_budget`, `reasoning_rollout`, `soft_timeout_seconds`, meaningful-progress/checkpoint state, `checkpoint_rearm_seconds`, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run. In particular, missing checkpoint-rearm policy is safe one-shot behavior and absent task-budget/work-unit/rollout fields resolve to the legacy path; updates must not retroactively split, cancel, change reasoning, reserve completion tail, or reset already-running Workers. Existing pre-phase ledgers with the initial plan's original task-budget fingerprint remain `legacy_unclamped` rather than being rewritten to the new effective soft deadline.
