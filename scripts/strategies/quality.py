@@ -1,7 +1,7 @@
 """Correctness- and verification-first strategy."""
 from __future__ import annotations
 
-from .base import StagePolicy, StrategySpec, WorkerBudget, small_low_risk_is_direct, standard_effort
+from .base import StagePolicy, StrategySpec, TaskBudgetPolicy, WorkerBudget, small_low_risk_is_direct, standard_effort
 
 
 def adaptive_route(task) -> str:
@@ -46,12 +46,7 @@ def independent_review(task) -> bool:
 
 
 def capability(task, role: str) -> str:
-    """Select Parent-class capability only where it adds decision value.
-
-    Strong/absolute intent upgrades implementation and independent review, while
-    ordinary read-only exploration stays on the efficient Worker capability.
-    Explorers upgrade only for genuinely critical technical risk/complexity.
-    """
+    """Select Parent-class capability only where it adds decision value."""
     critical = task.complexity == "critical" or task.risk == "critical"
     if role == "explorer":
         return "parent" if critical else "worker"
@@ -140,6 +135,37 @@ def implementation_maximum_work_units(task) -> int:
     return 1
 
 
+def task_budget(task) -> TaskBudgetPolicy:
+    """Keep correctness-first tasks finite without imposing efficient deadlines."""
+    maximum_work_units = implementation_maximum_work_units(task)
+    if (
+        task.quality_intent == "absolute"
+        or task.complexity == "critical"
+        or task.risk == "critical"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        soft_timeout, hard_timeout = 6000, 7200
+    elif (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.scope == "cross-module"
+        or task.risk == "high"
+        or task.verification_cost == "high"
+    ):
+        soft_timeout, hard_timeout = 5400, 6600
+    else:
+        soft_timeout, hard_timeout = 4800, 6000
+    return TaskBudgetPolicy(
+        soft_timeout_seconds=soft_timeout,
+        hard_timeout_seconds=hard_timeout,
+        max_work_units=maximum_work_units,
+        max_implementation_attempts=maximum_work_units + 3,
+        max_replans=3,
+        max_replacements=3,
+    )
+
+
 def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 2, 300, 2400, True, False, "parent_delta")
@@ -181,4 +207,5 @@ STRATEGY = StrategySpec(
     notes=notes,
     lifecycle=lifecycle,
     allow_parallel_write=True,
+    task_budget=task_budget,
 )
