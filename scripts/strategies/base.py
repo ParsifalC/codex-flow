@@ -303,13 +303,29 @@ class StagePolicy:
 
 
 def standard_lifecycle(_task: Task, stage: str) -> StagePolicy:
-    """Balanced lifecycle baseline for future strategies that do not override it."""
+    """V11-safe balanced lifecycle baseline for future strategies."""
     if stage == "exploration":
         return StagePolicy("quorum", 1, 180, 1200, True, True, "parent_delta")
     if stage == "implementation":
-        return StagePolicy("required", 1, 240, 2400, False, False, "replan")
+        return StagePolicy(
+            "required",
+            1,
+            240,
+            2400,
+            False,
+            False,
+            "replan",
+            soft_timeout_seconds=1200,
+            checkpoint_rearm_seconds=240,
+            max_worker_repair_attempts=1,
+            work_unit_mode="single",
+            minimum_work_units=1,
+            join_between_work_units=False,
+            maximum_work_units=1,
+            require_write_paths=False,
+        )
     if stage == "review":
-        return StagePolicy("required", 1, 180, 1800, True, False, "parent_delta")
+        return StagePolicy("required", 1, 180, 1800, True, False, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
