@@ -42,7 +42,6 @@ except ImportError:
         reserve,
     )
 
-
 PHASES = ("exploration", "implementation", "required_completion")
 RESERVATION_PHASE = {
     "work_unit": "implementation",
@@ -88,12 +87,7 @@ def _task_policy(plan: dict[str, Any]) -> TaskBudgetPolicy:
 
 
 def _policy_fingerprint(policy: TaskBudgetPolicy) -> str:
-    encoded = json.dumps(
-        asdict(policy),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    encoded = json.dumps(asdict(policy), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -110,10 +104,7 @@ def _completion_reserve(plan: dict[str, Any], policy: TaskBudgetPolicy) -> tuple
         raise LedgerError("review_stage is required when reviewer_workers is positive")
     if policy.max_review_attempts < reviewer_workers:
         raise LedgerError("review topology exceeds task budget max_review_attempts")
-    review_hard = _strict_int(
-        review_stage.get("hard_timeout_seconds"),
-        "review_stage.hard_timeout_seconds",
-    )
+    review_hard = _strict_int(review_stage.get("hard_timeout_seconds"), "review_stage.hard_timeout_seconds")
     if review_hard < 1:
         raise LedgerError("review_stage.hard_timeout_seconds must be positive")
     parent_finalization = policy.parent_finalization_seconds
@@ -143,10 +134,10 @@ def _plan(value: Any) -> dict[str, Any]:
         if implementation_workers > policy.max_implementation_attempts:
             raise LedgerError("implementation topology exceeds task budget max_implementation_attempts")
         implementation_soft = implementation_stage.get("soft_timeout_seconds")
-        if implementation_soft is not None:
-            implementation_soft = _strict_int(implementation_soft, "implementation_stage.soft_timeout_seconds")
-            if policy.soft_timeout_seconds < implementation_soft:
-                raise LedgerError("task soft timeout cannot precede implementation soft checkpoint budget")
+        if type(implementation_soft) is not int or implementation_soft < 1:
+            raise LedgerError("implementation_stage.soft_timeout_seconds must be a positive integer")
+        if policy.soft_timeout_seconds < implementation_soft:
+            raise LedgerError("task soft timeout cannot precede implementation soft checkpoint budget")
     elif implementation_stage is not None:
         raise LedgerError("implementation_stage must be null when implementation_workers is zero")
 
@@ -170,7 +161,6 @@ def phase_decision(plan_value: Any, ledger_value: Any, phase: str, now: Any) -> 
     if type(ledger_value) is not dict:
         raise LedgerError("ledger status must be an object")
     policy = _validate_ledger_identity(plan, ledger_value)
-
     current_now = _strict_number(now, "now")
     started_at = _strict_number(ledger_value.get("started_at"), "started_at")
     soft_deadline = _strict_number(ledger_value.get("soft_deadline"), "soft_deadline")
@@ -188,11 +178,7 @@ def phase_decision(plan_value: Any, ledger_value: Any, phase: str, now: Any) -> 
     permits_general_work = hard_open and current_now < soft_deadline
     permits_required_completion = hard_open and reserve_seconds > 0
     review_deadline = hard_deadline - parent_finalization if reserve_seconds > 0 else None
-    permits_review_start = (
-        permits_required_completion
-        and review_deadline is not None
-        and current_now < review_deadline
-    )
+    permits_review_start = permits_required_completion and review_deadline is not None and current_now < review_deadline
     permits_parent_finalization = hard_open
 
     if not hard_open:
@@ -273,25 +259,14 @@ def reserve_phase(
         raise LedgerError("implementation phase only accepts general-work reservations")
 
     if kind == "review_attempt":
-        # Review admission has a stricter boundary than the raw ledger hard
-        # deadline because the final tail belongs exclusively to Parent
-        # finalization. No new reviewer may start at/after review_deadline.
         decision = status(state_file, task_id, plan, phase, now)
         if not decision["permits_review_start"]:
             raise LedgerError("review admission deadline reached; Parent finalization reserve is protected")
         result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
     else:
-        # The durable ledger checks idempotency before its soft/hard deadline
-        # gates. Let it remain authoritative so an exact replay is still safe
-        # after convergence starts, while genuinely new general work is rejected.
         result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
-
     result.update(phase_decision(plan, result, phase, now))
     return result
-
-
-def reserve_implementation(state_file: str, task_id: str, plan: dict[str, Any], kind: str, reservation_id: str, fingerprint: str, now: Any) -> dict[str, Any]:
-    return reserve_phase(state_file, task_id, plan, "implementation", kind, reservation_id, fingerprint, now)
 
 
 def _json(raw: str, label: str) -> Any:
@@ -311,14 +286,11 @@ def _common(parser: argparse.ArgumentParser) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="task_phase_runtime.py", description="phase-aware admission for FlowPilot task budgets")
     commands = parser.add_subparsers(dest="command", required=True)
-
     init_cmd = commands.add_parser("init")
     _common(init_cmd)
-
     status_cmd = commands.add_parser("status")
     _common(status_cmd)
     status_cmd.add_argument("--phase", choices=PHASES, required=True)
-
     reserve_cmd = commands.add_parser("reserve")
     _common(reserve_cmd)
     reserve_cmd.add_argument("--phase", choices=PHASES, required=True)
