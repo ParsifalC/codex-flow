@@ -338,7 +338,7 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
   [--replacement-isolated]
 ```
 
-Use its `state`, `action`, `cancel_required`, `replacement_allowed`, `fence_required`, `progress_quality`, `meaningful_idle_seconds`, `checkpoint_status`, and `fallback_policy` as the lifecycle decision. Parent supplies only observable facts and semantic scope overlap; the helper owns timing transitions, progress-quality classification, checkpoint ordering, cancellation requirements, and writable writer fencing.
+Use its `state`, `action`, `cancel_required`, `replacement_allowed`, `fence_required`, `progress_quality`, `meaningful_idle_seconds`, `checkpoint_status`, `replan_scope`, `checkpoint_reuse_mode`, and `fallback_policy` as the lifecycle decision. Parent supplies only observable facts and semantic scope overlap; the helper owns timing transitions, progress-quality classification, checkpoint ordering, replan scope, cancellation requirements, and writable writer fencing.
 
 `progress_quality` is observational:
 
@@ -376,7 +376,23 @@ workspace_state: confirmation that current changes are retained
 
 Checkpoint is **not** task completion. It must not cause reset/revert/clean/stash/discard, must not silently terminate the Worker, and must not authorize a replacement writer. The Worker continues unless Parent later sends an explicit stop/cancel or a new plan after a real lifecycle boundary.
 
+Before marking `checkpoint_harvested_at`, verify that the checkpoint belongs to the same `scope_id` and contains concrete `completed`, patch state, validation state, blockers, `remaining_delta`, and retained workspace state. If required fields are missing, request checkpoint correction from the same Worker and keep the state unharvested; do not manufacture an empty remaining delta.
+
 **Harvest-before-fallback invariant:** if a checkpoint payload has already been returned (`checkpoint_status=received`) but not harvested, `harvest_checkpoint` outranks terminal failure, idle fallback, hard timeout, cancellation handling, and writer replacement. Preserve the payload first; then re-run lifecycle evaluation with `checkpoint_harvested_at` recorded. This ensures a long-running Worker cannot lose already-returned code/evidence merely because a hard lifecycle boundary is reached immediately afterward.
+
+### Remaining-delta replan contract
+
+Whenever `fallback_policy=replan`, obey `replan_scope` from the evaluator:
+
+- `uncovered_scope`: no harvested checkpoint is available. Replan only the scope still demonstrably uncovered by current Parent/Worker evidence; do not automatically restart the entire original task.
+- `checkpoint_remaining_delta`: a checkpoint was harvested. The new TaskProfile, implementation handoff, acceptance checklist, and validation plan must be constructed from that checkpoint's `remaining_delta` only. Carry `completed`, patch state, prior validation, and blockers as prior evidence. Do not send the original full task to the replacement Worker.
+
+For `checkpoint_remaining_delta`, `checkpoint_reuse_mode` is binding:
+
+- `retained_workspace`: after the old writer is terminal/cancelled, preserve its current workspace and continue from the existing patch. Do not reset, revert, clean, or recreate completed work before the replacement starts.
+- `harvested_snapshot_only`: the replacement is isolated while the old Worker may still be non-terminal. Materialize only the immutable patch/evidence captured at the harvested checkpoint into the isolated worktree; fence and ignore every later output from the old Worker. Then implement only `remaining_delta`.
+
+A completed checkpoint entry may be moved back into `remaining_delta` only when Parent has **concrete new evidence** that it is invalid (for example a conflicting test result or changed dependency). Record that reason explicitly. Never redo completed work merely because a new Worker was spawned.
 
 If `cancel_required=true`, request cancellation/termination of the old non-terminal Worker even when `action` already permits `continue_partial`, `parent_delta`, or an isolated `replan`. A hard/idle lifecycle exit must not leave a Worker silently running in the background. When an isolated downstream writer is authorized with `--replacement-isolated`, it may proceed while cancellation of the old Worker is still required, but the old output must be fenced from integration.
 
@@ -424,7 +440,7 @@ Fallback always operates on the missing delta, never by restarting the whole sta
 
 - `continue_partial`: proceed when current evidence already satisfies acceptance needs;
 - `parent_delta`: Parent covers only uncovered scope/evidence; for a writable implementation delta, Parent is a new writer and must satisfy the hard writable writer fence first;
-- `replan`: update TaskProfile if needed and compile a new plan for the remaining delta; any new writable Implementer must satisfy the same fence;
+- `replan`: follow `replan_scope` exactly. `checkpoint_remaining_delta` means the harvested checkpoint is the handoff boundary; `uncovered_scope` means only demonstrably uncovered work may be replanned. Any new writable Implementer must still satisfy the hard fence;
 - `fail`: surface the unresolved stage failure instead of silently replacing it.
 
 For a non-terminal Worker, `cancel_required=true` is independent of the fallback action: fallback may make forward progress where safe, but the old Worker still must be reclaimed.
@@ -469,6 +485,17 @@ For each planned implementation worker, hand off only:
 - Constraints/non-goals;
 - Acceptance criteria;
 - Required validation.
+
+For a `checkpoint_remaining_delta` replacement, replace the generic full-scope handoff with:
+
+- the same `scope_id` lineage;
+- `replan_scope = checkpoint_remaining_delta`;
+- `checkpoint_reuse_mode`;
+- harvested completed work and validation as prior evidence;
+- harvested patch/workspace baseline;
+- **only** the harvested `remaining_delta` as implementation steps and outstanding acceptance criteria.
+
+Do not paste the original complete task as a second goal; that reintroduces full-task restart behavior.
 
 Prefer fresh/no-history child context when supported.
 
@@ -557,7 +584,7 @@ Re-profile and invoke the planner again when:
 - repair cycles fail;
 - reliable quota/runtime state materially changes.
 
-Re-plan from the delta; do not restart the task without evidence. Harvested checkpoint evidence belongs to the existing scope and must be carried forward when a later real lifecycle boundary causes replan. For writable work, a new plan never overrides the old Worker's fencing requirement.
+Re-plan from the evaluator-provided scope, never from the original task by default. If `replan_scope=checkpoint_remaining_delta`, the harvested checkpoint is the authoritative boundary: preserve completed work and prior validation, preserve or materialize the baseline according to `checkpoint_reuse_mode`, and profile/plan only `remaining_delta`. If `replan_scope=uncovered_scope`, derive the smallest still-uncovered scope from evidence. For writable work, a new plan never overrides the old Worker's fencing requirement.
 
 ## Compatibility invariant
 
@@ -571,4 +598,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies liveness/meaningful-progress classification, checkpoint harvest ordering, timing/fallback state transitions, cancellation requirements, timestamp validation, and hard writable writer fencing.
+Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies liveness/meaningful-progress classification, checkpoint harvest ordering, remaining-delta replan contracts, timing/fallback state transitions, cancellation requirements, timestamp validation, and hard writable writer fencing.
