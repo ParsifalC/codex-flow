@@ -11,7 +11,7 @@ The invariant is:
 
 > **FlowPilot profiles. `strategy_runtime.py` + the strategy registry decide. FlowPilot executes the returned plan.**
 
-Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, worker counts, review mode, fan-out, lifecycle/join policy, cancellation policy, fallback policy, local repair budget, or implementation work-unit policy in this skill. The installed planner and built-in strategy registry are the single source of truth for those decisions. Hard Worker lifecycle safety invariants are evaluated by the installed deterministic lifecycle helper; bounded implementation manifests are validated by the installed deterministic work-unit helper.
+Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, worker counts, review mode, fan-out, lifecycle/join policy, cancellation policy, fallback policy, local repair budget, task budget, or implementation work-unit policy in this skill. The installed planner and built-in strategy registry are the single source of truth for those decisions. Hard Worker lifecycle safety invariants are evaluated by the installed deterministic lifecycle helper; bounded implementation manifests are validated by the installed deterministic work-unit helper.
 
 Default compatibility remains `strategy = efficient` plus `routing = adaptive`.
 
@@ -156,7 +156,7 @@ For explicit current-task overrides append only requested dimensions:
 --efficient-reasoning legacy|shadow|adaptive
 ```
 
-The planner merges release/user/repository policy, loads the selected strategy, resolves WorkerBudget, computes topology, resolves StagePolicy, chooses per-role capability/reasoning, applies runtime ceilings and writable-isolation checks, reads reliable quota state when available, and emits one ExecutionPlan without extra LLM calls.
+The planner merges release/user/repository policy, loads the selected strategy, resolves WorkerBudget, computes topology, resolves StagePolicy and task budget, chooses per-role capability/reasoning, applies runtime ceilings and writable-isolation checks, reads reliable quota state when available, and emits one ExecutionPlan without extra LLM calls.
 
 If planner/registry is unavailable, treat it as installation/runtime failure. Do not reconstruct strategy logic from this file.
 
@@ -236,24 +236,25 @@ ExecutionPlan
 
 ### Task-level cumulative budget
 
-`task_budget` is an optional strategy-owned cumulative contract for delegated work. It is separate from `StagePolicy`: stage fields describe one Worker stage, while task reservations live in a durable ledger and are never reset by a replan or a new process. Efficient uses these caps:
+`task_budget` is a strategy-owned cumulative contract for delegated built-in strategy work. It is separate from `StagePolicy`: stage fields describe one Worker stage, while task reservations live in a durable ledger and are never reset by a replan or a new process. Direct plans emit `task_budget=null`.
+
+Current built-in policy envelopes are strategy-specific:
 
 ```text
-                         max_work_units   max_implementation_attempts
-routine/local/module             1                         2
-complex, cross-module, critical  2                         3
-repo-wide or heavy-loop          3                         4
-max_replans = 1, max_replacements = 1
-soft_timeout_seconds = 1500, hard_timeout_seconds = 1800
+strategy    task soft/hard        work units      implementation attempts   replans/replacements
+efficient   1500 / 1800           1..3            units + 1                 1 / 1
+speed       1200 / 1800           1..4            units + 1                 1 / 1
+balanced    2400..3000 / 3000..3600 1..3          units + 2                 2 / 2
+quality     4800..6000 / 6000..7200 1..4          units + 3                 3 / 3
 ```
 
-The compiler emits `task_budget` only when the resolved route is `delegate`; direct plans and legacy strategies emit `null`. When both are present, `task_budget.max_work_units` must equal `implementation_stage.maximum_work_units`.
+The exact values come only from the current immutable ExecutionPlan. Never infer them from the strategy name and never substitute efficient's numbers for another strategy. When both are present, `task_budget.max_work_units` must equal `implementation_stage.maximum_work_units`.
 
-Immediately after the first plan is compiled, initialize `task_budget_runtime.py` with the plan's budget, task id, and runtime-owned state path. Before any Worker spawn, query `status`; exploration/review Workers consume wall time but do not consume implementation counters. Before each logical work-unit start, implementation Worker attempt, replan, or replacement, reserve the corresponding kind (`work_unit`, `implementation_attempt`, `replan`, or `replacement`). After every join or wait, query `status`; at task completion, call `finish`. A replan reuses the original ledger/state path and remaining counters, never a fresh budget.
+Immediately after the first plan is compiled, initialize `task_budget_runtime.py` with the plan's exact `task_budget`, task id, and runtime-owned state path. Before any Worker spawn, query `status`; exploration/review Workers consume wall time but do not consume implementation counters. Before each logical work-unit start, implementation Worker attempt, replan, or replacement, reserve the corresponding kind (`work_unit`, `implementation_attempt`, `replan`, or `replacement`). After every join or wait, query `status`; at task completion, call `finish`. A replan reuses the original ledger/state path and remaining counters, never a fresh budget.
 
 For a bounded manifest, reserve `work_unit` with the validator's stable `logical_unit_fingerprints[unit_id]`, which excludes generation. Reserve `implementation_attempt` with the generation-aware `unit_fingerprints[unit_id]` and an identity derived from `(scope_id, unit_id, generation)`. A replacement therefore consumes a new implementation attempt/replacement reservation without double-counting the same logical work unit; changing acceptance/scope/path/validation under the same logical unit still fails closed.
 
-At the 1500-second soft deadline, do not open work or create reservations; ask existing Workers to checkpoint/converge and harvest their evidence. At the 1800-second hard deadline, first harvest any received checkpoint, then apply lifecycle fencing and cancel active writers. Do not start a replacement Worker or Parent writer after hard stop. An implementation handoff must carry the task-budget state path and current remaining seconds/counters.
+At the plan's `task_budget.soft_timeout_seconds` deadline, do not open new work or create reservations; ask existing Workers to checkpoint/converge and harvest their evidence. At the plan's `task_budget.hard_timeout_seconds` deadline, first harvest any received checkpoint, then apply lifecycle fencing and cancel active writers. Do not start a replacement Worker or Parent writer after hard stop. An implementation handoff must carry the task-budget state path and current remaining seconds/counters.
 
 The task-budget helper is a ledger/decision boundary, not an automatic scheduler: it does not spawn, checkpoint, cancel, fence, or replace Workers. FlowPilot/runtime performs those actions from its result. The lifecycle helper likewise reports requirements; actual cancellation and scheduling remain runtime responsibilities.
 
