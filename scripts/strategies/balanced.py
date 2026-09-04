@@ -111,9 +111,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        # Keep strict review feasible inside the smallest balanced task envelope
-        # while retaining a Parent finalization reserve after reviewer completion.
-        return StagePolicy("required", 1, 180, 1380, True, False, "parent_delta")
+        return StagePolicy("required", 1, 180, 1800, True, False, "parent_delta")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
