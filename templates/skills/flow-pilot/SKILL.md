@@ -72,9 +72,9 @@ Explicit current-task intent overrides those dimensions for that task only and m
 
 Routing:
 
-- `direct`: no FlowPilot subagent delegation;
-- `delegate`: use delegation when runtime/scope safety permit;
-- `adaptive`: let the deterministic planner choose.
+- `direct` — do not spawn or delegate to subagents for this task.
+- `delegate` — use subagent delegation for execution when the runtime supports it and safe scoping is possible.
+- `adaptive` — let the deterministic planner choose direct or delegated execution from the TaskProfile.
 
 Strategies:
 
@@ -400,6 +400,8 @@ Safety rules enforced by the manifest/runtime contract:
 - work-unit partitioning never creates new `writable_workstreams`; existing ExecutionPlan isolation is still authoritative.
 
 `implementation_workers` is the maximum concurrent implementer topology for a wave, **not permission to run every logical unit concurrently**. When only one writable workstream is proven, execute bounded units serially even if there are multiple units. When the plan already authorizes isolated parallel implementation workers, independent units may share a validated `parallel_group` up to the existing concurrency ceiling.
+
+Logical work-unit boundaries do not enlarge WorkerBudget. Reuse the same planned implementer slot/thread for subsequent serial units when the runtime supports continued agent input. If a fresh Worker identity is required for a later unit, it replaces a terminal prior slot sequentially; never exceed `implementation_workers`, `max_concurrent_threads`, or the strategy's speculative WorkerBudget envelope merely because there are more logical units than concurrent implementer slots.
 
 `join_between_work_units=true` means every completed unit returns control to Parent. Parent harvests the unit result/workspace state, verifies its unit acceptance delta, then decides whether the next dependent unit may start. This is a normal execution boundary, not cancellation and not a reason to discard the workspace.
 
