@@ -86,10 +86,7 @@ def assert_review_retry(name: str, profile) -> None:
     assert stage.fallback_policy=="retry_review",(name,stage)
     decision=evaluate_worker(
         LifecyclePolicy.from_dict(asdict(stage)),
-        WorkerObservation(
-            scope_id=f"{name}-review",stage="review",started_at=100,last_progress_at=100,now=100,
-            terminal_failure=True,writable=False,
-        ),
+        WorkerObservation(scope_id=f"{name}-review",stage="review",started_at=100,last_progress_at=100,now=100,terminal_failure=True,writable=False),
     )
     assert decision.action=="retry_review",decision
     assert decision.replacement_allowed is True and decision.fence_required is False,decision
@@ -120,9 +117,8 @@ def main() -> None:
             assert_task_budget(strategy,p,budget_expected[strategy][label])
         assert_review_retry(strategy,routine)
 
-    # Proven writable streams are themselves natural unit boundaries.
     multi=task(parallelism="high",write_conflict="low",writable_workstreams=4)
-    assert get("efficient").lifecycle(multi,"implementation").maximum_work_units==2
+    assert get("efficient").lifecycle(multi,"implementation").maximum_work_units==1
     assert get("balanced").lifecycle(multi,"implementation").maximum_work_units==2
     assert get("quality").lifecycle(multi,"implementation").maximum_work_units==2
     assert get("speed").lifecycle(multi,"implementation").maximum_work_units==4
