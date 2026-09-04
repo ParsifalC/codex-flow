@@ -213,6 +213,7 @@ assert exp['cancel_if_superseded'] is True and exp['cancel_stragglers_after_quor
 assert exp['idle_timeout_seconds']==120 and exp['hard_timeout_seconds']==900, exp
 assert imp['join_policy']=='required' and imp['min_successful_workers']==1, imp
 assert imp['cancel_if_superseded'] is False and imp['fallback_policy']=='replan', imp
+assert imp['checkpoint_rearm_seconds']==240, imp
 assert p['review_stage'] is None, p
 PY
 
@@ -431,6 +432,17 @@ invalid=(
     StagePolicy('quorum',0,60,600),
     StagePolicy('required',1,600,300),
     StagePolicy('required',1,60,600,fallback_policy='nonsense'),
+    StagePolicy('required',True,60,600),
+    StagePolicy('required',1,60,600,soft_timeout_seconds=True),
+    StagePolicy('required',1,60,600,checkpoint_rearm_seconds=True),
+    StagePolicy('required',1,60,600,checkpoint_rearm_seconds=0),
+    StagePolicy('required',1,60,600,soft_timeout_seconds=500,checkpoint_rearm_seconds=100),
+    StagePolicy('required',1,60,600,max_worker_repair_attempts=True),
+    StagePolicy('required',1,60,600,join_between_work_units=1),
+    StagePolicy('required',1,60,600,maximum_work_units=True),
+    StagePolicy('required',1,60,600,require_write_paths=1),
+    StagePolicy('required',1,60,600,work_unit_mode='single',maximum_work_units=2),
+    StagePolicy('required',1,60,600,work_unit_mode='bounded',minimum_work_units=2,join_between_work_units=True,maximum_work_units=1),
 )
 for item in invalid:
     try: item.validate()

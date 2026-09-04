@@ -1,6 +1,6 @@
 # FlowPilot Multi-Strategy Runtime
 
-FlowPilot is the semantic profiler and execution runtime for codex-flow. **Policy schema v4** separates the optimization objective from execution constraints, while **ExecutionPlan schema v7** carries the concrete WorkerBudget, task intent, per-role capability/reasoning policy, and topology selected for one task.
+FlowPilot is the semantic profiler and execution runtime for codex-flow. **Policy schema v4** separates the optimization objective from execution constraints, while **ExecutionPlan schema v8** carries the concrete WorkerBudget, task intent, per-role capability/reasoning policy, topology, and bounded lifecycle policy selected for one task.
 
 ```text
 User Task
@@ -22,7 +22,7 @@ Strategy Runtime
    ├─ runtime / quota state
    └─ generic Plan Compiler
    ↓
-ExecutionPlan v7
+ExecutionPlan v8
    ↓
 ──────────────── hard boundary ────────────────
    ↓
@@ -67,6 +67,9 @@ The Skill must not keep another copy of strategy topology, Worker counts, capabi
 19. **Telemetry is observational.** Planning adds no LLM calls merely to estimate usage or quota.
 20. **Release defaults have one source of truth.** `policy/defaults.toml` drives installer and planner defaults.
 21. **Installer/update policy round-trips are lossless for supported fields.**
+22. **Bounded implementation is explicit and finite.** `minimum_work_units` and optional `maximum_work_units` constrain one manifest; they do not create worker slots or a task-wide cumulative budget.
+23. **Path evidence is preflight only.** `write_paths` provide lexical overlap checks, not an OS lock, durable scheduler enforcement, symlink resolution, or cross-process fencing.
+24. **Lineage is explicit.** Bounded units use `(scope_id, unit_id, generation)`; replacement/replan increments generation, checkpoint/continue does not, and Parent accepts only current-generation evidence.
 
 ## Strategy Registry, WorkerBudget, and resource hooks
 
@@ -130,6 +133,29 @@ ExecutionPlan construction
 ```
 
 This split lets strategies become more aggressive without duplicating safety logic or leaking strategy-specific conditions back into the compiler.
+
+### StagePolicy and bounded implementation
+
+`StagePolicy` carries lifecycle preferences plus optional bounded-unit controls:
+
+```text
+work_unit_mode: single | bounded
+minimum_work_units
+join_between_work_units
+maximum_work_units | none
+require_write_paths
+soft_timeout_seconds | none
+checkpoint_rearm_seconds | none
+max_worker_repair_attempts | none
+```
+
+For the `efficient` strategy, routine implementation stays single (`minimum_work_units=maximum_work_units=1`) and uses a 180-second post-harvest checkpoint cooldown. Complex, cross-module, repo-wide, and heavy-loop implementation uses a 240-second cooldown; critical or critical-risk implementation uses 300 seconds. Together with the 600/900/1200-second soft budgets, these place a possible second checkpoint at 780/1140/1500 seconds, before the 1800-second hard ceiling. Complex, cross-module, critical, and critical-risk work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=2`; repo-wide or heavy-loop work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=3`. Parent should raise the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
+
+`maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota, worker-count, or task-wide cumulative budget. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
+
+`write_paths` checks are static lexical preflight only. They reject absolute/traversal/glob/backslash/NUL/Windows drive or UNC forms and detect equal or ancestor/descendant overlaps; they do not resolve symlinks, lock the OS, fence processes, persist checkpoints, or enforce a durable scheduler. The surrounding runtime must enforce writable fencing and persist/compare the current `(scope_id, unit_id, generation)` lineage.
+
+Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The first soft checkpoint is unchanged. A later checkpoint requires an explicit Worker `last_meaningful_progress_at` later than the latest harvested timestamp plus the policy's minimum `checkpoint_rearm_seconds` cooldown; legacy `last_progress_at` activity cannot re-arm a harvested checkpoint. Missing rearm policy keeps older plans one-shot. The lifecycle evaluator reports these decisions and cooldown observability (`checkpoint_rearm_at` / `checkpoint_rearm_remaining_seconds`) but provides no task-wide checkpoint/ledger store or automatic scheduler enforcement.
 
 ## Built-in strategy budgets
 
@@ -234,7 +260,7 @@ worker-reviewer
   independent read-only review, regression hunting, acceptance validation
 ```
 
-The same role can be used differently by each strategy. ExecutionPlan v7 makes resource selection explicit per role rather than treating “Worker” as one task-wide capability bucket.
+The same role can be used differently by each strategy. ExecutionPlan v8 makes resource selection explicit per role rather than treating “Worker” as one task-wide capability bucket.
 
 ## Policy precedence
 
@@ -398,13 +424,13 @@ For quota-sensitive strategies (`efficient`, `balanced`), high/critical pressure
 
 `quality` is deliberately not quota-sensitive. Strong/absolute quality retains Parent-class capability for high-value Implementer/Reviewer roles under quota pressure; ordinary Explorer capability remains independently selected. Hard runtime and safety ceilings still apply.
 
-## ExecutionPlan v7
+## ExecutionPlan v8
 
 The deterministic planner emits:
 
 ```text
 ExecutionPlan
-  schema_version = 7
+  schema_version = 8
   strategy
   routing
   review_modifier
@@ -438,6 +464,24 @@ ExecutionPlan
   implementation_workers
   reviewer_workers
   planned_worker_count
+  exploration_stage | none
+  implementation_stage | none
+  review_stage | none
+    join_policy
+    min_successful_workers
+    idle_timeout_seconds
+    hard_timeout_seconds
+    soft_timeout_seconds | none
+    checkpoint_rearm_seconds | none
+    max_worker_repair_attempts | none
+    work_unit_mode: single | bounded
+    minimum_work_units
+    join_between_work_units
+    maximum_work_units | none
+    require_write_paths
+    cancel_if_superseded
+    cancel_stragglers_after_quorum
+    fallback_policy
   review_mode
 
   max_repair_cycles
