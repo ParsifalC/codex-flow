@@ -18,10 +18,7 @@ FALLBACK_ACTIONS = {
 JOIN_POLICIES = {"opportunistic", "quorum", "required"}
 WRITER_FALLBACKS = {"parent_delta", "replan"}
 EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000
-PROGRESS_QUALITIES = {"meaningful", "activity_only", "none"}
 CHECKPOINT_STATUSES = {"not_requested", "requested", "received", "harvested"}
-REPLAN_SCOPES = {"uncovered_scope", "checkpoint_remaining_delta"}
-CHECKPOINT_REUSE_MODES = {"retained_workspace", "harvested_snapshot_only"}
 
 
 def _strict_timeout(value: Any, label: str) -> float:
@@ -95,7 +92,10 @@ class LifecyclePolicy:
             raise ValueError("opportunistic stage must use min_successful_workers=0")
         if self.join_policy != "opportunistic" and self.min_successful_workers < 1:
             raise ValueError(f"{self.join_policy} stage requires at least one successful worker")
-        for label, value in (("idle_timeout_seconds", self.idle_timeout_seconds), ("hard_timeout_seconds", self.hard_timeout_seconds)):
+        for label, value in (
+            ("idle_timeout_seconds", self.idle_timeout_seconds),
+            ("hard_timeout_seconds", self.hard_timeout_seconds),
+        ):
             if type(value) not in (int, float) or not math.isfinite(float(value)) or value <= 0:
                 raise ValueError(f"{label} must be a positive finite number")
         if self.hard_timeout_seconds < self.idle_timeout_seconds:
@@ -110,7 +110,9 @@ class LifecyclePolicy:
                 raise ValueError("checkpoint_rearm_seconds must be finite")
             if self.checkpoint_rearm_seconds <= 0 or self.checkpoint_rearm_seconds >= self.hard_timeout_seconds:
                 raise ValueError("checkpoint_rearm_seconds must be positive and lower than hard_timeout_seconds")
-            if self.soft_timeout_seconds is not None and self.soft_timeout_seconds + self.checkpoint_rearm_seconds >= self.hard_timeout_seconds:
+            if self.soft_timeout_seconds is None:
+                raise ValueError("checkpoint_rearm_seconds requires soft_timeout_seconds")
+            if self.soft_timeout_seconds + self.checkpoint_rearm_seconds >= self.hard_timeout_seconds:
                 raise ValueError("checkpoint_rearm_seconds must leave time for a second checkpoint before hard_timeout_seconds")
 
 
@@ -126,6 +128,10 @@ class CheckpointRecord:
     def from_dict(cls, value: dict[str, Any]) -> "CheckpointRecord":
         if type(value) is not dict:
             raise ValueError("checkpoint record must be an object")
+        allowed = {"sequence", "generation", "requested_at", "received_at", "harvested_at"}
+        unknown = sorted(set(value).difference(allowed))
+        if unknown:
+            raise ValueError(f"checkpoint record has unknown fields: {unknown}")
         for key in ("sequence", "generation"):
             if type(value.get(key)) is not int:
                 raise ValueError(f"checkpoint {key} must be an integer")
@@ -172,9 +178,6 @@ class WorkerObservation:
     last_progress_at: float
     now: float
     last_meaningful_progress_at: float | None = None
-    checkpoint_requested_at: float | None = None
-    checkpoint_received_at: float | None = None
-    checkpoint_harvested_at: float | None = None
     writable: bool = False
     in_flight: bool = False
     terminal_success: bool = False
@@ -183,24 +186,19 @@ class WorkerObservation:
     cancel_confirmed: bool = False
     replacement_isolated: bool = False
     generation: int = 0
-    checkpoint_sequence: tuple[CheckpointRecord, ...] | None = None
+    checkpoint_sequence: tuple[CheckpointRecord, ...] = ()
 
     def meaningful_progress_at(self) -> float:
         return self.last_progress_at if self.last_meaningful_progress_at is None else self.last_meaningful_progress_at
 
     def checkpoint_records(self) -> tuple[CheckpointRecord, ...]:
-        if self.checkpoint_sequence is not None:
-            return self.checkpoint_sequence
-        if self.checkpoint_requested_at is None and self.checkpoint_received_at is None and self.checkpoint_harvested_at is None:
-            return ()
-        return (CheckpointRecord(1, self.generation, self.checkpoint_requested_at, self.checkpoint_received_at, self.checkpoint_harvested_at),)
+        return self.checkpoint_sequence
 
     def latest_checkpoint(self) -> CheckpointRecord | None:
-        records = self.checkpoint_records()
-        return records[-1] if records else None
+        return self.checkpoint_sequence[-1] if self.checkpoint_sequence else None
 
     def latest_harvested_checkpoint(self) -> CheckpointRecord | None:
-        harvested = [record for record in self.checkpoint_records() if record.harvested_at is not None]
+        harvested = [record for record in self.checkpoint_sequence if record.harvested_at is not None]
         return harvested[-1] if harvested else None
 
     def checkpoint_status(self) -> str:
@@ -220,13 +218,14 @@ class WorkerObservation:
             raise ValueError(f"invalid stage: {self.stage}")
         if type(self.generation) is not int or self.generation < 0:
             raise ValueError("generation must be a non-negative integer")
+        if type(self.checkpoint_sequence) is not tuple:
+            raise ValueError("checkpoint_sequence must be a tuple")
+        if self.stage != "implementation" and self.checkpoint_sequence:
+            raise ValueError("checkpoint_sequence is only valid for implementation stage")
+
         timestamps = [self.started_at, self.last_progress_at, self.now]
-        timestamps.extend(v for v in (
-            self.last_meaningful_progress_at,
-            self.checkpoint_requested_at,
-            self.checkpoint_received_at,
-            self.checkpoint_harvested_at,
-        ) if v is not None)
+        if self.last_meaningful_progress_at is not None:
+            timestamps.append(self.last_meaningful_progress_at)
         if any(type(v) not in (int, float) or not math.isfinite(float(v)) or v < 0 for v in timestamps):
             raise ValueError("timestamps must be finite non-negative seconds")
         if any(v > EPOCH_MILLISECONDS_THRESHOLD for v in timestamps):
@@ -238,29 +237,17 @@ class WorkerObservation:
         meaningful = self.meaningful_progress_at()
         if meaningful < self.started_at or meaningful > self.last_progress_at:
             raise ValueError("last_meaningful_progress_at must be between started_at and last_progress_at")
-        has_legacy_checkpoint = any(v is not None for v in (
-            self.checkpoint_requested_at,
-            self.checkpoint_received_at,
-            self.checkpoint_harvested_at,
-        ))
-        if self.checkpoint_sequence is not None and has_legacy_checkpoint:
-            raise ValueError("legacy checkpoint fields cannot be combined with checkpoint sequence")
-        if self.checkpoint_sequence is None:
-            if self.checkpoint_received_at is not None and self.checkpoint_requested_at is None:
-                raise ValueError("checkpoint_received_at requires checkpoint_requested_at")
-            if self.checkpoint_harvested_at is not None and self.checkpoint_received_at is None:
-                raise ValueError("checkpoint_harvested_at requires checkpoint_received_at")
-        records = self.checkpoint_records()
-        for index, record in enumerate(records, start=1):
+
+        for index, record in enumerate(self.checkpoint_sequence, start=1):
             if record.sequence != index:
                 raise ValueError("checkpoint sequences must be contiguous starting at 1")
             if record.generation != self.generation:
                 raise ValueError("checkpoint generation must equal observation generation")
             record.validate(started_at=self.started_at, now=self.now)
-            if index < len(records) and record.harvested_at is None:
+            if index < len(self.checkpoint_sequence) and record.harvested_at is None:
                 raise ValueError("every checkpoint except the latest must be harvested")
             if index > 1:
-                previous = records[index - 2]
+                previous = self.checkpoint_sequence[index - 2]
                 if previous.harvested_at is None:
                     raise ValueError("a new checkpoint cannot start before the previous one is harvested")
                 if record.requested_at < previous.harvested_at:
@@ -325,7 +312,18 @@ def _replan_contract(observation: WorkerObservation, fallback_policy: str | None
     )
 
 
-def _decision(policy: LifecyclePolicy, observation: WorkerObservation, *, state: str, action: str, reason: str, cancel_required: bool, replacement_allowed: bool, fence_required: bool, fallback_policy: str | None) -> LifecycleDecision:
+def _decision(
+    policy: LifecyclePolicy,
+    observation: WorkerObservation,
+    *,
+    state: str,
+    action: str,
+    reason: str,
+    cancel_required: bool,
+    replacement_allowed: bool,
+    fence_required: bool,
+    fallback_policy: str | None,
+) -> LifecycleDecision:
     idle, meaningful_idle, wall, quality = _progress_metrics(policy, observation)
     replan_scope, reuse = _replan_contract(observation, fallback_policy)
     latest = observation.latest_checkpoint()
@@ -363,7 +361,8 @@ def _decision(policy: LifecyclePolicy, observation: WorkerObservation, *, state:
 
 def _checkpoint_harvest_decision(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
     return _decision(
-        policy, observation,
+        policy,
+        observation,
         state="progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running",
         action="harvest_checkpoint",
         reason="worker checkpoint is available; harvest durable work before any fallback",
@@ -374,7 +373,14 @@ def _checkpoint_harvest_decision(policy: LifecyclePolicy, observation: WorkerObs
     )
 
 
-def _fallback_decision(policy: LifecyclePolicy, observation: WorkerObservation, *, state: str, reason: str, terminal: bool) -> LifecycleDecision:
+def _fallback_decision(
+    policy: LifecyclePolicy,
+    observation: WorkerObservation,
+    *,
+    state: str,
+    reason: str,
+    terminal: bool,
+) -> LifecycleDecision:
     if policy.fallback_policy == "retry_review" and observation.stage != "review":
         raise ValueError("retry_review fallback is only valid for review stage")
     fallback = FALLBACK_ACTIONS[policy.fallback_policy]
@@ -400,7 +406,8 @@ def _fallback_decision(policy: LifecyclePolicy, observation: WorkerObservation, 
     if cancel_required:
         reason += "; non-terminal Worker cancellation is required"
     return _decision(
-        policy, observation,
+        policy,
+        observation,
         state=state,
         action=action,
         reason=reason,
@@ -414,7 +421,8 @@ def _fallback_decision(policy: LifecyclePolicy, observation: WorkerObservation, 
 def _superseded_decision(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
     terminal = observation.terminal_failure or observation.cancel_confirmed
     return _decision(
-        policy, observation,
+        policy,
+        observation,
         state="superseded",
         action="continue" if terminal else "request_cancel",
         reason="scope is already covered; no fallback work is required",
@@ -437,17 +445,22 @@ def _soft_budget_decision(policy: LifecyclePolicy, observation: WorkerObservatio
         return _checkpoint_harvest_decision(policy, observation)
     else:
         latest = observation.latest_harvested_checkpoint()
-        rearm_at = None if latest is None or policy.checkpoint_rearm_seconds is None else latest.harvested_at + policy.checkpoint_rearm_seconds
+        assert latest is not None
+        rearm_at = latest.harvested_at + policy.checkpoint_rearm_seconds
         explicit = observation.last_meaningful_progress_at
-        has_delta = latest is not None and explicit is not None and explicit > latest.harvested_at
-        cooldown = rearm_at is not None and observation.now >= rearm_at
+        has_delta = explicit is not None and explicit > latest.harvested_at
+        cooldown = observation.now >= rearm_at
         if has_delta and cooldown:
             action, suffix = "request_checkpoint", "explicit meaningful progress and cooldown re-armed checkpointing"
+        elif explicit is None:
+            action, suffix = "continue", "last_progress_at cannot re-arm checkpointing; explicit meaningful progress is required"
+        elif not has_delta:
+            action, suffix = "continue", "harvested checkpoint remains current; no new meaningful delta"
         else:
-            action = "continue"
-            suffix = "harvested checkpoint remains current; no eligible rearm"
+            action, suffix = "continue", "harvested checkpoint remains current; checkpoint rearm cooldown has not elapsed"
     return _decision(
-        policy, observation,
+        policy,
+        observation,
         state=state,
         action=action,
         reason=f"soft worker execution budget reached; progress={quality}; {suffix}",
@@ -461,12 +474,27 @@ def _soft_budget_decision(policy: LifecyclePolicy, observation: WorkerObservatio
 def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
     policy.validate()
     observation.validate()
+    if observation.stage == "implementation":
+        if policy.soft_timeout_seconds is None:
+            raise ValueError("implementation lifecycle requires soft_timeout_seconds")
+        if policy.checkpoint_rearm_seconds is None:
+            raise ValueError("implementation lifecycle requires checkpoint_rearm_seconds")
     idle, _meaningful_idle, wall, _quality = _progress_metrics(policy, observation)
 
     if observation.checkpoint_status() == "received":
         return _checkpoint_harvest_decision(policy, observation)
     if observation.terminal_success:
-        return _decision(policy, observation, state="completed", action="consume_result", reason="worker reported terminal success", cancel_required=False, replacement_allowed=False, fence_required=False, fallback_policy=None)
+        return _decision(
+            policy,
+            observation,
+            state="completed",
+            action="consume_result",
+            reason="worker reported terminal success",
+            cancel_required=False,
+            replacement_allowed=False,
+            fence_required=False,
+            fallback_policy=None,
+        )
     if observation.scope_superseded and policy.cancel_if_superseded:
         return _superseded_decision(policy, observation)
     if observation.terminal_failure:
@@ -480,7 +508,8 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
     if policy.soft_timeout_seconds is not None and wall >= policy.soft_timeout_seconds:
         return _soft_budget_decision(policy, observation)
     return _decision(
-        policy, observation,
+        policy,
+        observation,
         state="progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running",
         action="continue",
         reason="worker remains non-terminal with an active liveness lease",
@@ -519,9 +548,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--started-at", type=float, required=True)
     parser.add_argument("--last-progress-at", type=float, required=True)
     parser.add_argument("--last-meaningful-progress-at", type=float)
-    parser.add_argument("--checkpoint-requested-at", type=float)
-    parser.add_argument("--checkpoint-received-at", type=float)
-    parser.add_argument("--checkpoint-harvested-at", type=float)
     parser.add_argument("--now", type=float, required=True)
     parser.add_argument("--writable", action="store_true")
     parser.add_argument("--in-flight", action="store_true")
@@ -538,9 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Iterable[str] | None = None) -> int:
     ns = build_parser().parse_args(list(argv) if argv is not None else None)
     policy = LifecyclePolicy.from_dict(_load_json_object(ns.policy_json, "policy"))
-    sequence = None if ns.checkpoint_sequence_json is None else _load_checkpoint_sequence(ns.checkpoint_sequence_json)
-    if sequence is not None and any(v is not None for v in (ns.checkpoint_requested_at, ns.checkpoint_received_at, ns.checkpoint_harvested_at)):
-        raise ValueError("legacy checkpoint flags cannot be combined with --checkpoint-sequence-json")
+    sequence = () if ns.checkpoint_sequence_json is None else _load_checkpoint_sequence(ns.checkpoint_sequence_json)
     observation = WorkerObservation(
         scope_id=ns.scope_id,
         stage=ns.stage,
@@ -548,9 +572,6 @@ def main(argv: Iterable[str] | None = None) -> int:
         last_progress_at=ns.last_progress_at,
         now=ns.now,
         last_meaningful_progress_at=ns.last_meaningful_progress_at,
-        checkpoint_requested_at=ns.checkpoint_requested_at,
-        checkpoint_received_at=ns.checkpoint_received_at,
-        checkpoint_harvested_at=ns.checkpoint_harvested_at,
         writable=ns.writable,
         in_flight=ns.in_flight,
         terminal_success=ns.terminal_success,
