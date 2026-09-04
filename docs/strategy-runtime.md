@@ -145,16 +145,17 @@ join_between_work_units
 maximum_work_units | none
 require_write_paths
 soft_timeout_seconds | none
+checkpoint_rearm_seconds | none
 max_worker_repair_attempts | none
 ```
 
-For the `efficient` strategy, routine implementation stays single (`minimum_work_units=maximum_work_units=1`). Complex, cross-module, critical, and critical-risk work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=2`; repo-wide or heavy-loop work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=3`. Parent should raise the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
+For the `efficient` strategy, routine implementation stays single (`minimum_work_units=maximum_work_units=1`) and uses a 180-second post-harvest checkpoint cooldown. Complex, cross-module, repo-wide, and heavy-loop implementation uses a 240-second cooldown; critical or critical-risk implementation uses 300 seconds. Together with the 600/900/1200-second soft budgets, these place a possible second checkpoint at 780/1140/1500 seconds, before the 1800-second hard ceiling. Complex, cross-module, critical, and critical-risk work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=2`; repo-wide or heavy-loop work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=3`. Parent should raise the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
 
 `maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota, worker-count, or task-wide cumulative budget. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
 
 `write_paths` checks are static lexical preflight only. They reject absolute/traversal/glob/backslash/NUL/Windows drive or UNC forms and detect equal or ancestor/descendant overlaps; they do not resolve symlinks, lock the OS, fence processes, persist checkpoints, or enforce a durable scheduler. The surrounding runtime must enforce writable fencing and persist/compare the current `(scope_id, unit_id, generation)` lineage.
 
-Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The lifecycle evaluator reports these decisions but provides no task-wide checkpoint/ledger store or automatic scheduler enforcement.
+Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The first soft checkpoint is unchanged. A later checkpoint requires an explicit Worker `last_meaningful_progress_at` later than the latest harvested timestamp plus the policy's minimum `checkpoint_rearm_seconds` cooldown; legacy `last_progress_at` activity cannot re-arm a harvested checkpoint. Missing rearm policy keeps older plans one-shot. The lifecycle evaluator reports these decisions and cooldown observability (`checkpoint_rearm_at` / `checkpoint_rearm_remaining_seconds`) but provides no task-wide checkpoint/ledger store or automatic scheduler enforcement.
 
 ## Built-in strategy budgets
 
@@ -471,6 +472,7 @@ ExecutionPlan
     idle_timeout_seconds
     hard_timeout_seconds
     soft_timeout_seconds | none
+    checkpoint_rearm_seconds | none
     max_worker_repair_attempts | none
     work_unit_mode: single | bounded
     minimum_work_units

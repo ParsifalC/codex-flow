@@ -42,6 +42,7 @@ fallback_policy
   continue_partial | parent_delta | replan | fail
 
 soft_timeout_seconds | none
+checkpoint_rearm_seconds | none
 max_worker_repair_attempts | none
 work_unit_mode
   single | bounded
@@ -131,6 +132,8 @@ checkpoint_generation
 checkpoint_sequence
 next_checkpoint_sequence
 harvested_checkpoint_sequence
+checkpoint_rearm_at | none
+checkpoint_rearm_remaining_seconds | none
 ```
 
 `cancel_required=true` 表示 Worker 仍是非终态，即使 `action` 已允许 `parent_delta`、`continue_partial` 或 isolated `replan`，Scheduler/runtime 仍必须请求回收旧 Worker。这样 read-only fallback 不会把超时 Worker 留在后台继续消耗资源；对 writable Worker，`fence_required` 还会进一步约束任何新的 writer。Evaluator 只返回这些要求，不会自动取消 Worker 或提供 durable scheduler enforcement。
@@ -139,7 +142,7 @@ harvested_checkpoint_sequence
 
 每个 checkpoint sequence 内，`checkpoint_status` 按 `not_requested → requested → received → harvested` 单调推进；全局状态表示最新 sequence，因此开始新 sequence 时会从上一轮的 `harvested` 回到 `requested`。未 harvest 的 `received` checkpoint 优先于 terminal success、terminal failure、cancel、idle 和 hard timeout；即使 Worker 同时报告成功，也必须先 `harvest_checkpoint`。只有 requested 而没有 payload 时，hard/idle fallback 仍按 policy 生效。
 
-多轮 checkpoint 使用不可变 `CheckpointRecord` 序列（`sequence` 从 1 连续递增，且属于当前 `generation`）。除最新记录外必须已 harvest；上一轮未 harvest 时不能开始下一轮。最新 harvest 后若出现新的 meaningful progress 且 soft budget 已到，只请求下一 sequence；没有新 delta 时保持 `continue`。即使最新 sequence 仍在 requested/received，replan 也绑定当前 generation 最近已 harvest 的 baseline，Decision 的 `harvested_checkpoint_sequence` 明确该序号。旧的三个 checkpoint 参数仍兼容，并规范化为 generation 内的 sequence 1；两种输入不能混用。replacement/replan 使用 generation+1，sequence 重置。
+多轮 checkpoint 使用不可变 `CheckpointRecord` 序列（`sequence` 从 1 连续递增，且属于当前 `generation`）。除最新记录外必须已 harvest；上一轮未 harvest 时不能开始下一轮。首次 soft budget 行为保持不变：没有 checkpoint 时请求 sequence 1。之后只有同时满足以下条件才请求下一 sequence：Worker 明确提供 `last_meaningful_progress_at`，且该时间晚于当前 generation 最近一次 `harvested_at`；并且已达到 `checkpoint_rearm_seconds` 指定的最小 harvest 后 cooldown。`last_progress_at` 只是 legacy liveness activity，不能为多轮 checkpoint re-arm；没有显式 meaningful timestamp、仍在 cooldown 或旧 policy 缺少 `checkpoint_rearm_seconds` 时保持 `continue`（one-shot）。Decision 的 `checkpoint_rearm_at` 与 `checkpoint_rearm_remaining_seconds` 提供确定性的 cooldown 可观测性。即使最新 sequence 仍在 requested/received，replan 也绑定当前 generation 最近已 harvest 的 baseline，Decision 的 `harvested_checkpoint_sequence` 明确该序号。旧的三个 checkpoint 参数仍兼容，并规范化为 generation 内的 sequence 1；两种输入不能混用。replacement/replan 使用 generation+1，sequence 重置。
 
 这样 StagePolicy 是 deterministic 的，状态跃迁、timeout/fallback 和 cancellation requirement 也不再由 Parent 临场重新发明；evaluator 本身只报告决策，不执行取消、fence、持久化或 scheduler 调度。
 

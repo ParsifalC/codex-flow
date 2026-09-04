@@ -196,6 +196,7 @@ ExecutionPlan
     idle_timeout_seconds
     hard_timeout_seconds
     soft_timeout_seconds | none
+    checkpoint_rearm_seconds | none
     max_worker_repair_attempts | none
     work_unit_mode: single | bounded
     minimum_work_units
@@ -273,7 +274,7 @@ The lifecycle helper is a deterministic evaluator, not a durable scheduler, task
 
 **A `wait()` timeout is never a Worker timeout.** Repeated Parent waits without terminal output do not by themselves justify stalled/failed/cancelled.
 
-If intermediate activity is unreliable, do not guess. Omit `--last-meaningful-progress-at`; legacy behavior treats `last_progress_at` as meaningful.
+If intermediate activity is unreliable, do not guess. Omit `--last-meaningful-progress-at`; legacy behavior may treat `last_progress_at` as meaningful for progress classification and the first soft checkpoint, but it never uses that fallback to re-arm a harvested multi-round checkpoint.
 
 ### Deterministic lifecycle evaluator
 
@@ -301,7 +302,7 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
 
 Use returned `state`, `action`, `cancel_required`, `replacement_allowed`, `fence_required`, `progress_quality`, `meaningful_idle_seconds`, `checkpoint_status`, `replan_scope`, `checkpoint_reuse_mode`, and `fallback_policy` exactly.
 
-The legacy checkpoint flags remain supported and normalize to sequence 1. Do not mix them with `--checkpoint-sequence-json`; sequence records must be contiguous within the current generation, and only the latest may be unharvested. Replacement/replan starts generation+1 with sequence reset. Decisions also expose `checkpoint_generation`, latest `checkpoint_sequence` (0 when absent), `harvested_checkpoint_sequence` (0 when absent), and `next_checkpoint_sequence` only for `request_checkpoint`.
+The legacy checkpoint flags remain supported and normalize to sequence 1. Do not mix them with `--checkpoint-sequence-json`; sequence records must be contiguous within the current generation, and only the latest may be unharvested. Replacement/replan starts generation+1 with sequence reset. Decisions also expose `checkpoint_generation`, latest `checkpoint_sequence` (0 when absent), `harvested_checkpoint_sequence` (0 when absent), and `next_checkpoint_sequence` only for `request_checkpoint`, plus `checkpoint_rearm_at` and `checkpoint_rearm_remaining_seconds` when a policy cooldown is configured.
 
 Checkpoint state is monotonic within each sequence; globally `checkpoint_status` reports the latest sequence, so a new sequence transitions from the prior harvested state back to requested:
 
@@ -317,7 +318,7 @@ Soft-budget actions:
 - `await_checkpoint`: request is already outstanding; do not spam;
 - `harvest_checkpoint`: preserve returned payload before anything that could discard partial work;
 - `continue` with harvested checkpoint: existing Worker continues its assigned scope/unit until completion or a real lifecycle boundary;
-- after a harvest, request the next sequence only when new meaningful progress is visible and the soft budget is reached; with no new delta, continue without repeating the request.
+- after a harvest, request the next sequence only when the Worker explicitly reports `last_meaningful_progress_at` later than the latest harvest, `checkpoint_rearm_seconds` has elapsed, and the soft budget is reached; `last_progress_at` activity alone never re-arms it. Without the explicit timestamp or cooldown policy, continue as a one-shot/legacy plan without repeating the request.
 
 Implementation checkpoint payload must include:
 
@@ -559,4 +560,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan remains schema v8 with optional StagePolicy convergence/repair/work-unit fields. Older plans without `soft_timeout_seconds`, meaningful-progress/checkpoint state, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run. In particular, absent work-unit fields resolve to the legacy single-unit implementation path; updates must not retroactively split or cancel already-running Workers.
+Persistent policy remains schema v4. ExecutionPlan remains schema v8 with optional StagePolicy convergence/repair/work-unit/checkpoint-rearm fields. Older plans without `soft_timeout_seconds`, meaningful-progress/checkpoint state, `checkpoint_rearm_seconds`, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run; in particular, missing checkpoint-rearm policy is safe one-shot behavior and does not automatically start later rounds. Absent work-unit fields resolve to the legacy single-unit implementation path; updates must not retroactively split or cancel already-running Workers.

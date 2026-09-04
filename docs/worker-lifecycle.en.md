@@ -42,6 +42,7 @@ fallback_policy
   continue_partial | parent_delta | replan | fail
 
 soft_timeout_seconds | none
+checkpoint_rearm_seconds | none
 max_worker_repair_attempts | none
 work_unit_mode
   single | bounded
@@ -131,6 +132,8 @@ checkpoint_generation
 checkpoint_sequence
 next_checkpoint_sequence
 harvested_checkpoint_sequence
+checkpoint_rearm_at | none
+checkpoint_rearm_remaining_seconds | none
 ```
 
 `cancel_required=true` means the Worker is still non-terminal. Even when `action` already permits `parent_delta`, `continue_partial`, or an isolated `replan`, Scheduler/runtime must still request cancellation of the old Worker. That prevents read-only fallback from leaving a timed-out Worker burning resources in the background; writable stages additionally obey `fence_required` for any new writer. The evaluator only reports this requirement; it does not provide automatic cancellation or durable scheduler enforcement.
@@ -139,7 +142,7 @@ harvested_checkpoint_sequence
 
 Within each checkpoint sequence, `checkpoint_status` advances monotonically as `not_requested → requested → received → harvested`; globally it reports the latest sequence, so starting a new sequence moves from the prior round's `harvested` back to `requested`. An unharvested `received` checkpoint outranks terminal success, terminal failure, cancellation, idle fallback, and hard timeout; even a Worker that reports success must first return `harvest_checkpoint`. A requested checkpoint without a payload does not defer hard/idle fallback.
 
-Multi-round checkpoints use immutable `CheckpointRecord` entries whose `sequence` starts at 1 and is contiguous within the current `generation`. Every entry except the latest must be harvested before another round begins. After the latest harvest, new meaningful progress at the soft budget requests only the next sequence; without a new delta the evaluator continues idempotently. Even when the latest sequence remains requested/received, replan binds to the newest harvested baseline in the current generation; `harvested_checkpoint_sequence` identifies that sequence. The legacy three checkpoint flags remain compatible and normalize to sequence 1; the two input forms cannot be mixed. Replacement/replan uses generation+1 and resets the sequence.
+Multi-round checkpoints use immutable `CheckpointRecord` entries whose `sequence` starts at 1 and is contiguous within the current `generation`. Every entry except the latest must be harvested before another round begins. The first soft-budget behavior is unchanged: when no checkpoint exists, request sequence 1. After that, request the next sequence only when both conditions hold: the Worker explicitly provides `last_meaningful_progress_at` later than the latest `harvested_at` in the current generation, and the minimum post-harvest cooldown in `checkpoint_rearm_seconds` has elapsed. `last_progress_at` is liveness activity only and cannot re-arm a multi-round checkpoint. Without an explicit meaningful timestamp, while cooldown remains active, or when an older policy omits `checkpoint_rearm_seconds`, the evaluator continues (one-shot). Decisions expose deterministic `checkpoint_rearm_at` and `checkpoint_rearm_remaining_seconds` observability. Even when the latest sequence remains requested/received, replan binds to the newest harvested baseline in the current generation; `harvested_checkpoint_sequence` identifies that sequence. The legacy three checkpoint flags remain compatible and normalize to sequence 1; the two input forms cannot be mixed. Replacement/replan uses generation+1 and resets the sequence.
 
 This keeps StagePolicy deterministic and moves timeout/fallback state transitions plus cancellation requirements out of ad-hoc Parent judgment; the evaluator only reports a decision and does not cancel, fence, persist, or schedule Workers itself.
 

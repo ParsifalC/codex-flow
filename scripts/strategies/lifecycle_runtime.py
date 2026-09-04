@@ -54,6 +54,7 @@ class LifecyclePolicy:
     cancel_stragglers_after_quorum: bool
     fallback_policy: str
     soft_timeout_seconds: float | None = None
+    checkpoint_rearm_seconds: float | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "LifecyclePolicy":
@@ -81,6 +82,7 @@ class LifecyclePolicy:
         if type(value["min_successful_workers"]) is not int:
             raise ValueError("min_successful_workers must be an integer")
         raw_soft_timeout = value.get("soft_timeout_seconds")
+        raw_checkpoint_rearm = value.get("checkpoint_rearm_seconds")
         policy = cls(
             join_policy=value["join_policy"],
             min_successful_workers=value["min_successful_workers"],
@@ -90,6 +92,11 @@ class LifecyclePolicy:
             cancel_stragglers_after_quorum=value["cancel_stragglers_after_quorum"],
             fallback_policy=value["fallback_policy"],
             soft_timeout_seconds=(None if raw_soft_timeout is None else _strict_timeout(raw_soft_timeout, "soft_timeout_seconds")),
+            checkpoint_rearm_seconds=(
+                None
+                if raw_checkpoint_rearm is None
+                else _strict_timeout(raw_checkpoint_rearm, "checkpoint_rearm_seconds")
+            ),
         )
         policy.validate()
         return policy
@@ -113,11 +120,15 @@ class LifecyclePolicy:
         ):
             if type(value) not in (int, float) or not math.isfinite(float(value)):
                 raise ValueError(f"{label} must be finite number")
-        if self.soft_timeout_seconds is not None and (
-            type(self.soft_timeout_seconds) not in (int, float)
-            or not math.isfinite(float(self.soft_timeout_seconds))
+        for label, value in (
+            ("soft_timeout_seconds", self.soft_timeout_seconds),
+            ("checkpoint_rearm_seconds", self.checkpoint_rearm_seconds),
         ):
-            raise ValueError("soft_timeout_seconds must be finite number")
+            if value is not None and (
+                type(value) not in (int, float)
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{label} must be finite number")
         if self.join_policy not in JOIN_POLICIES:
             raise ValueError(f"invalid join policy: {self.join_policy}")
         if self.min_successful_workers < 0:
@@ -135,6 +146,18 @@ class LifecyclePolicy:
                 raise ValueError("soft_timeout_seconds must be positive when set")
             if self.soft_timeout_seconds >= self.hard_timeout_seconds:
                 raise ValueError("soft_timeout_seconds must be lower than hard_timeout_seconds")
+        if self.checkpoint_rearm_seconds is not None:
+            if self.checkpoint_rearm_seconds <= 0:
+                raise ValueError("checkpoint_rearm_seconds must be positive when set")
+            if self.checkpoint_rearm_seconds >= self.hard_timeout_seconds:
+                raise ValueError("checkpoint_rearm_seconds must be lower than hard_timeout_seconds")
+            if (
+                self.soft_timeout_seconds is not None
+                and self.soft_timeout_seconds + self.checkpoint_rearm_seconds >= self.hard_timeout_seconds
+            ):
+                raise ValueError(
+                    "checkpoint_rearm_seconds must leave time for a second checkpoint before hard_timeout_seconds"
+                )
         if self.fallback_policy not in FALLBACK_ACTIONS:
             raise ValueError(f"invalid fallback policy: {self.fallback_policy}")
 
@@ -366,6 +389,8 @@ class LifecycleDecision:
     checkpoint_sequence: int
     next_checkpoint_sequence: int | None
     harvested_checkpoint_sequence: int
+    checkpoint_rearm_at: float | None
+    checkpoint_rearm_remaining_seconds: float | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -424,6 +449,12 @@ def _decision(
     latest_sequence = latest_checkpoint.sequence if latest_checkpoint is not None else 0
     latest_harvested = observation.latest_harvested_checkpoint()
     next_sequence = latest_sequence + 1 if action == "request_checkpoint" else None
+    if latest_harvested is not None and policy.checkpoint_rearm_seconds is not None:
+        checkpoint_rearm_at = latest_harvested.harvested_at + policy.checkpoint_rearm_seconds
+        checkpoint_rearm_remaining = max(0.0, checkpoint_rearm_at - observation.now)
+    else:
+        checkpoint_rearm_at = None
+        checkpoint_rearm_remaining = None
     return LifecycleDecision(
         state=state,
         action=action,
@@ -443,6 +474,8 @@ def _decision(
         checkpoint_sequence=latest_sequence,
         next_checkpoint_sequence=next_sequence,
         harvested_checkpoint_sequence=(latest_harvested.sequence if latest_harvested is not None else 0),
+        checkpoint_rearm_at=checkpoint_rearm_at,
+        checkpoint_rearm_remaining_seconds=checkpoint_rearm_remaining,
     )
 
 
@@ -550,20 +583,35 @@ def _soft_budget_decision(policy: LifecyclePolicy, observation: WorkerObservatio
     elif checkpoint_status == "received":
         return _checkpoint_harvest_decision(policy, observation)
     else:
-        latest = observation.latest_checkpoint()
-        # A harvested checkpoint is a boundary.  New acceptance-relevant
-        # evidence after it may justify one new checkpoint, but repeated
-        # evaluations without a new delta must be idempotent.
-        if (
-            latest is not None
-            and latest.harvested_at is not None
-            and observation.meaningful_progress_at() > latest.harvested_at
-        ):
+        latest_harvested = observation.latest_harvested_checkpoint()
+        # A harvested checkpoint is a boundary.  A later checkpoint requires
+        # both explicit acceptance-relevant evidence and the policy cooldown.
+        # Do not use meaningful_progress_at() here: its legacy fallback to
+        # last_progress_at would turn liveness activity into checkpoint churn.
+        rearm_at = (
+            None
+            if latest_harvested is None or policy.checkpoint_rearm_seconds is None
+            else latest_harvested.harvested_at + policy.checkpoint_rearm_seconds
+        )
+        explicit_meaningful_at = observation.last_meaningful_progress_at
+        has_explicit_delta = (
+            latest_harvested is not None
+            and explicit_meaningful_at is not None
+            and explicit_meaningful_at > latest_harvested.harvested_at
+        )
+        cooldown_elapsed = rearm_at is not None and observation.now >= rearm_at
+        if has_explicit_delta and cooldown_elapsed:
             action = "request_checkpoint"
-            suffix = "new acceptance-relevant progress arrived after the latest harvest; request the next checkpoint"
+            suffix = "explicit acceptance-relevant progress arrived after the latest harvest and rearm cooldown elapsed; request the next checkpoint"
         else:
             action = "continue"
-            suffix = "checkpoint has already been harvested; continue until completion or a real lifecycle boundary"
+            if policy.checkpoint_rearm_seconds is None:
+                suffix = "checkpoint has already been harvested; automatic multi-round rearm is disabled for this legacy/one-shot policy; continue until completion or a real lifecycle boundary"
+            elif not has_explicit_delta:
+                suffix = "checkpoint has already been harvested; no explicit acceptance-relevant progress arrived after the latest harvest (last_progress_at cannot re-arm it); continue until completion or a real lifecycle boundary"
+            else:
+                remaining = max(0.0, rearm_at - observation.now) if rearm_at is not None else 0.0
+                suffix = f"checkpoint has already been harvested; explicit progress is visible but rearm cooldown has {remaining:g}s remaining; continue until completion or a real lifecycle boundary"
 
     return _decision(
         policy,
@@ -690,7 +738,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help=(
             "Unix timestamp for the latest acceptance-relevant delta; omit for legacy behavior "
-            "that treats last-progress-at as meaningful"
+            "that treats last-progress-at as meaningful for progress classification, but never "
+            "for multi-round checkpoint rearm"
         ),
     )
     parser.add_argument("--checkpoint-requested-at", type=float, help="Unix timestamp when Parent requested checkpoint")
