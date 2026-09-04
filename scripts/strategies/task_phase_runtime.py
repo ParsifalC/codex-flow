@@ -260,9 +260,18 @@ def reserve_phase(
 
     if kind == "review_attempt":
         decision = status(state_file, task_id, plan, phase, now)
-        if not decision["permits_review_start"]:
-            raise LedgerError("review admission deadline reached; Parent finalization reserve is protected")
-        result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
+        review_deadline = decision["review_deadline"]
+        if review_deadline is None:
+            raise LedgerError("review_attempt requires a planned review deadline")
+        result = reserve(
+            state_file,
+            task_id,
+            kind,
+            reservation_id,
+            fingerprint,
+            now,
+            new_reservation_deadline=review_deadline,
+        )
     else:
         result = reserve(state_file, task_id, kind, reservation_id, fingerprint, now)
     result.update(phase_decision(plan, result, phase, now))
