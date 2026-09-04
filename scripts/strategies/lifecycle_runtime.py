@@ -35,6 +35,7 @@ class LifecyclePolicy:
     cancel_if_superseded: bool
     cancel_stragglers_after_quorum: bool
     fallback_policy: str
+    soft_timeout_seconds: float | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "LifecyclePolicy":
@@ -53,6 +54,7 @@ class LifecyclePolicy:
         for key in ("cancel_if_superseded", "cancel_stragglers_after_quorum"):
             if not isinstance(value[key], bool):
                 raise ValueError(f"{key} must be boolean")
+        raw_soft_timeout = value.get("soft_timeout_seconds")
         policy = cls(
             join_policy=str(value["join_policy"]),
             min_successful_workers=int(value["min_successful_workers"]),
@@ -61,6 +63,7 @@ class LifecyclePolicy:
             cancel_if_superseded=value["cancel_if_superseded"],
             cancel_stragglers_after_quorum=value["cancel_stragglers_after_quorum"],
             fallback_policy=str(value["fallback_policy"]),
+            soft_timeout_seconds=(None if raw_soft_timeout is None else float(raw_soft_timeout)),
         )
         policy.validate()
         return policy
@@ -78,6 +81,11 @@ class LifecyclePolicy:
             raise ValueError("idle_timeout_seconds must be positive")
         if self.hard_timeout_seconds < self.idle_timeout_seconds:
             raise ValueError("hard_timeout_seconds must be >= idle_timeout_seconds")
+        if self.soft_timeout_seconds is not None:
+            if self.soft_timeout_seconds <= 0:
+                raise ValueError("soft_timeout_seconds must be positive when set")
+            if self.soft_timeout_seconds >= self.hard_timeout_seconds:
+                raise ValueError("soft_timeout_seconds must be lower than hard_timeout_seconds")
         if self.fallback_policy not in FALLBACK_ACTIONS:
             raise ValueError(f"invalid fallback policy: {self.fallback_policy}")
 
@@ -208,6 +216,23 @@ def _superseded_decision(observation: WorkerObservation) -> LifecycleDecision:
     )
 
 
+def _soft_budget_decision(observation: WorkerObservation) -> LifecycleDecision:
+    idle = max(0.0, observation.now - observation.last_progress_at)
+    wall = max(0.0, observation.now - observation.started_at)
+    state = "progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running"
+    return LifecycleDecision(
+        state=state,
+        action="request_checkpoint",
+        reason="soft worker execution budget reached; request checkpoint/convergence without cancelling Worker",
+        cancel_required=False,
+        replacement_allowed=False,
+        fence_required=False,
+        idle_seconds=idle,
+        wall_seconds=wall,
+        fallback_policy=None,
+    )
+
+
 def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
     """Evaluate one Worker without treating Parent wait intervals as evidence."""
     policy.validate()
@@ -267,6 +292,9 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
             reason="idle progress lease expired with no visible in-flight work",
             terminal=False,
         )
+
+    if policy.soft_timeout_seconds is not None and wall >= policy.soft_timeout_seconds:
+        return _soft_budget_decision(observation)
 
     return LifecycleDecision(
         state="progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running",
