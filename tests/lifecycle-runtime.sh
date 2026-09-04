@@ -81,6 +81,7 @@ assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
 assert d["progress_quality"]=="meaningful" and d["meaningful_idle_seconds"]==30, d
 assert d["checkpoint_status"]=="not_requested", d
+assert d["replan_scope"] is None and d["checkpoint_reuse_mode"] is None, d
 PY
 
 # Reaching the soft budget requests convergence/checkpoint only. It never cancels or fences a healthy Worker.
@@ -95,6 +96,7 @@ assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
 assert d["fallback_policy"] is None, d
 assert d["progress_quality"]=="meaningful", d
+assert d["replan_scope"] is None, d
 assert "without cancelling Worker" in d["reason"], d
 PY
 
@@ -121,6 +123,7 @@ d=json.load(open(sys.argv[1]))
 assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
 assert d["cancel_required"] is False and d["fallback_policy"] is None, d
 assert d["fence_required"] is False and d["replacement_allowed"] is False, d
+assert d["replan_scope"] is None, d
 assert "remaining delta" in d["reason"], d
 PY
 
@@ -134,6 +137,7 @@ import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["action"]=="continue" and d["checkpoint_status"]=="harvested", d
 assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+assert d["replan_scope"] is None and d["checkpoint_reuse_mode"] is None, d
 assert "already been harvested" in d["reason"], d
 PY
 
@@ -148,10 +152,10 @@ d=json.load(open(sys.argv[1]))
 assert d["wall_seconds"]==1800 and d["action"]=="harvest_checkpoint", d
 assert d["checkpoint_status"]=="received", d
 assert d["cancel_required"] is False and d["fallback_policy"] is None, d
-assert d["fence_required"] is False, d
+assert d["fence_required"] is False and d["replan_scope"] is None, d
 PY
 
-# After harvest is recorded, the unchanged hard-timeout/writer-fencing behavior may proceed.
+# After harvest, hard-timeout cancellation is fenced and the future replan is explicitly restricted to remaining_delta.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
   --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
   --now 1901 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
@@ -162,6 +166,37 @@ d=json.load(open(sys.argv[1]))
 assert d["action"]=="request_cancel" and d["checkpoint_status"]=="harvested", d
 assert d["cancel_required"] is True and d["fence_required"] is True, d
 assert d["fallback_policy"]=="replan", d
+assert d["replan_scope"]=="checkpoint_remaining_delta", d
+assert d["checkpoint_reuse_mode"]=="retained_workspace", d
+assert "remaining_delta" in d["reason"] and "completed work must be preserved" in d["reason"], d
+PY
+
+# Once the old writer is confirmed cancelled, replacement replan still receives only remaining_delta and retains the workspace.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
+  --now 1902 --writable --cancel-confirmed --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
+  --checkpoint-harvested-at 1900 > "$TMP/replan-after-cancel.json"
+python3 - "$TMP/replan-after-cancel.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="replan" and d["replacement_allowed"] is True, d
+assert d["replan_scope"]=="checkpoint_remaining_delta", d
+assert d["checkpoint_reuse_mode"]=="retained_workspace", d
+assert d["cancel_required"] is False, d
+PY
+
+# An isolated replacement may start from the immutable harvested snapshot only; later old-Worker output stays fenced.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
+  --now 1901 --writable --replacement-isolated --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
+  --checkpoint-harvested-at 1900 > "$TMP/replan-isolated.json"
+python3 - "$TMP/replan-isolated.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="replan" and d["replacement_allowed"] is True, d
+assert d["cancel_required"] is True and d["fence_required"] is True, d
+assert d["replan_scope"]=="checkpoint_remaining_delta", d
+assert d["checkpoint_reuse_mode"]=="harvested_snapshot_only", d
 PY
 
 # Terminal failure also harvests a returned checkpoint before replanning, so partial work is never silently discarded.
@@ -173,6 +208,19 @@ import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
 assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+PY
+
+# After that checkpoint is harvested, terminal failure replan is remaining-delta-only.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-failed-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 300 --now 321 --writable --terminal-failure \
+  --checkpoint-requested-at 250 --checkpoint-received-at 300 --checkpoint-harvested-at 320 \
+  > "$TMP/failed-checkpoint-harvested.json"
+python3 - "$TMP/failed-checkpoint-harvested.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="replan" and d["replacement_allowed"] is True, d
+assert d["replan_scope"]=="checkpoint_remaining_delta", d
+assert d["checkpoint_reuse_mode"]=="retained_workspace", d
 PY
 
 # Invalid checkpoint timelines fail fast instead of pretending a payload was harvested.
@@ -270,7 +318,7 @@ assert d["progress_quality"]=="activity_only", d
 assert d["cancel_required"] is False, d
 PY
 
-# Writable stall + replan is fenced: do not spawn same-scope replacement while old Worker may resume.
+# Writable stall + replan without a harvested checkpoint still reports uncovered scope and is fenced.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable > "$TMP/stall.json"
 python3 - "$TMP/stall.json" <<'PY'
@@ -279,9 +327,10 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="request_cancel", d
 assert d["cancel_required"] is True, d
 assert d["fence_required"] is True and d["replacement_allowed"] is False, d
+assert d["replan_scope"]=="uncovered_scope" and d["checkpoint_reuse_mode"] is None, d
 PY
 
-# Once cancellation/termination is confirmed, replan may create a replacement.
+# Once cancellation/termination is confirmed, replan may create a replacement for uncovered scope.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --cancel-confirmed > "$TMP/cancelled.json"
 python3 - "$TMP/cancelled.json" <<'PY'
@@ -290,6 +339,7 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="cancelled" and d["action"]=="replan", d
 assert d["cancel_required"] is False, d
 assert d["fence_required"] is True and d["replacement_allowed"] is True, d
+assert d["replan_scope"]=="uncovered_scope", d
 PY
 
 # A fresh isolated replacement may proceed while cancellation is still required for the old Worker.
@@ -301,6 +351,7 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="replan", d
 assert d["cancel_required"] is True, d
 assert d["replacement_allowed"] is True and d["fence_required"] is True, d
+assert d["replan_scope"]=="uncovered_scope", d
 assert "isolated" in d["reason"], d
 PY
 
@@ -320,6 +371,7 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="request_cancel", d
 assert d["cancel_required"] is True and d["fence_required"] is True, d
 assert d["replacement_allowed"] is False and d["fallback_policy"]=="parent_delta", d
+assert d["replan_scope"] is None, d
 PY
 
 # Parent may take the writable delta only after old Worker termination is confirmed.
@@ -345,7 +397,7 @@ assert d["replacement_allowed"] is False, d
 assert "downstream writer is explicitly isolated" in d["reason"], d
 PY
 
-# Terminal failure without a checkpoint is already fenced and may immediately replan.
+# Terminal failure without a checkpoint may immediately replan, but only uncovered scope is claimed.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 100 --now 120 --writable --terminal-failure > "$TMP/failed.json"
 python3 - "$TMP/failed.json" <<'PY'
@@ -353,6 +405,7 @@ import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="failed" and d["action"]=="replan", d
 assert d["cancel_required"] is False and d["replacement_allowed"] is True, d
+assert d["replan_scope"]=="uncovered_scope", d
 PY
 
 # Hard wall ceiling still wins when there is no returned checkpoint to preserve, even if work is visibly in-flight.
@@ -363,6 +416,7 @@ import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="request_cancel", d
 assert d["cancel_required"] is True, d
+assert d["replan_scope"]=="uncovered_scope", d
 assert "hard worker wall-clock ceiling" in d["reason"], d
 PY
 
@@ -423,6 +477,7 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="stalled" and d["action"]=="replan", d
 assert d["cancel_required"] is True, d
 assert d["replacement_allowed"] is True and d["fence_required"] is False, d
+assert d["replan_scope"]=="uncovered_scope", d
 PY
 
 # ---- Restored PR5 regression coverage ----
