@@ -224,6 +224,7 @@ ExecutionPlan
     idle_timeout_seconds
     hard_timeout_seconds
     soft_timeout_seconds | none
+    max_worker_repair_attempts | none
     cancel_if_superseded
     cancel_stragglers_after_quorum
     fallback_policy: continue_partial | parent_delta | replan | fail
@@ -236,6 +237,8 @@ ExecutionPlan
   context_mode
   notes
 ```
+
+`implementation_stage.max_worker_repair_attempts` is a local Implementer-loop budget. It does **not** replace or consume top-level `max_repair_cycles`, which remains the Parent-level post-return repair budget.
 
 Once compiled, execute this plan. Do not reinterpret the strategy name or `quality_intent` to change topology, resource selection, or lifecycle behavior.
 
@@ -251,7 +254,7 @@ Examples of prohibited duplication:
 - do not substitute role capability/model choices that are absent from the plan;
 - do not invent lifecycle timeout/retry/cancellation rules from the strategy name;
 - do not terminate a non-terminal Worker merely because one or more `wait()` calls returned without a final result;
-- do not expand repair cycles beyond the plan;
+- do not expand either local Worker repair attempts or Parent repair cycles beyond the plan;
 - do not replace `direct` with delegation because delegation seems useful.
 
 The planner may emit capability/model intent that the active Codex build cannot override per spawn. In that case use the installed baseline supported by the runtime, preserve topology/review/lifecycle/repair, and report the limitation rather than pretending the requested override was applied.
@@ -445,7 +448,7 @@ Fallback always operates on the missing delta, never by restarting the whole sta
 
 For a non-terminal Worker, `cancel_required=true` is independent of the fallback action: fallback may make forward progress where safe, but the old Worker still must be reclaimed.
 
-Worker lifecycle failure/stall does **not** consume `max_repair_cycles`. Repair cycles are for defects in implementation output, not scheduler/infrastructure latency.
+Worker lifecycle failure/stall does **not** consume either repair budget. Repair budgets are for implementation-output defects, not scheduler/infrastructure latency.
 
 ### Hard writable writer fence
 
@@ -484,7 +487,8 @@ For each planned implementation worker, hand off only:
 - Steps;
 - Constraints/non-goals;
 - Acceptance criteria;
-- Required validation.
+- Required validation;
+- `implementation_stage.max_worker_repair_attempts` when present.
 
 For a `checkpoint_remaining_delta` replacement, replace the generic full-scope handoff with:
 
@@ -493,7 +497,8 @@ For a `checkpoint_remaining_delta` replacement, replace the generic full-scope h
 - `checkpoint_reuse_mode`;
 - harvested completed work and validation as prior evidence;
 - harvested patch/workspace baseline;
-- **only** the harvested `remaining_delta` as implementation steps and outstanding acceptance criteria.
+- **only** the harvested `remaining_delta` as implementation steps and outstanding acceptance criteria;
+- the new plan's local Worker repair budget, if present.
 
 Do not paste the original complete task as a second goal; that reintroduces full-task restart behavior.
 
@@ -515,8 +520,21 @@ Workers make only scoped changes, run narrow validation first, fix failures caus
 - changed files;
 - concise implementation summary;
 - validation commands/results;
+- local repair attempts used / budget when supplied;
 - deviations;
 - unresolved risks/failures.
+
+When `implementation_stage.max_worker_repair_attempts` is present, enforce it inside each Implementer independently:
+
+- the initial implementation plus its first validation is **not** a repair attempt;
+- one repair attempt is a validation failure attributable to the Worker's changes, followed by one corrective edit pass and targeted revalidation;
+- investigation that does not make a corrective edit does not consume an attempt;
+- unrelated pre-existing failures do not consume an attempt;
+- once the budget is exhausted, the Worker must not start another corrective loop. It preserves the current patch and returns the failing validation, attempts used, concrete blocker, and smallest remaining delta to Parent.
+
+Budget exhaustion is a controlled handoff, not lifecycle timeout. Do not cancel the Worker, discard its patch, or count the event as a Worker lifecycle failure. Parent may then use the remaining-delta evidence in its normal review/repair/replan path.
+
+If `max_worker_repair_attempts` is absent (for example an older ExecutionPlan still running after an update), do not retroactively impose the new local cap; preserve historical behavior for that run.
 
 A checkpoint uses the same evidence discipline but is explicitly partial and non-terminal. Keep the Worker's current workspace intact while harvesting it.
 
@@ -543,13 +561,13 @@ Do not infer review depth, reviewer resources, or lifecycle from the strategy/mo
 
 ## 10. Repair from bounded delta tasks
 
-On implementation defect, send the smallest useful repair delta: exact defect, impact, required correction, relevant symbol/file, and validation.
+On implementation defect returned to Parent, send the smallest useful repair delta: exact defect, impact, required correction, relevant symbol/file, and validation.
 
-Never exceed `max_repair_cycles` from ExecutionPlan.
+Never exceed top-level `max_repair_cycles` from ExecutionPlan. These Parent-level cycles start only after the Implementer has returned control; they are separate from `implementation_stage.max_worker_repair_attempts` already spent inside that Worker.
 
 If repair fails or new evidence materially changes the task, update TaskProfile and compile a **new** ExecutionPlan. Do not mutate the old plan ad hoc.
 
-Do not count Worker stall/failure/supersession as an implementation repair cycle.
+Do not count Worker stall/failure/supersession, checkpoint handling, timeout fallback, or remaining-delta replan itself as an implementation repair cycle.
 
 ## 11. Quota and telemetry discipline
 
@@ -557,7 +575,7 @@ Quota must never be guessed. The planner reads app-server rate-limit state when 
 
 Telemetry remains observational and deterministic. Never call a model solely to estimate tokens, quota, duration, or produce a usage summary.
 
-Quota pressure may reduce speculative fan-out or repair budget for quota-sensitive strategies, but configured reasoning/quality floors and the Worker-over-Parent reasoning invariant must not be silently lowered. `quality` is correctness-first; strong/absolute quality intent is allowed to retain Parent-class capability on high-value roles under quota pressure. Safety ceilings still apply.
+Quota pressure may reduce speculative fan-out or Parent repair budget for quota-sensitive strategies, but configured reasoning/quality floors and the Worker-over-Parent reasoning invariant must not be silently lowered. `quality` is correctness-first; strong/absolute quality intent is allowed to retain Parent-class capability on high-value roles under quota pressure. Safety ceilings still apply.
 
 Lifecycle v1 uses deterministic strategy policies, a deterministic lifecycle evaluator, and Runtime hard ceilings. Do not invent historical latency predictions. Future telemetry-driven latency adaptation may be added only as explicit planner/runtime logic.
 
@@ -581,7 +599,7 @@ Re-profile and invoke the planner again when:
 - a cross-module dependency appears;
 - writable workstream isolation changes;
 - a required stage chooses `fallback_policy=replan` after failure/stall;
-- repair cycles fail;
+- Parent repair cycles fail;
 - reliable quota/runtime state materially changes.
 
 Re-plan from the evaluator-provided scope, never from the original task by default. If `replan_scope=checkpoint_remaining_delta`, the harvested checkpoint is the authoritative boundary: preserve completed work and prior validation, preserve or materialize the baseline according to `checkpoint_reuse_mode`, and profile/plan only `remaining_delta`. If `replan_scope=uncovered_scope`, derive the smallest still-uncovered scope from evidence. For writable work, a new plan never overrides the old Worker's fencing requirement.
@@ -598,4 +616,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies liveness/meaningful-progress classification, checkpoint harvest ordering, remaining-delta replan contracts, timing/fallback state transitions, cancellation requirements, timestamp validation, and hard writable writer fencing.
+Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; optional local Worker repair budgets affect only newly compiled plans. Older plans without `max_worker_repair_attempts` retain historical Worker-loop behavior. The installed lifecycle evaluator continues to apply liveness/meaningful-progress classification, checkpoint harvest ordering, remaining-delta replan contracts, timing/fallback state transitions, cancellation requirements, timestamp validation, and hard writable writer fencing.
