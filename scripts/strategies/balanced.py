@@ -37,22 +37,13 @@ def implementation_soft_timeout(task) -> int:
 def implementation_checkpoint_rearm_seconds(task) -> int:
     if task.complexity == "critical" or task.risk == "critical":
         return 360
-    if (
-        task.complexity == "complex"
-        or task.scope in {"cross-module", "repo-wide"}
-        or task.iteration_intensity == "heavy-loop"
-    ):
+    if task.complexity == "complex" or task.scope in {"cross-module", "repo-wide"} or task.iteration_intensity == "heavy-loop":
         return 300
     return 240
 
 
 def implementation_repair_attempts(task) -> int:
-    if (
-        task.complexity in {"complex", "critical"}
-        or task.risk == "critical"
-        or task.scope == "repo-wide"
-        or task.iteration_intensity == "heavy-loop"
-    ):
+    if task.complexity in {"complex", "critical"} or task.risk == "critical" or task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
         return 2
     return 1
 
@@ -69,7 +60,6 @@ def implementation_maximum_work_units(task) -> int:
 
 
 def task_budget(task) -> TaskBudgetPolicy:
-    """Bound cumulative balanced work without forcing efficient-style latency."""
     maximum_work_units = implementation_maximum_work_units(task)
     if task.complexity == "critical" or task.risk == "critical" or task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
         soft_timeout, hard_timeout = 3000, 3600
@@ -84,6 +74,8 @@ def task_budget(task) -> TaskBudgetPolicy:
         max_implementation_attempts=maximum_work_units + 2,
         max_replans=2,
         max_replacements=2,
+        max_review_attempts=2,
+        parent_finalization_seconds=180,
     )
 
 
@@ -94,13 +86,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
         maximum_work_units = implementation_maximum_work_units(task)
         bounded_mode = maximum_work_units > 1
         return StagePolicy(
-            "required",
-            1,
-            240,
-            2400,
-            False,
-            False,
-            "replan",
+            "required", 1, 240, 2400, False, False, "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
             checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
             max_worker_repair_attempts=implementation_repair_attempts(task),
@@ -111,7 +97,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        return StagePolicy("required", 1, 180, 1800, True, False, "parent_delta")
+        return StagePolicy("required", 1, 180, 1800, True, False, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
