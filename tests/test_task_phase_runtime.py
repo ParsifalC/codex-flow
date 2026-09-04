@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Regression coverage for task-budget phase admission and required review tail."""
+"""Regression coverage for task-budget phase admission and required completion."""
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,16 +36,30 @@ def profile(**overrides) -> TaskProfile:
     return TaskProfile(**values)
 
 
-def plan(strategy: str, *, strict: bool = False, task: TaskProfile | None = None):
+def plan(
+    strategy: str,
+    *,
+    strict: bool = False,
+    task: TaskProfile | None = None,
+    fanout: str = "auto",
+):
     return compile_plan(
         task or profile(),
         strategy=strategy,
         routing_mode="delegate",
-        modifiers=Modifiers(review="strict" if strict else "auto", fanout="auto"),
+        modifiers=Modifiers(review="strict" if strict else "auto", fanout=fanout),
     )
 
 
-def assert_tail(strategy: str, expected_elapsed_cutoff: int, *, strict: bool = False) -> None:
+def assert_tail(
+    strategy: str,
+    *,
+    strict: bool = False,
+    expected_soft: int,
+    expected_effective_hard: int,
+    expected_reviewer_reserve: int,
+    expected_parent_reserve: int,
+) -> None:
     execution_plan = plan(strategy, strict=strict)
     assert execution_plan.task_budget is not None, execution_plan
     assert execution_plan.review_stage is not None, execution_plan
@@ -55,15 +70,24 @@ def assert_tail(strategy: str, expected_elapsed_cutoff: int, *, strict: bool = F
         state = str(Path(tmp) / f"{strategy}.json")
         initialized = init(state, strategy, execution_plan.to_dict(), start)
         plan_json = execution_plan.to_dict()
-        cutoff = start + expected_elapsed_cutoff
+        cutoff = start + expected_soft
+        hard = start + expected_effective_hard
 
-        assert initialized["effective_task_budget"]["soft_timeout_seconds"] == expected_elapsed_cutoff, initialized
         assert initialized["soft_deadline"] == cutoff, initialized
-        assert initialized["legacy_unclamped"] is False, initialized
+        assert initialized["hard_deadline"] == hard, initialized
+        assert initialized["effective_task_budget"]["soft_timeout_seconds"] == expected_soft, initialized
+        assert initialized["effective_task_budget"]["hard_timeout_seconds"] == expected_effective_hard, initialized
+        assert initialized["reviewer_reserve_seconds"] == expected_reviewer_reserve, initialized
+        assert initialized["parent_finalization_reserve_seconds"] == expected_parent_reserve, initialized
+        assert initialized["required_completion_reserve_seconds"] == (
+            expected_reviewer_reserve + expected_parent_reserve
+        ), initialized
+        assert initialized["hard_deadline_extended"] == (
+            expected_effective_hard > execution_plan.task_budget.hard_timeout_seconds
+        ), initialized
 
         before = status(state, strategy, plan_json, "implementation", cutoff - 1)
-        assert before["permits_phase_start"] is True, before
-        assert before["action"] == "continue", before
+        assert before["permits_phase_start"] is True and before["action"] == "continue", before
 
         at_cutoff = status(state, strategy, plan_json, "implementation", cutoff)
         assert at_cutoff["permits_phase_start"] is False, at_cutoff
@@ -74,28 +98,74 @@ def assert_tail(strategy: str, expected_elapsed_cutoff: int, *, strict: bool = F
         required = status(state, strategy, plan_json, "required_completion", cutoff)
         assert required["permits_phase_start"] is True, required
         assert required["action"] == "complete_required", required
-        assert required["required_completion_reserve_seconds"] == execution_plan.review_stage.hard_timeout_seconds, required
 
-        hard = start + execution_plan.task_budget.hard_timeout_seconds
         near_hard = status(state, strategy, plan_json, "required_completion", hard - 1)
         assert near_hard["permits_phase_start"] is True, near_hard
         stopped = status(state, strategy, plan_json, "required_completion", hard)
         assert stopped["permits_phase_start"] is False and stopped["action"] == "stop", stopped
 
 
+def assert_parallel_topology_budget(strategy: str, *, fanout: str = "auto") -> None:
+    execution_plan = plan(
+        strategy,
+        task=profile(
+            parallelism="high",
+            write_conflict="low",
+            writable_workstreams=4,
+        ),
+        fanout=fanout,
+    )
+    assert execution_plan.implementation_stage is not None, execution_plan
+    assert execution_plan.task_budget is not None, execution_plan
+    assert execution_plan.implementation_workers >= 1, execution_plan
+    assert execution_plan.implementation_stage.maximum_work_units >= execution_plan.implementation_workers, execution_plan
+    assert execution_plan.task_budget.max_work_units >= execution_plan.implementation_workers, execution_plan
+    assert execution_plan.task_budget.max_implementation_attempts >= execution_plan.implementation_workers, execution_plan
+
+    # Phase init repeats the invariant and therefore fails closed if a future
+    # compiler/strategy regression emits an impossible plan.
+    with tempfile.TemporaryDirectory() as tmp:
+        state = str(Path(tmp) / f"{strategy}-parallel.json")
+        init(state, f"{strategy}-parallel", execution_plan.to_dict(), 100)
+
+
 def main() -> None:
-    # Quality plans require independent review by default. Their ledger soft
-    # deadline is deterministically clamped to preserve the review stage's full
-    # hard tail.
-    assert_tail("quality", 3000)
+    # General work retains the strategy soft target. Required review is additive:
+    # effective hard extends to preserve both the reviewer hard window and a
+    # distinct Parent finalization reserve.
+    assert_tail(
+        "quality",
+        expected_soft=4800,
+        expected_effective_hard=8100,
+        expected_reviewer_reserve=3000,
+        expected_parent_reserve=300,
+    )
+    assert_tail(
+        "balanced",
+        strict=True,
+        expected_soft=2400,
+        expected_effective_hard=4380,
+        expected_reviewer_reserve=1800,
+        expected_parent_reserve=180,
+    )
+    assert_tail(
+        "speed",
+        strict=True,
+        expected_soft=1200,
+        expected_effective_hard=2220,
+        expected_reviewer_reserve=900,
+        expected_parent_reserve=120,
+    )
+    assert_tail(
+        "efficient",
+        strict=True,
+        expected_soft=1500,
+        expected_effective_hard=2850,
+        expected_reviewer_reserve=1200,
+        expected_parent_reserve=150,
+    )
 
-    # Strict review is an explicit required-completion stage even for strategies
-    # that normally use Parent-only review.
-    assert_tail("balanced", 1200, strict=True)
-    assert_tail("speed", 900, strict=True)
-    assert_tail("efficient", 600, strict=True)
-
-    # Parent-only review keeps the original strategy soft deadline unchanged.
+    # Parent-only review keeps the original strategy task envelope unchanged.
     balanced = plan("balanced")
     assert balanced.reviewer_workers == 0 and balanced.review_stage is None, balanced
     with tempfile.TemporaryDirectory() as tmp:
@@ -104,19 +174,17 @@ def main() -> None:
         assert initialized["effective_task_budget"] == {
             "soft_timeout_seconds": 2400,
             "hard_timeout_seconds": 3000,
-            "max_work_units": 1,
-            "max_implementation_attempts": 3,
+            "max_work_units": balanced.task_budget.max_work_units,
+            "max_implementation_attempts": balanced.task_budget.max_implementation_attempts,
             "max_replans": 2,
             "max_replacements": 2,
         }, initialized
-        decision = status(state, "balanced-parent", balanced.to_dict(), "implementation", 100 + 2400)
+        decision = status(state, "balanced-parent", balanced.to_dict(), "implementation", 2500)
         assert decision["required_completion_reserve_seconds"] == 0, decision
-        assert decision["general_work_deadline"] == 100 + 2400, decision
         assert decision["action"] == "converge", decision
 
-    # Phase-aware init moves the raw ledger soft deadline to the required-review
-    # boundary. The underlying atomic reserve therefore rejects *new* work there
-    # while preserving its deliberate idempotent replay behavior.
+    # The raw ledger soft deadline remains the general-work boundary. It rejects
+    # genuinely new implementation work there but keeps idempotent replay valid.
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "quality-reserve.json")
@@ -128,7 +196,7 @@ def main() -> None:
             "implementation_attempt",
             "attempt-before-tail",
             "unit-0-generation-0",
-            3099,
+            4899,
         )
         assert first["reserved"] is True and first["idempotent"] is False, first
 
@@ -139,7 +207,7 @@ def main() -> None:
             "implementation_attempt",
             "attempt-before-tail",
             "unit-0-generation-0",
-            3100,
+            4900,
         )
         assert replay["reserved"] is True and replay["idempotent"] is True, replay
         assert replay["permits_phase_start"] is False, replay
@@ -152,15 +220,14 @@ def main() -> None:
                 "implementation_attempt",
                 "attempt-in-tail",
                 "unit-0-generation-1",
-                3100,
+                4900,
             )
         except LedgerError as exc:
             assert "soft deadline reached" in str(exc), exc
         else:
-            raise AssertionError("new implementation reservation unexpectedly entered required-review tail")
+            raise AssertionError("new implementation reservation unexpectedly entered required-completion tail")
 
-    # The phase helper refuses a different budget plan against an existing
-    # ledger, preventing a caller from extending the admission window after init.
+    # Initial budget-plan identity remains immutable across replanning.
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "identity.json")
@@ -173,21 +240,18 @@ def main() -> None:
         else:
             raise AssertionError("different budget plan unexpectedly reused task phase ledger")
 
-    # A task already initialized by the pre-phase runtime keeps its historical
-    # original soft deadline. Calling phase-aware init after upgrade adopts that
-    # ledger without shortening it or inventing a review-tail reservation.
+    # There is no grandfathered pre-phase state. A raw ledger created with a
+    # different policy fingerprint fails closed instead of silently changing semantics.
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
-        state = str(Path(tmp) / "legacy.json")
-        init_ledger(state, "legacy", quality.task_budget, 100)
-        adopted = init(state, "legacy", quality.to_dict(), 101)
-        assert adopted["initialized"] is False and adopted["idempotent"] is True, adopted
-        assert adopted["legacy_unclamped"] is True, adopted
-        assert adopted["soft_deadline"] == 4900, adopted
-        assert adopted["required_completion_reserve_seconds"] == 0, adopted
-        legacy_status = status(state, "legacy", quality.to_dict(), "implementation", 3100)
-        assert legacy_status["legacy_unclamped"] is True, legacy_status
-        assert legacy_status["permits_phase_start"] is True, legacy_status
+        state = str(Path(tmp) / "mismatch.json")
+        init_ledger(state, "mismatch", quality.task_budget, 100)
+        try:
+            status(state, "mismatch", quality.to_dict(), "implementation", 101)
+        except LedgerError as exc:
+            assert "plan/policy mismatch" in str(exc), exc
+        else:
+            raise AssertionError("mismatched raw ledger unexpectedly adopted phase-aware semantics")
 
     # Exercise the real argparse path: --now arrives as text in every shell.
     phase_cli = ROOT / "scripts/strategies/task_phase_runtime.py"
@@ -214,7 +278,8 @@ def main() -> None:
             capture_output=True,
         )
         initialized = json.loads(init_run.stdout)
-        assert initialized["soft_deadline"] == 3100, initialized
+        assert initialized["soft_deadline"] == 4900, initialized
+        assert initialized["hard_deadline"] == 8200, initialized
         status_run = subprocess.run(
             [
                 sys.executable,
@@ -229,7 +294,7 @@ def main() -> None:
                 "--phase",
                 "required_completion",
                 "--now",
-                "3100",
+                "4900",
             ],
             check=True,
             text=True,
@@ -244,6 +309,31 @@ def main() -> None:
     quality_stage = get("quality").lifecycle(high_risk, "implementation")
     assert quality_stage.minimum_work_units == 1, quality_stage
     assert quality_stage.maximum_work_units == 3, quality_stage
+
+    # Real multi-writer topology must always fit the logical-unit and attempt
+    # budgets. This is the regression that the previous single-worker tests missed.
+    assert_parallel_topology_budget("balanced")
+    assert_parallel_topology_budget("quality")
+    assert_parallel_topology_budget("speed")
+    assert_parallel_topology_budget("efficient", fanout="aggressive")
+
+    # Explicitly corrupt a valid plan to prove phase init rejects under-provisioned
+    # topology even if a future strategy/compiler bug bypasses normal checks.
+    speed_parallel = plan(
+        "speed",
+        task=profile(parallelism="high", write_conflict="low", writable_workstreams=4),
+    ).to_dict()
+    assert speed_parallel["implementation_workers"] > 1, speed_parallel
+    broken = deepcopy(speed_parallel)
+    broken["implementation_stage"]["maximum_work_units"] = 1
+    broken["task_budget"]["max_work_units"] = 1
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            init(str(Path(tmp) / "broken.json"), "broken", broken, 100)
+        except LedgerError as exc:
+            assert "topology exceeds task budget max_work_units" in str(exc), exc
+        else:
+            raise AssertionError("under-provisioned parallel topology unexpectedly initialized")
 
     print("task phase admission tests passed")
 
