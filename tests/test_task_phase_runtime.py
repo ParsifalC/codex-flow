@@ -69,9 +69,11 @@ def assert_tail(
         plan_json = execution_plan.to_dict()
         cutoff = start + expected_soft
         hard = start + expected_hard
+        review_deadline = hard - expected_parent_reserve
 
         assert initialized["soft_deadline"] == cutoff, initialized
         assert initialized["hard_deadline"] == hard, initialized
+        assert initialized["review_deadline"] == review_deadline, initialized
         assert initialized["task_budget"] == execution_plan.task_budget.__dict__, initialized
         assert initialized["reviewer_reserve_seconds"] == expected_reviewer_reserve, initialized
         assert initialized["parent_finalization_reserve_seconds"] == expected_parent_reserve, initialized
@@ -85,6 +87,7 @@ def assert_tail(
         assert at_cutoff["checkpoint_convergence_required"], at_cutoff
         required = status(state, strategy, plan_json, "required_completion", cutoff)
         assert required["permits_phase_start"] and required["action"] == "complete_required", required
+        assert required["permits_review_start"] and required["permits_parent_finalization"], required
 
         review = reserve_phase(
             state,
@@ -99,8 +102,44 @@ def assert_tail(
         assert review["reserved"] and not review["idempotent"], review
         assert review["counters"]["review_attempt"] == 1, review
 
+        # A failed reviewer may retry inside the review window, but not one
+        # instant later: the final tail is exclusively Parent finalization.
+        retry = reserve_phase(
+            state,
+            strategy,
+            plan_json,
+            "required_completion",
+            "review_attempt",
+            "review-1",
+            "review-generation-1",
+            review_deadline - 1,
+        )
+        assert retry["reserved"] and retry["counters"]["review_attempt"] == 2, retry
+
+        finalization = status(state, strategy, plan_json, "required_completion", review_deadline)
+        assert finalization["permits_phase_start"], finalization
+        assert finalization["permits_required_completion"], finalization
+        assert not finalization["permits_review_start"], finalization
+        assert finalization["permits_parent_finalization"], finalization
+        assert finalization["action"] == "finalize_parent", finalization
+        try:
+            reserve_phase(
+                state,
+                strategy,
+                plan_json,
+                "required_completion",
+                "review_attempt",
+                "review-too-late",
+                "review-generation-2",
+                review_deadline,
+            )
+        except LedgerError as exc:
+            assert "Parent finalization reserve" in str(exc), exc
+        else:
+            raise AssertionError("review retry consumed Parent finalization reserve")
+
         near_hard = status(state, strategy, plan_json, "required_completion", hard - 1)
-        assert near_hard["permits_phase_start"], near_hard
+        assert near_hard["permits_phase_start"] and near_hard["action"] == "finalize_parent", near_hard
         stopped = status(state, strategy, plan_json, "required_completion", hard)
         assert not stopped["permits_phase_start"] and stopped["action"] == "stop", stopped
 
@@ -135,6 +174,7 @@ def main() -> None:
         state = str(Path(tmp) / "balanced-parent.json")
         initialized = init(state, "balanced-parent", balanced.to_dict(), 100)
         assert initialized["required_completion_reserve_seconds"] == 0, initialized
+        assert initialized["review_deadline"] is None, initialized
         decision = status(state, "balanced-parent", balanced.to_dict(), "implementation", 2500)
         assert decision["action"] == "converge", decision
         no_completion = status(state, "balanced-parent", balanced.to_dict(), "required_completion", 2500)
@@ -203,6 +243,7 @@ def main() -> None:
         ], check=True, text=True, capture_output=True)
         initialized = json.loads(init_run.stdout)
         assert initialized["soft_deadline"] == 4900 and initialized["hard_deadline"] == 8200, initialized
+        assert initialized["review_deadline"] == 7900, initialized
         review_run = subprocess.run([
             sys.executable, str(phase_cli), "reserve", "--state-file", state, "--task-id", "cli", "--plan-json", plan_json,
             "--phase", "required_completion", "--kind", "review_attempt", "--reservation-id", "review-cli", "--fingerprint", "review-cli-v0", "--now", "4900"
