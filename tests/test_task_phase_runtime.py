@@ -108,15 +108,26 @@ def assert_tail(
         assert not finalization["permits_review_start"], finalization
         assert finalization["permits_parent_finalization"], finalization
         assert finalization["action"] == "finalize_parent", finalization
+
+        # A reservation committed before review_deadline remains exactly replayable
+        # after admission closes; this acknowledgement does not create new work.
+        replay = reserve_phase(
+            state, strategy, plan_json, "required_completion", "review_attempt",
+            "review-1", "review-generation-1", review_deadline,
+        )
+        assert replay["reserved"] and replay["idempotent"], replay
+        assert replay["action"] == "finalize_parent", replay
+        assert replay["counters"]["review_attempt"] == 2, replay
+
         try:
             reserve_phase(
                 state, strategy, plan_json, "required_completion", "review_attempt",
                 "review-too-late", "review-generation-2", review_deadline,
             )
         except LedgerError as exc:
-            assert "Parent finalization reserve" in str(exc), exc
+            assert "admission deadline" in str(exc), exc
         else:
-            raise AssertionError("review retry consumed Parent finalization reserve")
+            raise AssertionError("new review retry consumed Parent finalization reserve")
 
         near_hard = status(state, strategy, plan_json, "required_completion", hard - 1)
         assert near_hard["permits_phase_start"] and near_hard["action"] == "finalize_parent", near_hard
