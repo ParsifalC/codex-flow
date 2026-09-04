@@ -124,16 +124,19 @@ def implementation_maximum_work_units(task) -> int:
         or task.scope == "repo-wide"
         or task.iteration_intensity == "heavy-loop"
     ):
-        return 4
-    if (
+        semantic_maximum = 4
+    elif (
         task.quality_intent == "strong"
         or task.complexity == "complex"
         or task.risk == "high"
         or task.scope == "cross-module"
         or task.verification_cost == "high"
     ):
-        return 3
-    return 1
+        semantic_maximum = 3
+    else:
+        semantic_maximum = 1
+    topology_floor = min(task.writable_workstreams, worker_budget(task).max_implementers)
+    return max(semantic_maximum, topology_floor)
 
 
 def task_budget(task) -> TaskBudgetPolicy:
