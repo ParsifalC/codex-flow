@@ -23,18 +23,38 @@ public enum FlowPilotAutostartService {
     private static var launchAgentsDirectory: URL { home.appendingPathComponent("Library/LaunchAgents") }
     private static var plistURL: URL { launchAgentsDirectory.appendingPathComponent("\(label).plist") }
 
+    private static let userDefaultsKey = "FlowPilot.Autostart.Enabled"
+
     public static func status() -> FlowPilotAutostartStatus {
-        // New installations are explicit opt-in, but a pre-existing LaunchAgent
-        // without the newer preference file is still an enabled registration and
-        // must be reported honestly instead of appearing disabled in the UI.
+        let pref = configuredPreference()
         let exists = FileManager.default.fileExists(atPath: plistURL.path)
-        let configured = configuredPreference() ?? exists
+        let isEnabled: Bool
+        if let pref {
+            isEnabled = pref
+            // If user explicitly configured autostart to true, auto-heal missing registration
+            if pref && !exists {
+                try? writeRegistration()
+            }
+        } else {
+            // Unconfigured new install: preserve legacy LaunchAgent if it was already on disk
+            isEnabled = exists
+        }
+
+        let currentExists = FileManager.default.fileExists(atPath: plistURL.path)
         return FlowPilotAutostartStatus(
-            enabled: configured && exists,
-            plistExists: exists,
+            enabled: isEnabled,
+            plistExists: currentExists,
             launchdLoaded: launchdIsLoaded(),
             executablePath: resolvedExecutable().path
         )
+    }
+
+    /// Reconciles autostart registration if previously configured by user.
+    public static func reconcileIfNeeded() {
+        guard let pref = configuredPreference() else { return }
+        if pref {
+            try? writeRegistration()
+        }
     }
 
     @discardableResult
@@ -56,19 +76,25 @@ public enum FlowPilotAutostartService {
     }
 
     private static func configuredPreference() -> Bool? {
-        guard let raw = try? String(contentsOf: preferenceURL, encoding: .utf8)
+        if let raw = try? String(contentsOf: preferenceURL, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() else { return nil }
-        switch raw {
-        case "enabled", "true", "1", "yes": return true
-        case "disabled", "false", "0", "no": return false
-        default: return nil
+            .lowercased() {
+            switch raw {
+            case "enabled", "true", "1", "yes": return true
+            case "disabled", "false", "0", "no": return false
+            default: break
+            }
         }
+        if UserDefaults.standard.object(forKey: userDefaultsKey) != nil {
+            return UserDefaults.standard.bool(forKey: userDefaultsKey)
+        }
+        return nil
     }
 
     private static func writePreference(enabled: Bool) throws {
         try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         try (enabled ? "enabled\n" : "disabled\n").write(to: preferenceURL, atomically: true, encoding: .utf8)
+        UserDefaults.standard.set(enabled, forKey: userDefaultsKey)
     }
 
     private static func writeRegistration() throws {
@@ -117,6 +143,11 @@ public enum FlowPilotAutostartService {
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: plistURL, options: .atomic)
         _ = chmod(plistURL.path, mode_t(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH))
+
+        // Ensure launchd is aware of the LaunchAgent in the current GUI session
+        if !launchdIsLoaded() {
+            _ = runLaunchctl(["bootstrap", "gui/\(getuid())", plistURL.path])
+        }
     }
 
     private static func removeRegistration() throws {
@@ -131,8 +162,15 @@ public enum FlowPilotAutostartService {
         if FileManager.default.isExecutableFile(atPath: installed.path) {
             return installed
         }
+        let legacy = stateDirectory.appendingPathComponent("bin/codex-flow-overlay")
+        if FileManager.default.isExecutableFile(atPath: legacy.path) {
+            return legacy
+        }
         if let current = CommandLine.arguments.first, !current.isEmpty {
-            return URL(fileURLWithPath: current).standardizedFileURL
+            let currentURL = URL(fileURLWithPath: current).standardizedFileURL
+            if FileManager.default.isExecutableFile(atPath: currentURL.path) {
+                return currentURL
+            }
         }
         return installed
     }
@@ -192,30 +230,12 @@ public struct AutostartCard: View {
                     ProgressView().controlSize(.mini)
                 }
 
-                HStack(spacing: 3) {
-                    Image(systemName: status.enabled ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.system(size: 7.5, weight: .bold))
-                    Text(status.enabled ? L("ON", "开") : L("OFF", "关"))
-                        .font(.system(size: 7.2, weight: .heavy, design: .rounded))
-                }
-                .foregroundColor(status.enabled ? .green : .white.opacity(0.52))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule().fill(status.enabled ? Color.green.opacity(0.14) : Color.white.opacity(0.07))
-                )
-
                 Toggle("", isOn: Binding(
                     get: { status.enabled },
                     set: { setEnabled($0) }
                 ))
                 .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .tint(status.enabled ? .green : .white.opacity(0.28))
-                .accessibilityLabel(L("Launch at Login", "登录时启动"))
-                .accessibilityValue(status.enabled ? L("On", "已开启") : L("Off", "已关闭"))
-                .accessibilityHint(L("Toggle automatic launch when you log in.", "切换登录时自动启动。"))
+                .toggleStyle(SleekSwitchToggleStyle(tint: .green))
                 .disabled(isChanging)
             }
 

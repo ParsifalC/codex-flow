@@ -291,6 +291,9 @@ if [[ "$(uname -s)" == "Darwin" && -d "$ROOT_DIR/apps/macos-overlay" ]]; then
   mkdir -p "$STATE_DIR/bin"
   [[ -f "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" ]] && { cp "$ROOT_DIR/apps/macos-overlay/bin/FlowPilot" "$STATE_DIR/bin/FlowPilot"; chmod +x "$STATE_DIR/bin/FlowPilot"; }
   [[ -f "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" ]] && { cp "$ROOT_DIR/apps/macos-overlay/bin/codex-flow-overlay" "$STATE_DIR/bin/codex-flow-overlay"; chmod +x "$STATE_DIR/bin/codex-flow-overlay"; }
+  if [[ -f "$STATE_DIR/autostart-preference" ]] && grep -qiE '^(enabled|true|1|yes)$' "$STATE_DIR/autostart-preference" 2>/dev/null; then
+    [[ -x "$STATE_DIR/bin/FlowPilot" ]] && "$STATE_DIR/bin/FlowPilot" autostart enable >/dev/null 2>&1 || true
+  fi
 fi
 
 UI_LANG="$(python3 "$LOCALIZATION" --policy "$POLICY" --resolved 2>/dev/null || echo en)"
