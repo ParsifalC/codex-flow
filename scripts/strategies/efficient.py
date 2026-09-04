@@ -1,7 +1,23 @@
 """Quota-efficient strategy."""
 from __future__ import annotations
 
-from .base import StagePolicy, StrategySpec, WorkerBudget, never, small_low_risk_is_direct, standard_effort
+from .base import (
+    StagePolicy,
+    ReasoningRolloutDecision,
+    StrategySpec,
+    TaskBudgetPolicy,
+    WorkerBudget,
+    never,
+    small_low_risk_is_direct,
+    standard_effort,
+)
+
+
+_EFFORT_RANK = {"high": 0, "xhigh": 1, "max": 2}
+
+
+def _max_effort(*values: str) -> str:
+    return max(values, key=lambda value: _EFFORT_RANK[value])
 
 
 def adaptive_route(task) -> str:
@@ -71,6 +87,63 @@ def implementation_maximum_work_units(task) -> int:
     return 1
 
 
+def task_budget(task) -> TaskBudgetPolicy:
+    """Return the efficient strategy's cumulative task-level reservation caps."""
+    if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
+        max_work_units = 3
+        max_attempts = 4
+    elif (
+        task.complexity in {"complex", "critical"}
+        or task.scope == "cross-module"
+        or task.risk == "critical"
+    ):
+        max_work_units = 2
+        max_attempts = 3
+    else:
+        max_work_units = 1
+        max_attempts = 2
+    return TaskBudgetPolicy(
+        soft_timeout_seconds=1500,
+        hard_timeout_seconds=1800,
+        max_work_units=max_work_units,
+        max_implementation_attempts=max_attempts,
+        max_replans=1,
+        max_replacements=1,
+    )
+
+
+def reasoning_rollout(
+    task,
+    _role: str,
+    policy,
+    parent_reasoning: str,
+    legacy_worker_reasoning: str,
+) -> ReasoningRolloutDecision:
+    """Compare current efficient Worker effort with the rollout proposal."""
+    policy.validate()
+    if task.complexity == "critical" or task.risk == "critical":
+        class_target = policy.critical
+    elif task.complexity == "complex" or task.risk == "high":
+        class_target = policy.complex
+    else:
+        class_target = policy.routine
+    # Rollout proposal intentionally starts from the explicit rollout floors
+    # and Parent effort. Legacy's next-tier bump is the behavior being tested;
+    # including it here would make adaptive unable to select an effort equal to
+    # Parent, defeating the rollout's allow-equal contract.
+    proposed = _max_effort(class_target, policy.minimum, parent_reasoning)
+    selected = proposed if policy.mode == "adaptive" else legacy_worker_reasoning
+    decision = ReasoningRolloutDecision(
+        mode=policy.mode,
+        legacy_worker_reasoning=legacy_worker_reasoning,
+        proposed_worker_reasoning=proposed,
+        selected_worker_reasoning=selected,
+        applied=policy.mode == "adaptive",
+    )
+    decision.validate()
+    return decision
+
+
 def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 1, 120, 900, True, True, "parent_delta")
@@ -109,4 +182,6 @@ STRATEGY = StrategySpec(
     independent_review=never,
     lifecycle=lifecycle,
     quota_sensitive=True,
+    task_budget=task_budget,
+    reasoning_rollout=reasoning_rollout,
 )

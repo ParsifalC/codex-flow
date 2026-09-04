@@ -98,6 +98,16 @@ def status(lang: str) -> int:
         p_effort = policy_value("parent", "min_reasoning_effort", "unknown")
         w_model = policy_value("worker", "resolved_model", "unknown")
         w_effort = policy_value("worker", "min_reasoning_effort", "unknown")
+        rollout_mode = policy_value("reasoning.rollout", "mode", "shadow")
+        rollout_map = "/".join(
+            policy_value("reasoning.rollout", key, fallback)
+            for key, fallback in (
+                ("minimum", "high"),
+                ("routine", "high"),
+                ("complex", "xhigh"),
+                ("critical", "max"),
+            )
+        )
         t_enabled = policy_value("telemetry", "enabled", "true")
         t_notify = policy_value("telemetry", "notifications", "true")
         retention = policy_value("telemetry", "retention_days", "30")
@@ -106,6 +116,7 @@ def status(lang: str) -> int:
         state = "● " + T("enabled", "已启用", lang) if strategy_enabled == "true" else "○ " + T("disabled", "已禁用", lang)
         print(box_line(f"• {T('Strategy', '执行策略', lang)}:    {strategy} ({state})"))
         print(box_line(f"• {T('Routing', '路由模式', lang)}:     {routing}"))
+        print(box_line(f"• {T('Reasoning rollout', '推理 rollout', lang)}: {rollout_mode} ({rollout_map})"))
         print(box_line(f"• {T('Parent', '父 Agent', lang)}:      {p_policy} ({T('min effort', '最低推理', lang)}: {p_effort})"))
         print(box_line(f"• {T('Worker', '子 Agent', lang)}:      {w_model} ({T('min effort', '最低推理', lang)}: {w_effort})"))
         print(box_line(f"• {T('Telemetry', '遥测', lang)}:   {'● ' + T('enabled','已启用',lang) if t_enabled == 'true' else '○ ' + T('disabled','已禁用',lang)}"))
@@ -177,6 +188,7 @@ def help_text(lang: str) -> int:
     usage show <#|id> [选项]    查看指定任务遥测摘要
     usage stats [选项]          查看聚合遥测统计（--project P、--days N）
     telemetry repair [--dry-run] 扫描并回填历史遥测可恢复字段（支持 --json）
+    telemetry latency report [--json] 查看脱敏 Worker 延迟 p50/p95
 
   Benchmark 命令
     benchmark-local             使用本地 Codex 会话运行内置 Benchmark
@@ -218,6 +230,7 @@ Usage: codex-flow <command> [options]
     usage show <#|id> [opt]     Show specific task telemetry summary
     usage stats [options]       Show aggregated telemetry stats (--project P, --days N)
     telemetry repair [--dry-run] Backfill recoverable fields in history (supports --json)
+    telemetry latency report [--json] Show redacted Worker latency p50/p95
 
   Benchmark Commands
     benchmark-local             Run built-in benchmark via local Codex session

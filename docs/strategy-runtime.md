@@ -1,6 +1,6 @@
 # FlowPilot Multi-Strategy Runtime
 
-FlowPilot is the semantic profiler and execution runtime for codex-flow. **Policy schema v4** separates the optimization objective from execution constraints, while **ExecutionPlan schema v8** carries the concrete WorkerBudget, task intent, per-role capability/reasoning policy, topology, and bounded lifecycle policy selected for one task.
+FlowPilot is the semantic profiler and execution runtime for codex-flow. **Policy schema v4** separates the optimization objective from execution constraints, while **ExecutionPlan schema v10** carries the concrete WorkerBudget, task intent, per-role capability/reasoning policy, topology, bounded lifecycle policy, optional cumulative task budget, and optional reasoning-rollout decision selected for one task.
 
 ```text
 User Task
@@ -22,7 +22,7 @@ Strategy Runtime
    ├─ runtime / quota state
    └─ generic Plan Compiler
    ↓
-ExecutionPlan v8
+ExecutionPlan v10
    ↓
 ──────────────── hard boundary ────────────────
    ↓
@@ -67,9 +67,10 @@ The Skill must not keep another copy of strategy topology, Worker counts, capabi
 19. **Telemetry is observational.** Planning adds no LLM calls merely to estimate usage or quota.
 20. **Release defaults have one source of truth.** `policy/defaults.toml` drives installer and planner defaults.
 21. **Installer/update policy round-trips are lossless for supported fields.**
-22. **Bounded implementation is explicit and finite.** `minimum_work_units` and optional `maximum_work_units` constrain one manifest; they do not create worker slots or a task-wide cumulative budget.
+22. **Bounded implementation is explicit and finite.** `minimum_work_units` and optional `maximum_work_units` constrain one manifest; cumulative task reservations are enforced separately by the durable task-budget ledger.
 23. **Path evidence is preflight only.** `write_paths` provide lexical overlap checks, not an OS lock, durable scheduler enforcement, symlink resolution, or cross-process fencing.
 24. **Lineage is explicit.** Bounded units use `(scope_id, unit_id, generation)`; replacement/replan increments generation, checkpoint/continue does not, and Parent accepts only current-generation evidence.
+25. **Reasoning rollout is scoped and observable.** Only delegated `efficient` Worker roles consume the optional `legacy|shadow|adaptive` decision; direct/non-efficient plans remain unchanged, and proposed/selected effort is planner intent rather than runtime-observed usage.
 
 ## Strategy Registry, WorkerBudget, and resource hooks
 
@@ -82,10 +83,13 @@ scripts/strategies/
 ├── efficient.py
 ├── balanced.py
 ├── quality.py
-└── speed.py
+├── speed.py
+├── lifecycle_runtime.py
+├── work_unit_runtime.py
+└── task_budget_runtime.py
 ```
 
-`base.py` defines `StrategySpec` and `WorkerBudget`.
+`base.py` defines `StrategySpec`, `WorkerBudget`, the optional `TaskBudgetPolicy` hook, and strict `ReasoningRolloutPolicy` / `ReasoningRolloutDecision` contracts.
 
 ```text
 WorkerBudget
@@ -107,6 +111,9 @@ capability(task, role)       → worker | parent
 exploration_bonus(task)      → non-negative integer
 reviewer_bonus(task)         → non-negative integer
 notes(task)                  → tuple[str, ...]
+task_budget(task)            → TaskBudgetPolicy | None
+reasoning_rollout(task, role, policy, parent_reasoning, legacy_worker_reasoning)
+                             → ReasoningRolloutDecision
 allow_parallel_write
 quota_sensitive
 ```
@@ -151,11 +158,55 @@ max_worker_repair_attempts | none
 
 For the `efficient` strategy, routine implementation stays single (`minimum_work_units=maximum_work_units=1`) and uses a 180-second post-harvest checkpoint cooldown. Complex, cross-module, repo-wide, and heavy-loop implementation uses a 240-second cooldown; critical or critical-risk implementation uses 300 seconds. Together with the 600/900/1200-second soft budgets, these place a possible second checkpoint at 780/1140/1500 seconds, before the 1800-second hard ceiling. Complex, cross-module, critical, and critical-risk work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=2`; repo-wide or heavy-loop work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=3`. Parent should raise the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
 
-`maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota, worker-count, or task-wide cumulative budget. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
+`maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota or worker-count. When a strategy emits a task budget, the compiler requires its `max_work_units` to equal the implementation StagePolicy maximum. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
 
 `write_paths` checks are static lexical preflight only. They reject absolute/traversal/glob/backslash/NUL/Windows drive or UNC forms and detect equal or ancestor/descendant overlaps; they do not resolve symlinks, lock the OS, fence processes, persist checkpoints, or enforce a durable scheduler. The surrounding runtime must enforce writable fencing and persist/compare the current `(scope_id, unit_id, generation)` lineage.
 
-Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The first soft checkpoint is unchanged. A later checkpoint requires an explicit Worker `last_meaningful_progress_at` later than the latest harvested timestamp plus the policy's minimum `checkpoint_rearm_seconds` cooldown; legacy `last_progress_at` activity cannot re-arm a harvested checkpoint. Missing rearm policy keeps older plans one-shot. The lifecycle evaluator reports these decisions and cooldown observability (`checkpoint_rearm_at` / `checkpoint_rearm_remaining_seconds`) but provides no task-wide checkpoint/ledger store or automatic scheduler enforcement.
+Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The first soft checkpoint is unchanged. A later checkpoint requires an explicit Worker `last_meaningful_progress_at` later than the latest harvested timestamp plus the policy's minimum `checkpoint_rearm_seconds` cooldown; legacy `last_progress_at` activity cannot re-arm a harvested checkpoint. Missing rearm policy keeps older plans one-shot. The lifecycle evaluator reports these decisions and cooldown observability (`checkpoint_rearm_at` / `checkpoint_rearm_remaining_seconds`), while `scripts/strategies/task_budget_runtime.py` provides the separate cross-process task ledger; neither helper automatically schedules or cancels Workers.
+
+### Efficient cumulative task budget
+
+Only delegated `efficient` plans currently emit `task_budget`. It has a 1500-second soft deadline and 1800-second hard deadline. The reservation caps are: routine/local/module work units `1` and implementation attempts `2`; complex, cross-module, or critical work units `2` and attempts `3`; repo-wide or heavy-loop work units `3` and attempts `4`. `max_replans=1` and `max_replacements=1` apply to every efficient delegated task. Direct plans and legacy strategies emit `task_budget=null`.
+
+FlowPilot initializes the ledger immediately after initial compilation, checks `status` before every Worker spawn and after each join/wait, reserves logical work units/implementation attempts/replans/replacements, and calls `finish` when the task completes. Exploration/review Workers consume the wall-clock deadline but not implementation counters. Replanning reuses the original state path and cannot reset counters. Bounded `work_unit` reservations use the validator's stable logical fingerprint (generation excluded); `implementation_attempt` reservations use the generation-aware fingerprint. At soft deadline no new work may start; existing Workers checkpoint/converge. At hard deadline received checkpoints are harvested first, then active writers are fenced/cancelled and no replacement or Parent writer may start. The helper stores task/policy hashes and reservation hashes rather than raw prompt, path, or output data; it returns decisions but is not a scheduler.
+
+### Efficient reasoning rollout
+
+The optional `[reasoning.rollout]` section is release-defaulted to:
+
+```toml
+[reasoning.rollout]
+mode = "shadow"
+minimum = "high"
+routine = "high"
+complex = "xhigh"
+critical = "max"
+```
+
+It is consumed only by delegated `efficient` Worker roles. The runtime first
+computes the historical (legacy) Worker effort. The proposal is then:
+
+```text
+max(rollout class target, rollout minimum, parent_reasoning)
+```
+
+`legacy` is a kill switch and selects the historical effort. `shadow` also
+selects historical effort but reports the proposal. `adaptive` selects the
+proposal, including when it equals Parent at the `max` ceiling. The plan's
+`reasoning_rollout` object records `mode`, `legacy_worker_reasoning`,
+`proposed_worker_reasoning`, `selected_worker_reasoning`, and `applied`; all
+planned Explorer/Implementer/Reviewer reasoning fields match the selected
+value. Direct and non-efficient plans emit `null` and retain their previous
+behavior.
+
+User policy may set the mode and floors. Repository policy can only raise the
+rollout floors and cannot change a user's `legacy` or `shadow` mode to
+`adaptive`. `--efficient-reasoning legacy|shadow|adaptive` is a current-task
+override and does not mutate persistent policy. The fields describe requested
+planner intent, not runtime-observed/effective effort. When per-spawn override
+is unsupported, the runtime falls back to the installed baseline; later
+telemetry may record the observed value. Rollout planning itself makes no
+telemetry calls and does not schedule Workers.
 
 ## Built-in strategy budgets
 
@@ -260,7 +311,7 @@ worker-reviewer
   independent read-only review, regression hunting, acceptance validation
 ```
 
-The same role can be used differently by each strategy. ExecutionPlan v8 makes resource selection explicit per role rather than treating “Worker” as one task-wide capability bucket.
+The same role can be used differently by each strategy. ExecutionPlan v10 makes resource selection, optional task budget, and optional reasoning rollout explicit rather than treating “Worker” as one task-wide capability bucket.
 
 ## Policy precedence
 
@@ -424,13 +475,13 @@ For quota-sensitive strategies (`efficient`, `balanced`), high/critical pressure
 
 `quality` is deliberately not quota-sensitive. Strong/absolute quality retains Parent-class capability for high-value Implementer/Reviewer roles under quota pressure; ordinary Explorer capability remains independently selected. Hard runtime and safety ceilings still apply.
 
-## ExecutionPlan v8
+## ExecutionPlan v10
 
 The deterministic planner emits:
 
 ```text
 ExecutionPlan
-  schema_version = 8
+  schema_version = 10
   strategy
   routing
   review_modifier
@@ -440,6 +491,12 @@ ExecutionPlan
   parent_capability_policy
   parent_model_floor
   parent_reasoning
+  reasoning_rollout | none
+    mode: legacy | shadow | adaptive
+    legacy_worker_reasoning
+    proposed_worker_reasoning
+    selected_worker_reasoning
+    applied
 
   explorer_capability_policy | none
   explorer_model | none
@@ -459,6 +516,14 @@ ExecutionPlan
     max_reviewers
     max_total_workers
     speculation
+
+  task_budget | none
+    soft_timeout_seconds
+    hard_timeout_seconds
+    max_work_units
+    max_implementation_attempts
+    max_replans
+    max_replacements
 
   exploration_workers
   implementation_workers
@@ -524,6 +589,13 @@ explicit CODEX_FLOW_* environment override
 
 Existing users keep their configured reasoning matrix during reinstall/update. Fresh installs receive the Worker-first defaults. `quality_intent` is not persisted by the installer because it is a current-task semantic signal.
 
+The optional reasoning-rollout matrix is round-tripped as well. Missing
+`[reasoning.rollout]` on a schema-v3/v4 policy defaults to release `shadow`
+(`high/high/xhigh/max`). The policy schema does not bump. The Unix and
+PowerShell installers preserve existing rollout mode/floors and validate new
+values; the Codex global `default_subagent_reasoning_effort` remains the
+legacy Worker minimum and is not lowered to the rollout's `high` minimum.
+
 ## CLI
 
 ```bash
@@ -532,6 +604,8 @@ codex-flow strategy show --effective
 codex-flow strategy profiles
 codex-flow strategy set quality
 codex-flow strategy routing adaptive
+
+codex-flow strategy plan --efficient-reasoning legacy|shadow|adaptive --complexity complex
 
 codex-flow strategy plan \
   --profile quality \
@@ -548,7 +622,7 @@ codex-flow strategy plan \
   --writable-workstreams 4
 ```
 
-The resulting JSON shows quality intent, WorkerBudget, concrete per-stage Worker counts, and separate Explorer / Implementer / Reviewer capability/model/reasoning resources.
+The resulting JSON shows quality intent, WorkerBudget, concrete per-stage Worker counts, separate Explorer / Implementer / Reviewer capability/model/reasoning resources, and (for delegated efficient work) the reasoning-rollout decision. Legacy/proposed/selected fields are planner intent; they are not runtime-observed usage. If per-spawn overrides are unavailable, the installed baseline is used and later telemetry may record the observed effort.
 
 ## Adding a new built-in strategy
 

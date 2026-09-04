@@ -19,9 +19,11 @@ jobs:
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
           bash -n tests/strategy-runtime.sh
+          bash -n tests/task-budget-runtime.sh
           bash -n tests/lifecycle-runtime.sh
           bash -n tests/account-snapshot.sh
           bash -n tests/telemetry.sh
+          bash -n tests/latency-telemetry.sh
           bash -n tests/chatgpt-mcp.sh
           bash -n tests/benchmark.sh
           bash -n tests/runner.sh
@@ -29,6 +31,7 @@ jobs:
           bash -n tests/report.sh
           python3 -m py_compile scripts/strategy_runtime.py
           python3 -m py_compile scripts/strategies/lifecycle_runtime.py
+          python3 -m py_compile scripts/strategies/task_budget_runtime.py
           python3 -m py_compile scripts/check-recommendation.py
           python3 -m py_compile scripts/analyze-benchmark.py
           python3 -m py_compile scripts/run-benchmark.py
@@ -43,6 +46,7 @@ jobs:
           python3 -m py_compile scripts/telemetry_core/common.py
           python3 -m py_compile scripts/telemetry_core/query.py
           python3 -m py_compile scripts/telemetry_core/render.py
+          python3 -m py_compile scripts/telemetry_core/latency.py
           python3 -m py_compile apps/chatgpt-mcp/__init__.py
           python3 -m py_compile apps/chatgpt-mcp/adapter.py
           python3 -m py_compile apps/chatgpt-mcp/server.py
@@ -51,6 +55,8 @@ jobs:
           ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].each { |f| YAML.parse_file(f) }'
       - name: Strategy runtime test
         run: bash tests/strategy-runtime.sh
+      - name: Task budget runtime test
+        run: bash tests/task-budget-runtime.sh
       - name: Lifecycle runtime and restored regression test
         run: bash tests/lifecycle-runtime.sh
       - name: Recommendation policy test
@@ -147,6 +153,7 @@ jobs:
           if ($doctorOutput -notmatch 'thread-attributed telemetry may be unavailable') { throw 'old Codex compatibility warning missing' }
           if ($doctorOutput -notmatch 'review modifier: auto') { throw 'review modifier doctor check missing' }
           if ($doctorOutput -notmatch 'fanout modifier: auto') { throw 'fanout modifier doctor check missing' }
+          if ($doctorOutput -notmatch 'efficient reasoning rollout: shadow') { throw 'reasoning rollout doctor check missing' }
 
           $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
           if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after install' }
@@ -156,6 +163,7 @@ jobs:
           if ($policy -notmatch 'schema_version\s*=\s*4') { throw 'policy schema was not upgraded to v4' }
           if ($policy -notmatch 'profile\s*=\s*"efficient"') { throw 'default strategy profile missing' }
           if ($policy -notmatch 'mode\s*=\s*"adaptive"') { throw 'default routing mode missing' }
+          if ($policy -notmatch '(?s)\[reasoning\.rollout\].*?mode\s*=\s*"shadow"') { throw 'default reasoning rollout missing' }
           if ($policy -notmatch 'model\s*=\s*"auto"') { throw 'auto worker policy was not preserved' }
           $binState = Join-Path $env:CODEX_HOME 'codex-flow/bin_dir'
           if (-not ([System.IO.File]::ReadAllText($binState, $utf8NoBom).Trim() -eq $env:CODEX_FLOW_BIN_DIR)) { throw 'custom bin directory was not persisted' }
@@ -168,6 +176,16 @@ jobs:
           if (-not (Test-Path $lifecycleHelper)) { throw 'lifecycle runtime helper missing' }
           & python3 -m py_compile $lifecycleHelper
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $taskBudgetHelper = Join-Path $env:CODEX_HOME 'codex-flow/strategies/task_budget_runtime.py'
+          if (-not (Test-Path $taskBudgetHelper)) { throw 'task budget runtime helper missing' }
+          & python3 -m py_compile $taskBudgetHelper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $latencyHelper = Join-Path $env:CODEX_HOME 'codex-flow/telemetry_core/latency.py'
+          if (-not (Test-Path $latencyHelper)) { throw 'latency telemetry helper missing' }
+          & python3 -m py_compile $latencyHelper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $latencyReport = (& (Join-Path $env:CODEX_FLOW_BIN_DIR 'codex-flow.cmd') telemetry latency report --json | Out-String | ConvertFrom-Json)
+          if ($latencyReport.n -ne 0 -or $latencyReport.eligible_for_tuning) { throw 'unexpected empty latency report' }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'hooks.json'))) { throw 'telemetry hooks missing' }
 
           # Change every policy family that reinstall/update must round-trip without loss.
@@ -175,6 +193,7 @@ jobs:
           $policy = $policy.Replace('mode = "adaptive"', 'mode = "delegate"')
           $policy = $policy.Replace('review = "auto"', 'review = "strict"')
           $policy = $policy.Replace('fanout = "auto"', 'fanout = "conservative"')
+          $policy = $policy.Replace('mode = "shadow"', 'mode = "legacy"')
           $policy = $policy.Replace('routine_effort = "high"', 'routine_effort = "xhigh"')
           $policy = $policy.Replace('complex_effort = "xhigh"', 'complex_effort = "max"')
           $policy = $policy.Replace('max_concurrent_threads = 4', 'max_concurrent_threads = 3')
@@ -189,7 +208,7 @@ jobs:
           $policy = [System.IO.File]::ReadAllText($policyPath, $utf8NoBom)
           foreach ($expected in @(
             'profile = "balanced"', 'mode = "delegate"', 'review = "strict"', 'fanout = "conservative"',
-            'routine_effort = "xhigh"', 'complex_effort = "max"', 'max_concurrent_threads = 3',
+            'mode = "legacy"', 'routine_effort = "xhigh"', 'complex_effort = "max"', 'max_concurrent_threads = 3',
             'max_repair_cycles = 1', 'notifications = false', 'retention_days = 17'
           )) {
             if (-not $policy.Contains($expected)) { throw "policy value lost on reinstall: $expected" }
@@ -216,7 +235,7 @@ jobs:
           if ($policy -notmatch 'profile\s*=\s*"quality"') { throw 'strategy profile was not preserved by update' }
           if ($policy -notmatch 'mode\s*=\s*"direct"') { throw 'routing mode was not preserved by update' }
           foreach ($expected in @(
-            'review = "strict"', 'fanout = "conservative"', 'routine_effort = "xhigh"',
+            'review = "strict"', 'fanout = "conservative"', 'mode = "legacy"', 'routine_effort = "xhigh"',
             'complex_effort = "max"', 'max_concurrent_threads = 3', 'max_repair_cycles = 1',
             'notifications = false', 'retention_days = 17'
           )) {

@@ -14,6 +14,8 @@
 
 测试结果仅供参考。实际模型运行必须积累足够的证据后才会考虑调整路由策略，且 `policy/benchmark.toml` 默认保持 `auto_apply = false`。
 
+内置 benchmark 的 `reasoning_effort` 是 runner 直接传给 `codex exec` 的实验配置；它不会经过 FlowPilot planner，因此不能证明 `ExecutionPlan.reasoning_rollout` 的 proposed/selected 值在真实 delegated Worker 上实际生效。rollout 决策应使用运行时记录的 observed effort、完成/截尾样本与 p50/p95 数据另行验证。
+
 ---
 
 ## 五种预注册评估策略

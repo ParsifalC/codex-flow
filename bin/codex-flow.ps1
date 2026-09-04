@@ -141,6 +141,16 @@ switch ($cmd) {
         $env:CODEX_FLOW_WORKER_MODEL_POLICY = Get-PolicyValue worker model_policy
         $env:CODEX_FLOW_WORKER_MODEL = Get-PolicyValue worker model
         $env:CODEX_FLOW_WORKER_MIN_EFFORT = Get-PolicyValue worker min_reasoning_effort
+        $rolloutMode = Get-PolicyValue reasoning.rollout mode
+        $env:CODEX_FLOW_REASONING_ROLLOUT_MODE = if ($rolloutMode) { $rolloutMode } else { 'shadow' }
+        $rolloutMinimum = Get-PolicyValue reasoning.rollout minimum
+        $env:CODEX_FLOW_REASONING_ROLLOUT_MINIMUM = if ($rolloutMinimum) { $rolloutMinimum } else { 'high' }
+        $rolloutRoutine = Get-PolicyValue reasoning.rollout routine
+        $env:CODEX_FLOW_REASONING_ROLLOUT_ROUTINE = if ($rolloutRoutine) { $rolloutRoutine } else { 'high' }
+        $rolloutComplex = Get-PolicyValue reasoning.rollout complex
+        $env:CODEX_FLOW_REASONING_ROLLOUT_COMPLEX = if ($rolloutComplex) { $rolloutComplex } else { 'xhigh' }
+        $rolloutCritical = Get-PolicyValue reasoning.rollout critical
+        $env:CODEX_FLOW_REASONING_ROLLOUT_CRITICAL = if ($rolloutCritical) { $rolloutCritical } else { 'max' }
         $env:CODEX_FLOW_MAX_THREADS = Get-PolicyValue runtime max_concurrent_threads
         $env:CODEX_FLOW_MAX_REPAIR_CYCLES = Get-PolicyValue runtime max_repair_cycles
         $telemetryEnabled = Get-PolicyValue telemetry enabled

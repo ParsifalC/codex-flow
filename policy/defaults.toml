@@ -41,6 +41,15 @@ routine = "xhigh"
 complex = "xhigh"
 critical = "max"
 
+# Efficient-only reasoning rollout. Shadow reports the proposed effort without
+# changing the legacy runtime selection; adaptive applies the proposal.
+[reasoning.rollout]
+mode = "shadow"
+minimum = "high"
+routine = "high"
+complex = "xhigh"
+critical = "max"
+
 [runtime]
 max_concurrent_threads = 4
 max_repair_cycles = 2

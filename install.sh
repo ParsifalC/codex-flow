@@ -64,6 +64,11 @@ DEFAULT_WORKER_MIN_EFFORT="$(read_default reasoning.worker minimum)"
 DEFAULT_WORKER_ROUTINE_EFFORT="$(read_default reasoning.worker routine)"
 DEFAULT_WORKER_COMPLEX_EFFORT="$(read_default reasoning.worker complex)"
 DEFAULT_WORKER_CRITICAL_EFFORT="$(read_default reasoning.worker critical)"
+DEFAULT_ROLLOUT_MODE="$(read_default reasoning.rollout mode)"
+DEFAULT_ROLLOUT_MINIMUM="$(read_default reasoning.rollout minimum)"
+DEFAULT_ROLLOUT_ROUTINE="$(read_default reasoning.rollout routine)"
+DEFAULT_ROLLOUT_COMPLEX="$(read_default reasoning.rollout complex)"
+DEFAULT_ROLLOUT_CRITICAL="$(read_default reasoning.rollout critical)"
 DEFAULT_MAX_THREADS="$(read_default runtime max_concurrent_threads)"
 DEFAULT_MAX_REPAIRS="$(read_default runtime max_repair_cycles)"
 DEFAULT_TELEMETRY_ENABLED="$(read_default telemetry enabled)"
@@ -87,6 +92,11 @@ EXISTING_WORKER_MIN_EFFORT="$(policy_or_default worker min_reasoning_effort "$DE
 EXISTING_WORKER_ROUTINE_EFFORT="$(policy_or_default worker routine_effort "$DEFAULT_WORKER_ROUTINE_EFFORT")"
 EXISTING_WORKER_COMPLEX_EFFORT="$(policy_or_default worker complex_effort "$DEFAULT_WORKER_COMPLEX_EFFORT")"
 EXISTING_WORKER_CRITICAL_EFFORT="$(policy_or_default worker critical_effort "$DEFAULT_WORKER_CRITICAL_EFFORT")"
+EXISTING_ROLLOUT_MODE="$(policy_or_default reasoning.rollout mode "$DEFAULT_ROLLOUT_MODE")"
+EXISTING_ROLLOUT_MINIMUM="$(policy_or_default reasoning.rollout minimum "$DEFAULT_ROLLOUT_MINIMUM")"
+EXISTING_ROLLOUT_ROUTINE="$(policy_or_default reasoning.rollout routine "$DEFAULT_ROLLOUT_ROUTINE")"
+EXISTING_ROLLOUT_COMPLEX="$(policy_or_default reasoning.rollout complex "$DEFAULT_ROLLOUT_COMPLEX")"
+EXISTING_ROLLOUT_CRITICAL="$(policy_or_default reasoning.rollout critical "$DEFAULT_ROLLOUT_CRITICAL")"
 EXISTING_MAX_THREADS="$(policy_or_default runtime max_concurrent_threads "$DEFAULT_MAX_THREADS")"
 EXISTING_MAX_REPAIRS="$(policy_or_default runtime max_repair_cycles "$DEFAULT_MAX_REPAIRS")"
 EXISTING_TELEMETRY_ENABLED="$(policy_or_default telemetry enabled "$DEFAULT_TELEMETRY_ENABLED")"
@@ -117,6 +127,11 @@ WORKER_MIN_EFFORT="${CODEX_FLOW_WORKER_MIN_EFFORT:-$EXISTING_WORKER_MIN_EFFORT}"
 WORKER_ROUTINE_EFFORT="${CODEX_FLOW_WORKER_ROUTINE_EFFORT:-$EXISTING_WORKER_ROUTINE_EFFORT}"
 WORKER_COMPLEX_EFFORT="${CODEX_FLOW_WORKER_COMPLEX_EFFORT:-$EXISTING_WORKER_COMPLEX_EFFORT}"
 WORKER_CRITICAL_EFFORT="${CODEX_FLOW_WORKER_CRITICAL_EFFORT:-$EXISTING_WORKER_CRITICAL_EFFORT}"
+ROLLOUT_MODE="${CODEX_FLOW_REASONING_ROLLOUT_MODE:-$EXISTING_ROLLOUT_MODE}"
+ROLLOUT_MINIMUM="${CODEX_FLOW_REASONING_ROLLOUT_MINIMUM:-$EXISTING_ROLLOUT_MINIMUM}"
+ROLLOUT_ROUTINE="${CODEX_FLOW_REASONING_ROLLOUT_ROUTINE:-$EXISTING_ROLLOUT_ROUTINE}"
+ROLLOUT_COMPLEX="${CODEX_FLOW_REASONING_ROLLOUT_COMPLEX:-$EXISTING_ROLLOUT_COMPLEX}"
+ROLLOUT_CRITICAL="${CODEX_FLOW_REASONING_ROLLOUT_CRITICAL:-$EXISTING_ROLLOUT_CRITICAL}"
 MAX_THREADS="${CODEX_FLOW_MAX_THREADS:-$EXISTING_MAX_THREADS}"
 MAX_REPAIRS="${CODEX_FLOW_MAX_REPAIR_CYCLES:-$EXISTING_MAX_REPAIRS}"
 TELEMETRY_ENABLED="${CODEX_FLOW_TELEMETRY_ENABLED:-$EXISTING_TELEMETRY_ENABLED}"
@@ -139,6 +154,10 @@ case "$REVIEW_MODIFIER" in auto|standard|strict) ;; *) echo "CODEX_FLOW_REVIEW_M
 case "$FANOUT_MODIFIER" in auto|conservative|aggressive) ;; *) echo "CODEX_FLOW_FANOUT_MODIFIER must be auto, conservative, or aggressive" >&2; exit 2 ;; esac
 for effort in "$PARENT_MIN_EFFORT" "$PARENT_ROUTINE_EFFORT" "$PARENT_COMPLEX_EFFORT" "$PARENT_CRITICAL_EFFORT" "$WORKER_MIN_EFFORT" "$WORKER_ROUTINE_EFFORT" "$WORKER_COMPLEX_EFFORT" "$WORKER_CRITICAL_EFFORT"; do
   case "$effort" in high|xhigh|max) ;; *) echo "reasoning efforts must be high, xhigh, or max" >&2; exit 2 ;; esac
+done
+case "$ROLLOUT_MODE" in legacy|shadow|adaptive) ;; *) echo "CODEX_FLOW_REASONING_ROLLOUT_MODE must be legacy, shadow, or adaptive" >&2; exit 2 ;; esac
+for effort in "$ROLLOUT_MINIMUM" "$ROLLOUT_ROUTINE" "$ROLLOUT_COMPLEX" "$ROLLOUT_CRITICAL"; do
+  case "$effort" in high|xhigh|max) ;; *) echo "reasoning rollout efforts must be high, xhigh, or max" >&2; exit 2 ;; esac
 done
 case "$TELEMETRY_ENABLED" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_ENABLED must be true or false" >&2; exit 2 ;; esac
 case "$TELEMETRY_NOTIFICATIONS" in true|false) ;; *) echo "CODEX_FLOW_TELEMETRY_NOTIFICATIONS must be true or false" >&2; exit 2 ;; esac
@@ -215,6 +234,13 @@ routine_effort = "$WORKER_ROUTINE_EFFORT"
 complex_effort = "$WORKER_COMPLEX_EFFORT"
 critical_effort = "$WORKER_CRITICAL_EFFORT"
 
+[reasoning.rollout]
+mode = "$ROLLOUT_MODE"
+minimum = "$ROLLOUT_MINIMUM"
+routine = "$ROLLOUT_ROUTINE"
+complex = "$ROLLOUT_COMPLEX"
+critical = "$ROLLOUT_CRITICAL"
+
 [runtime]
 max_concurrent_threads = $MAX_THREADS
 max_repair_cycles = $MAX_REPAIRS
@@ -278,6 +304,7 @@ printf '  │  • %s: %s\n' "$(cf_t 'Policy' '策略文件')" "$disp_policy"
 printf '  │  • CLI: %s\n' "$disp_cli"
 printf '  │  • Skill: FlowPilot (flow-pilot)\n'
 printf '  │  • %s: %s / %s\n' "$(cf_t 'Strategy' '执行策略')" "$STRATEGY_PROFILE" "$ROUTING_MODE"
+printf '  │  • %s: %s (%s / %s / %s / %s)\n' "$(cf_t 'Reasoning rollout' '推理 rollout')" "$ROLLOUT_MODE" "$ROLLOUT_MINIMUM" "$ROLLOUT_ROUTINE" "$ROLLOUT_COMPLEX" "$ROLLOUT_CRITICAL"
 printf '  │  • %s: review=%s / fanout=%s\n' "$(cf_t 'Modifiers' '修饰策略')" "$REVIEW_MODIFIER" "$FANOUT_MODIFIER"
 printf '  │  • %s: parent (%s) -> worker (%s)\n' "$(cf_t 'Models' '模型')" "$PARENT_MODEL_POLICY" "$WORKER_MODEL"
 printf '  │  • %s: %s (%s: %s)\n' "$(cf_t 'Language' '语言')" "$UI_LANGUAGE" "$(cf_t 'configured' '配置')" "$UI_LANG"

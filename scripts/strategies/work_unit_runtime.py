@@ -376,17 +376,18 @@ def _check_parallel_groups(
                     )
 
 
-def _unit_fingerprint(unit: WorkUnit) -> str:
+def _unit_fingerprint(unit: WorkUnit, *, include_generation: bool = True) -> str:
     payload = {
         "unit_id": unit.unit_id,
         "scope_id": unit.scope_id,
-        "generation": unit.generation,
         "acceptance_delta": unit.acceptance_delta,
         "write_scope_id": unit.write_scope_id,
         "write_paths": list(unit.write_paths),
         "validation": list(unit.validation),
         "depends_on": list(unit.depends_on),
     }
+    if include_generation:
+        payload["generation"] = unit.generation
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -451,6 +452,9 @@ def validate_manifest(
 
     parallel_groups = sorted({unit.parallel_group for unit in units if unit.parallel_group is not None})
     fingerprints = {unit.unit_id: _unit_fingerprint(unit) for unit in units}
+    logical_fingerprints = {
+        unit.unit_id: _unit_fingerprint(unit, include_generation=False) for unit in units
+    }
     return {
         "valid": True,
         "work_unit_mode": mode,
@@ -463,6 +467,7 @@ def validate_manifest(
         "parallel_groups": parallel_groups,
         "max_parallel_units": max_parallel_units,
         "unit_fingerprints": fingerprints,
+        "logical_unit_fingerprints": logical_fingerprints,
     }
 
 

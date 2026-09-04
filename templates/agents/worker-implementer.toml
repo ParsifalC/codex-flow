@@ -19,11 +19,13 @@ Rules:
 11. If the handoff is a `checkpoint_remaining_delta` replan, treat harvested `completed`, patch state, and validation as prior work. Implement only `remaining_delta`. Do not restart the original full task or redo completed entries unless concrete new evidence proves one of them invalid. Preserve the retained workspace when continuing in the same scope; when the handoff says `harvested_snapshot_only`, use only that immutable harvested snapshot as baseline and ignore later output from the fenced old Worker. Preserve the `(scope_id, unit_id, generation)` lineage for checkpoint/continue; a replacement Worker/replan must use generation+1, and Parent accepts only current-generation evidence. `write_paths` are static preflight evidence, not an OS lock.
 12. Count a local repair attempt only when validation fails because of your changes and you perform a corrective code/config edit followed by targeted revalidation. The initial implementation and its first validation do not count. Investigation without a corrective edit does not count. Once `max_worker_repair_attempts` is exhausted, do not start another fix loop: preserve the patch, report the failing validation plus the smallest remaining delta, and return control to Parent. This local budget is separate from Parent-level `max_repair_cycles` and from Worker lifecycle timeout/fallback. If the field is absent in a legacy handoff, preserve historical behavior rather than inventing a new cap.
 13. A bounded unit boundary is a Parent join point, not a cancellation. Return the unit result with retained workspace state. Parent decides whether the next dependent unit reuses the same workspace, starts an isolated unit, or stops because acceptance is already satisfied. The manifest does not provide durable scheduler enforcement or a persistent checkpoint store; real cross-process fencing and durable lineage/checkpoint storage remain runtime responsibilities and later capabilities.
+14. When Parent supplies a task-budget state path and current remaining time/counters, treat them as immutable runtime context. Do not create a fresh ledger, reset a deadline, or invent additional attempts. At a convergence request, return the next safe checkpoint promptly; at a hard-stop request, stop new edits and return retained state so Parent can harvest and fence/cancel safely.
 
 Checkpoint payload:
 - scope id / unit id when supplied
 - generation when supplied
 - normalized write paths when required by the plan
+- task-budget remaining time/counters when supplied
 - status: progressing | blocked | ready
 - completed: concrete acceptance-relevant work already finished in this unit
 - changed files/current patch state
@@ -40,6 +42,7 @@ Before finishing, return:
 - implementation summary
 - validation commands and results
 - local repair attempts used / budget when supplied
+- task-budget remaining time/counters when supplied
 - deviations from the assigned scope/unit plan
 - unresolved risks or failures
 - retained workspace state for the next Parent decision

@@ -127,6 +127,11 @@ case "$cmd" in
     worker_policy="$(read_policy_value worker model_policy "$POLICY")"
     worker_model="$(read_policy_value worker model "$POLICY")"
     worker_effort="$(read_policy_value worker min_reasoning_effort "$POLICY")"
+    rollout_mode="$(read_policy_value reasoning.rollout mode "$POLICY")"; [[ -n "$rollout_mode" ]] || rollout_mode=shadow
+    rollout_minimum="$(read_policy_value reasoning.rollout minimum "$POLICY")"; [[ -n "$rollout_minimum" ]] || rollout_minimum=high
+    rollout_routine="$(read_policy_value reasoning.rollout routine "$POLICY")"; [[ -n "$rollout_routine" ]] || rollout_routine=high
+    rollout_complex="$(read_policy_value reasoning.rollout complex "$POLICY")"; [[ -n "$rollout_complex" ]] || rollout_complex=xhigh
+    rollout_critical="$(read_policy_value reasoning.rollout critical "$POLICY")"; [[ -n "$rollout_critical" ]] || rollout_critical=max
     max_threads="$(read_policy_value runtime max_concurrent_threads "$POLICY")"
     repair_cycles="$(read_policy_value runtime max_repair_cycles "$POLICY")"
     telemetry_enabled="$(read_policy_value telemetry enabled "$POLICY")"; [[ -n "$telemetry_enabled" ]] || telemetry_enabled=true
@@ -147,6 +152,9 @@ case "$cmd" in
     CODEX_FLOW_REVIEW_MODIFIER="$review_modifier" CODEX_FLOW_FANOUT_MODIFIER="$fanout_modifier" \
     CODEX_FLOW_PARENT_MODEL_POLICY="$parent_policy" CODEX_FLOW_PARENT_MIN_MODEL="$parent_model" CODEX_FLOW_PARENT_MIN_EFFORT="$parent_effort" \
     CODEX_FLOW_WORKER_MODEL_POLICY="$worker_policy" CODEX_FLOW_WORKER_MODEL="$worker_model" CODEX_FLOW_WORKER_MIN_EFFORT="$worker_effort" \
+    CODEX_FLOW_REASONING_ROLLOUT_MODE="$rollout_mode" CODEX_FLOW_REASONING_ROLLOUT_MINIMUM="$rollout_minimum" \
+    CODEX_FLOW_REASONING_ROLLOUT_ROUTINE="$rollout_routine" CODEX_FLOW_REASONING_ROLLOUT_COMPLEX="$rollout_complex" \
+    CODEX_FLOW_REASONING_ROLLOUT_CRITICAL="$rollout_critical" \
     CODEX_FLOW_MAX_THREADS="$max_threads" CODEX_FLOW_MAX_REPAIR_CYCLES="$repair_cycles" CODEX_FLOW_TELEMETRY_ENABLED="$telemetry_enabled" CODEX_FLOW_TELEMETRY_NOTIFICATIONS="$telemetry_notifications" CODEX_FLOW_TELEMETRY_RETENTION_DAYS="$telemetry_retention_days" \
       bash "$src/install.sh"
 

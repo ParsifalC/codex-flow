@@ -8,7 +8,7 @@
 
 本文档说明 **codex-flow policy schema v4** 的完整配置体系，包括 Strategy、Routing、Modifiers、模型/推理能力策略、仓库级策略、Runtime 硬上限、Quota 感知规划与环境变量覆盖。
 
-> Policy schema 仍然是 **v4**。动态 Worker Budget、`quality_intent` 和角色级资源选择属于单次任务的 `ExecutionPlan v7`，不会增加持久化配置 schema 版本。
+> Policy schema 仍然是 **v4**。动态 Worker Budget、`quality_intent`、角色级资源选择和可选 reasoning rollout 属于单次任务的 **ExecutionPlan v10**，不会增加持久化配置 schema 版本。
 
 架构与 `ExecutionPlan` 合约参见 [strategy-runtime.md](strategy-runtime.md)。
 
@@ -60,6 +60,13 @@ routine_effort = "xhigh"
 complex_effort = "xhigh"
 critical_effort = "max"
 
+[reasoning.rollout]
+mode = "shadow"
+minimum = "high"
+routine = "high"
+complex = "xhigh"
+critical = "max"
+
 [runtime]
 max_concurrent_threads = 4
 max_repair_cycles = 2
@@ -73,6 +80,8 @@ source = "hooks+app-server"
 ```
 
 这个默认值刻意采用 **低成本高能力 Parent + 更深推理 Worker** 的非对称分配：Parent 负责架构、根因、边界和验收，便宜得多的 Worker 承担长时间探索、实现、调试与验证循环。
+
+`[reasoning.rollout]` 是 efficient delegated Worker 的可选 rollout 控制。新安装默认 `mode = "shadow"`，因此会报告 proposal 但保持现有 legacy Worker effort；`legacy` 是 kill switch；`adaptive` 才会应用 proposal。routine/complex/critical 的 release map 为 `high`/`xhigh`/`max`，`minimum` 是所有类别的最低 floor。
 
 旧 schema v3 缺少策略/路由/Modifier 字段时，语义兼容为：
 
@@ -183,6 +192,7 @@ CLI 示例：
 ```bash
 codex-flow strategy plan --profile quality --quality-intent strong --complexity complex
 codex-flow strategy plan --profile quality --quality-intent absolute --parallelism high --writable-workstreams 4
+codex-flow strategy plan --profile efficient --routing delegate --efficient-reasoning adaptive --complexity complex
 ```
 
 `quality_intent` **只有 `quality` Strategy 消费**。在 `efficient` / `balanced` / `speed` 下，它可以保留在 Plan 中用于可观测性，但不得改变 topology、capability、reasoning、review 或 Worker 数量。
@@ -352,6 +362,38 @@ Reviewer     → latest-capable + max reasoning
 
 真正 `critical` 的复杂度/风险在 `quality_intent=normal` 下也允许 Explorer / Implementer / Reviewer 全部请求 `latest-capable`。运行时若不支持 per-spawn model/capability override，则回退到已安装 Worker baseline，并如实报告限制。
 
+### Efficient Reasoning Rollout
+
+该可选配置只对 `strategy=efficient` 且 `routing=delegate` 的 delegated
+Worker 生效。Runtime 先计算现有 legacy Worker effort，再计算 proposal：
+
+```text
+proposal = max(rollout class target, rollout minimum, parent_reasoning)
+```
+
+三种模式含义：
+
+- `legacy`：kill switch，保持旧的 Worker reasoning 选择；
+- `shadow`：仍选择旧值，但在 Plan 的 `reasoning_rollout` 中输出 proposal；
+- `adaptive`：选择 proposal，允许在 Parent 已是 `max` 时与 Parent 相等。
+
+Plan 会输出 `mode`、`legacy_worker_reasoning`、`proposed_worker_reasoning`、
+`selected_worker_reasoning` 和 `applied`；所有已规划的
+`explorer_reasoning`、`implementer_reasoning`、`reviewer_reasoning` 与
+`selected_worker_reasoning` 一致。direct 或非 efficient strategy 的
+`reasoning_rollout` 为 `null`，原有行为不变。
+
+用户策略可以设置 rollout mode/floor；仓库策略只能提高
+`minimum/routine/complex/critical` floor，不能把用户的 `legacy` 或
+`shadow` 静默改成 `adaptive`。当前任务可以用
+`--efficient-reasoning legacy|shadow|adaptive` 临时覆盖，不会写回策略。
+
+这些字段表示 planner legacy/proposed/selected intent，不代表 runtime
+实际 observed/effective effort。如果当前 Codex 不支持 per-spawn effort
+覆盖，运行时回退到已安装 baseline；后续 telemetry 才记录 observed 值。
+rollout helper 是决策边界，不是 scheduler，也不负责自动 spawn 或 telemetry
+采集。
+
 ---
 
 ## Writable Worker 并行规则
@@ -457,6 +499,7 @@ implementer_reasoning
 reviewer_capability_policy
 reviewer_model
 reviewer_reasoning
+reasoning_rollout
 worker_budget
 exploration_workers
 implementation_workers
@@ -481,6 +524,11 @@ planned_worker_count
 | `CODEX_FLOW_WORKER_MODEL_POLICY` | `latest-efficient` | Worker baseline capability policy |
 | `CODEX_FLOW_WORKER_MODEL` | `auto` | Worker baseline model request |
 | `CODEX_FLOW_WORKER_MIN_EFFORT` | `xhigh` | Worker baseline reasoning floor |
+| `CODEX_FLOW_REASONING_ROLLOUT_MODE` | `shadow` | efficient delegated Worker rollout mode |
+| `CODEX_FLOW_REASONING_ROLLOUT_MINIMUM` | `high` | rollout minimum floor |
+| `CODEX_FLOW_REASONING_ROLLOUT_ROUTINE` | `high` | rollout routine target |
+| `CODEX_FLOW_REASONING_ROLLOUT_COMPLEX` | `xhigh` | rollout complex target |
+| `CODEX_FLOW_REASONING_ROLLOUT_CRITICAL` | `max` | rollout critical target |
 | `CODEX_FLOW_MAX_THREADS` | `4` | 每阶段 Worker thread ceiling |
 | `CODEX_FLOW_MAX_REPAIR_CYCLES` | `2` | Repair ceiling |
 | `CODEX_FLOW_TELEMETRY_ENABLED` | `true` | Telemetry 开关 |

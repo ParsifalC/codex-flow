@@ -8,7 +8,7 @@
 
 This document describes **codex-flow policy schema v4**: strategies, routing, composable modifiers, capability/reasoning policy, repository policy, runtime ceilings, quota-aware planning, and environment overrides.
 
-> Persistent policy remains **schema v4**. Dynamic WorkerBudget, `quality_intent`, and role-scoped resource selection belong to the per-task **ExecutionPlan v7**, so they do not require a persistent-policy schema bump.
+> Persistent policy remains **schema v4**. Dynamic WorkerBudget, `quality_intent`, role-scoped resource selection, and optional reasoning rollout belong to the per-task **ExecutionPlan v10**, so they do not require a persistent-policy schema bump.
 
 See [strategy-runtime.md](strategy-runtime.md) for the architecture and full plan contract.
 
@@ -60,6 +60,13 @@ routine_effort = "xhigh"
 complex_effort = "xhigh"
 critical_effort = "max"
 
+[reasoning.rollout]
+mode = "shadow"
+minimum = "high"
+routine = "high"
+complex = "xhigh"
+critical = "max"
+
 [runtime]
 max_concurrent_threads = 4
 max_repair_cycles = 2
@@ -73,6 +80,12 @@ source = "hooks+app-server"
 ```
 
 The asymmetric reasoning defaults are deliberate: the expensive high-capability Parent handles architecture and semantic decisions, while the much cheaper Worker absorbs deeper exploration, implementation, debugging, verification, and repair loops.
+
+`[reasoning.rollout]` is an optional efficient-only delegated-Worker rollout
+control. New installs default to `shadow`, which reports a proposal while
+keeping the legacy Worker effort. `legacy` is the kill switch; `adaptive` applies
+the proposal. Release targets are `high`/`xhigh`/`max` for routine/complex/critical,
+with `minimum=high` as the floor.
 
 Schema-v3 policies remain semantically compatible. Missing strategy/routing/modifier sections resolve to:
 
@@ -173,6 +186,7 @@ Examples:
 ```bash
 codex-flow strategy plan --profile quality --quality-intent strong --complexity complex
 codex-flow strategy plan --profile quality --quality-intent absolute --parallelism high --writable-workstreams 4
+codex-flow strategy plan --profile efficient --routing delegate --efficient-reasoning adaptive --complexity complex
 ```
 
 `quality_intent` is consumed **only by the `quality` strategy**. Under `efficient`, `balanced`, or `speed`, it may remain in the Plan for observability but must not change topology, capability, reasoning, review, or Worker counts.
@@ -309,6 +323,39 @@ Reviewer     → latest-capable + max reasoning
 
 Genuinely critical complexity/risk may request `latest-capable` for Explorer / Implementer / Reviewer even under normal quality intent. If the active Codex runtime cannot apply model/capability overrides per spawn, the installed Worker baseline is used and the limitation is reported.
 
+### Efficient reasoning rollout
+
+The optional section applies only to delegated `efficient` Worker roles. Runtime
+first computes the existing legacy Worker effort, then proposes:
+
+```text
+proposal = max(rollout class target, rollout minimum, parent_reasoning)
+```
+
+Modes are:
+
+- `legacy`: kill switch; keep the existing Worker reasoning selection;
+- `shadow`: select the legacy value but expose the proposal in
+  `ExecutionPlan.reasoning_rollout`;
+- `adaptive`: select the proposal, including equality with Parent at `max`.
+
+The plan records `mode`, `legacy_worker_reasoning`,
+`proposed_worker_reasoning`, `selected_worker_reasoning`, and `applied`. Every
+planned Explorer/Implementer/Reviewer reasoning field matches the selected
+value. Direct and non-efficient plans emit `reasoning_rollout = null` and keep
+their prior behavior.
+
+User policy may set rollout mode/floors. Repository policy may only raise
+`minimum`/class floors and cannot silently switch a user's `legacy` or `shadow`
+mode to `adaptive`. Use `--efficient-reasoning legacy|shadow|adaptive` for a
+current-task override; it does not mutate persistent policy.
+
+These values are planner legacy/proposed/selected intent, not runtime
+observed/effective usage. If per-spawn effort overrides are unsupported, the
+runtime falls back to the installed baseline; later telemetry may record the
+observed effort. Rollout is a decision helper, not a scheduler or telemetry
+collector.
+
 ---
 
 ## Writable Worker fan-out
@@ -392,6 +439,8 @@ codex-flow strategy plan \
   --write-conflict low \
   --exploration-need high \
   --writable-workstreams 4
+
+codex-flow strategy plan --profile efficient --routing delegate --efficient-reasoning adaptive --complexity complex
 ```
 
 Plan JSON includes:
@@ -407,6 +456,7 @@ implementer_reasoning
 reviewer_capability_policy
 reviewer_model
 reviewer_reasoning
+reasoning_rollout
 worker_budget
 exploration_workers
 implementation_workers
@@ -431,6 +481,11 @@ planned_worker_count
 | `CODEX_FLOW_WORKER_MODEL_POLICY` | `latest-efficient` | Worker baseline capability policy |
 | `CODEX_FLOW_WORKER_MODEL` | `auto` | Worker baseline model request |
 | `CODEX_FLOW_WORKER_MIN_EFFORT` | `xhigh` | Worker baseline reasoning floor |
+| `CODEX_FLOW_REASONING_ROLLOUT_MODE` | `shadow` | efficient delegated Worker rollout mode |
+| `CODEX_FLOW_REASONING_ROLLOUT_MINIMUM` | `high` | rollout minimum floor |
+| `CODEX_FLOW_REASONING_ROLLOUT_ROUTINE` | `high` | rollout routine target |
+| `CODEX_FLOW_REASONING_ROLLOUT_COMPLEX` | `xhigh` | rollout complex target |
+| `CODEX_FLOW_REASONING_ROLLOUT_CRITICAL` | `max` | rollout critical target |
 | `CODEX_FLOW_MAX_THREADS` | `4` | Per-stage Worker thread ceiling |
 | `CODEX_FLOW_MAX_REPAIR_CYCLES` | `2` | Repair ceiling |
 | `CODEX_FLOW_TELEMETRY_ENABLED` | `true` | Telemetry toggle |
