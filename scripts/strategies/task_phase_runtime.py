@@ -52,6 +52,18 @@ def _strict_number(value: Any, label: str) -> float:
     return number
 
 
+def _cli_now(value: Any) -> float:
+    if isinstance(value, bool):
+        raise LedgerError("now must be finite seconds")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise LedgerError("now must be finite seconds") from None
+    if not math.isfinite(number) or number < 0:
+        raise LedgerError("now must be finite non-negative seconds")
+    return number
+
+
 def _strict_int(value: Any, label: str) -> int:
     if type(value) is not int or value < 0:
         raise LedgerError(f"{label} must be a non-negative integer")
@@ -132,7 +144,7 @@ def phase_decision(
         raise LedgerError("ledger status must be an object")
     expected_fingerprint = _policy_fingerprint(effective_policy)
     if ledger_value.get("policy_fingerprint") != expected_fingerprint:
-        raise LedgerError("task phase plan/policy mismatch; refusing to use a different ExecutionPlan")
+        raise LedgerError("task phase plan/policy mismatch; refusing to use a different budget plan")
 
     current_now = _strict_number(now, "now")
     started_at = _strict_number(ledger_value.get("started_at"), "started_at")
@@ -141,9 +153,9 @@ def phase_decision(
     if hard_deadline <= soft_deadline:
         raise LedgerError("hard_deadline must be after soft_deadline")
     if soft_deadline != started_at + effective_policy.soft_timeout_seconds:
-        raise LedgerError("task phase soft deadline does not match the immutable ExecutionPlan")
+        raise LedgerError("task phase soft deadline does not match the immutable budget plan")
     if hard_deadline != started_at + effective_policy.hard_timeout_seconds:
-        raise LedgerError("task phase hard deadline does not match the immutable ExecutionPlan")
+        raise LedgerError("task phase hard deadline does not match the immutable budget plan")
     closed = ledger_value.get("closed")
     if type(closed) is not bool:
         raise LedgerError("ledger closed must be boolean")
@@ -192,7 +204,7 @@ def init(
     plan: dict[str, Any],
     now: Any,
 ) -> dict[str, Any]:
-    """Initialize a new phase-aware ledger from the immutable plan."""
+    """Initialize a new phase-aware ledger from the immutable budget plan."""
     effective_policy = _effective_policy(_plan(plan))
     result = init_ledger(state_file, task_id, effective_policy, now)
     result.update(phase_decision(plan, result, "exploration", now))
@@ -280,10 +292,11 @@ def main(argv: list[str] | None = None) -> int:
     ns = parser.parse_args(argv)
     try:
         plan = _plan(_json(ns.plan_json, "plan"))
+        current_now = _cli_now(ns.now)
         if ns.command == "init":
-            result = init(ns.state_file, ns.task_id, plan, ns.now)
+            result = init(ns.state_file, ns.task_id, plan, current_now)
         elif ns.command == "status":
-            result = status(ns.state_file, ns.task_id, plan, ns.phase, ns.now)
+            result = status(ns.state_file, ns.task_id, plan, ns.phase, current_now)
         else:
             result = reserve_implementation(
                 ns.state_file,
@@ -292,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                 ns.kind,
                 ns.reservation_id,
                 ns.fingerprint,
-                ns.now,
+                current_now,
             )
     except LedgerError as exc:
         print(str(exc), file=sys.stderr)
