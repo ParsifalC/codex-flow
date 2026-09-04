@@ -2,9 +2,9 @@
 """Durable task-level budget ledger for FlowPilot.
 
 General implementation reservations close at the task soft deadline. Read-only
-`review_attempt` reservations belong to required completion and remain open
-until the absolute hard deadline. All reservations are atomic, idempotent, and
-persisted across processes.
+`review_attempt` reservations may use a stricter phase-owned admission deadline.
+All reservation deadline gates run only after exact idempotent replay detection,
+so a committed reservation can always be acknowledged without creating work.
 """
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ try:
     from .base import TaskBudgetPolicy
 except ImportError:
     from base import TaskBudgetPolicy
-
 
 SCHEMA_VERSION = 2
 GENERAL_RESERVATION_KINDS = (
@@ -387,10 +386,7 @@ def _check_now(state: dict[str, Any], now: float) -> None:
 
 
 def _new_state(task_hash: str, policy: TaskBudgetPolicy, now: float) -> dict[str, Any]:
-    limits = {
-        kind: getattr(policy, POLICY_LIMIT_FIELDS[kind])
-        for kind in RESERVATION_KINDS
-    }
+    limits = {kind: getattr(policy, POLICY_LIMIT_FIELDS[kind]) for kind in RESERVATION_KINDS}
     return {
         "schema_version": SCHEMA_VERSION,
         "task_id": task_hash,
@@ -493,10 +489,17 @@ def reserve(
     reservation_id: str,
     fingerprint: str,
     now: Any,
+    *,
+    new_reservation_deadline: Any | None = None,
 ) -> dict[str, Any]:
     path = _state_path(state_file)
     task_hash = _task_hash(task_id)
     current_now = _now(now)
+    admission_deadline = (
+        None
+        if new_reservation_deadline is None
+        else _seconds(new_reservation_deadline, "new_reservation_deadline")
+    )
     if kind not in RESERVATION_KINDS:
         raise LedgerError(f"invalid reservation kind: {kind}")
     reservation_hash = _reservation_hash(reservation_id)
@@ -522,6 +525,11 @@ def reserve(
                     "idempotent": True,
                 })
                 return result
+        if admission_deadline is not None:
+            if admission_deadline > state["hard_deadline"]:
+                raise LedgerError("new reservation deadline cannot exceed task hard deadline")
+            if current_now >= admission_deadline:
+                raise LedgerError("reservation admission deadline reached; new reservation is not permitted")
         if current_now >= state["hard_deadline"]:
             raise LedgerError("task hard deadline reached; new reservations are not permitted")
         if kind in GENERAL_RESERVATION_KINDS and current_now >= state["soft_deadline"]:
@@ -595,20 +603,16 @@ def _parser() -> argparse.ArgumentParser:
         description="durable FlowPilot task budget ledger",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-
     init_cmd = commands.add_parser("init")
     _common_args(init_cmd)
     init_cmd.add_argument("--policy-json", required=True)
-
     status_cmd = commands.add_parser("status")
     _common_args(status_cmd)
-
     reserve_cmd = commands.add_parser("reserve")
     _common_args(reserve_cmd)
     reserve_cmd.add_argument("--kind", choices=RESERVATION_KINDS, required=True)
     reserve_cmd.add_argument("--reservation-id", required=True)
     reserve_cmd.add_argument("--fingerprint", required=True)
-
     finish_cmd = commands.add_parser("finish")
     _common_args(finish_cmd)
     finish_cmd.add_argument("--outcome", default="success")
