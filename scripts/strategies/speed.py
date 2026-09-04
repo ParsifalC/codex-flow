@@ -49,15 +49,11 @@ def implementation_maximum_work_units(task) -> int:
         semantic_maximum = 3
     else:
         semantic_maximum = 1
-    # A proven writable workstream is already a natural implementation unit.
-    # Never compile a task budget that authorizes fewer logical units than the
-    # strategy can legitimately schedule as parallel implementers.
     topology_floor = min(task.writable_workstreams, worker_budget(task).max_implementers)
     return max(semantic_maximum, topology_floor)
 
 
 def task_budget(task) -> TaskBudgetPolicy:
-    """Cap total speed-mode execution so replans cannot erase the latency goal."""
     maximum_work_units = implementation_maximum_work_units(task)
     return TaskBudgetPolicy(
         soft_timeout_seconds=1200,
@@ -66,6 +62,8 @@ def task_budget(task) -> TaskBudgetPolicy:
         max_implementation_attempts=maximum_work_units + 1,
         max_replans=1,
         max_replacements=1,
+        max_review_attempts=2,
+        parent_finalization_seconds=120,
     )
 
 
@@ -93,7 +91,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        return StagePolicy("quorum", 1, 90, 900, True, True, "parent_delta")
+        return StagePolicy("quorum", 1, 90, 900, True, True, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
