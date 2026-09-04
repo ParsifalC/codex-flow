@@ -1,521 +1,118 @@
 # FlowPilot Multi-Strategy Runtime
 
-FlowPilot is the semantic profiler and execution runtime for codex-flow. **Policy schema v4** separates the optimization objective from execution constraints, while **ExecutionPlan schema v10** carries the concrete WorkerBudget, task intent, per-role capability/reasoning policy, topology, bounded lifecycle policy, optional cumulative task budget, and optional reasoning-rollout decision selected for one task.
+FlowPilot is the semantic profiler and execution runtime for codex-flow. Persistent policy remains **schema v4**. The execution contract introduced by this runtime is **ExecutionPlan schema v11** with a canonical cumulative task budget, shared Worker lifecycle semantics, bounded implementation units, read-only review retries, and phase-aware admission.
 
 ```text
-User Task
-   ↓
-Task Profiler (FlowPilot semantic reasoning)
-   ↓
-TaskProfile
-   ↓
-Strategy Runtime
-   ├─ policy precedence
-   ├─ Strategy Registry
-   │  ├─ efficient
-   │  ├─ balanced
-   │  ├─ quality
-   │  └─ speed
-   ├─ WorkerBudget
-   ├─ Strategy resource hooks
-   ├─ Modifiers
-   ├─ runtime / quota state
-   └─ generic Plan Compiler
-   ↓
-ExecutionPlan v10
-   ↓
-──────────────── hard boundary ────────────────
-   ↓
-Flow Runtime (FlowPilot)
-   ↓
-Role Agents
-   ├─ worker-explorer
-   ├─ worker-implementer
-   └─ worker-reviewer
-   ↓
-Parent final verification / bounded repair
-   ↓
+User task
+  ↓
+FlowPilot semantic TaskProfile
+  ↓
+strategy_runtime.py + strategy registry
+  ↓
+ExecutionPlan v11
+  ↓
+──────────────── authoritative boundary ────────────────
+  ↓
+FlowPilot execution
+  ├─ exploration
+  ├─ bounded implementation
+  ├─ required read-only review
+  └─ Parent finalization
+  ↓
 Telemetry
 ```
 
-The critical invariant is:
+The invariant is:
 
 > **FlowPilot profiles. `strategy_runtime.py` plus the strategy registry decide. FlowPilot executes the returned plan.**
 
-The Skill must not keep another copy of strategy topology, Worker counts, capability selection, reasoning policy, review policy, or quota logic.
+The Skill must not keep a second copy of strategy topology, Worker counts, role capability/reasoning policy, lifecycle thresholds, task-budget limits, phase-admission rules, or quota logic.
 
 ## Design invariants
 
-1. **Strategy is an optimization objective, not an executor.**
-2. **Routing is a constraint, not a strategy.** `direct`, `delegate`, and `adaptive` are orthogonal to strategy selection.
-3. **WorkerBudget is a preference envelope, not a fixed Worker count.** Runtime converts it into concrete counts using TaskProfile evidence and hard ceilings.
-4. **Strategy semantics stay in StrategySpec modules.** The generic compiler may invoke strategy hooks, but it must not branch on built-in literals such as `efficient`, `balanced`, `quality`, or `speed`.
-5. **Quality intent is task semantics, not technical risk.** `quality_intent=strong|absolute` represents explicit user optimization intent and must not be encoded by faking `risk=critical`.
-6. **Only the selected strategy consumes strategy-specific semantics.** A non-`quality` strategy may carry `quality_intent` for observability, but that field must not alter its topology or resources.
-7. **Model capability and reasoning effort are independent axes.** `latest-efficient + max` is not assumed equivalent to `latest-capable`.
-8. **Capability is role-scoped.** Explorer, Implementer, and Reviewer may receive different capability/model/reasoning choices in one plan.
-9. **Modifiers are orthogonal behavior controls.** Review rigor and fan-out do not create combinatorial strategy names.
-10. **Role Agents are strategy-agnostic capabilities.** Explorer, implementer, and reviewer prompts are reused across strategies.
-11. **Model slugs are not strategy semantics.** Strategy expresses capability/resource intent; policy/runtime resolve current models.
-12. **Expensive Parent capability is reserved for high-value semantic decisions.** Delegated Worker roles use at least one higher reasoning tier than Parent whenever the effort ladder permits it.
-13. **`max` is the top effort tier.** If Parent is explicitly forced to `max`, Worker roles can only equal `max`; the plan records this limitation.
-14. **Writable fan-out requires evidence.** Multiple implementers require already-proven isolated, non-overlapping writable workstreams.
-15. **Safety and hard ceilings belong to Runtime.** A strategy cannot bypass write-conflict checks, `writable_workstreams`, modifiers, runtime ceilings, or repair ceilings.
-16. **`max_concurrent_threads` is a per-stage ceiling.** Exploration, implementation, and review are separate stages, so `planned_worker_count` may exceed it.
-17. **Configured floors are hard floors.** Strategy/quota state may not silently lower them.
-18. **Task profiling is continuous.** Material evidence or explicit quality-intent changes require re-profile + recompile rather than ad-hoc plan mutation.
-19. **Telemetry is observational.** Planning adds no LLM calls merely to estimate usage or quota.
-20. **Release defaults have one source of truth.** `policy/defaults.toml` drives installer and planner defaults.
-21. **Installer/update policy round-trips are lossless for supported fields.**
-22. **Bounded implementation is explicit and finite.** `minimum_work_units` and optional `maximum_work_units` constrain one manifest; cumulative task reservations are enforced separately by the durable task-budget ledger.
-23. **Path evidence is preflight only.** `write_paths` provide lexical overlap checks, not an OS lock, durable scheduler enforcement, symlink resolution, or cross-process fencing.
-24. **Lineage is explicit.** Bounded units use `(scope_id, unit_id, generation)`; replacement/replan increments generation, checkpoint/continue does not, and Parent accepts only current-generation evidence.
-25. **Reasoning rollout is scoped and observable.** Only delegated `efficient` Worker roles consume the optional `legacy|shadow|adaptive` decision; direct/non-efficient plans remain unchanged, and proposed/selected effort is planner intent rather than runtime-observed usage.
+1. Strategy is an optimization objective; routing is an orthogonal execution constraint.
+2. WorkerBudget is an envelope, not a mandatory Worker count.
+3. Strategy-specific tuning lives in `scripts/strategies/*.py`; the generic compiler normalizes it against runtime/safety constraints.
+4. `quality_intent` is user optimization intent and is not equivalent to technical risk.
+5. Model capability and reasoning effort are independent axes.
+6. Multiple writable implementers require already-proven isolated writable workstreams.
+7. `max_concurrent_threads` is a per-stage concurrency ceiling, not a whole-task Worker total.
+8. Bounded work units are logical acceptance transactions, not permission to create extra writers.
+9. `minimum_work_units=1` for all built-in strategies; no strategy mechanically forces a fake split.
+10. A task-level budget is durable across implementation attempts/replans/replacements and cannot be reset by recompiling a later plan.
+11. ExecutionPlan is the only canonical task-budget source. Phase runtime validates and executes it; it does not derive a second budget.
+12. Required review and Parent finalization have explicit time windows.
+13. Review failure retries are read-only `retry_review`, not writable implementation replans.
+14. `action=finalize_parent` closes reviewer admission; it does not prove that a required/quorum reviewer join succeeded. Unsatisfied required review fails closed.
+15. A returned checkpoint is harvested before any fallback that could discard useful work.
+16. `wait()` timeouts are not Worker timeouts.
+17. Telemetry is observational and never calls a model only to estimate usage or latency.
+18. The new task-ledger contract has no grandfather/adoption path because no earlier persisted-task format containing this feature was released. Incompatible task-ledger schema/policy fails closed.
 
-## Strategy Registry, WorkerBudget, and resource hooks
+## Strategy registry
 
-Built-in strategies live under:
+Built-in strategies:
 
 ```text
 scripts/strategies/
-├── __init__.py
-├── base.py
 ├── efficient.py
 ├── balanced.py
 ├── quality.py
 ├── speed.py
+├── base.py
 ├── lifecycle_runtime.py
 ├── work_unit_runtime.py
-└── task_budget_runtime.py
+├── task_budget_runtime.py
+└── task_phase_runtime.py
 ```
 
-`base.py` defines `StrategySpec`, `WorkerBudget`, the optional `TaskBudgetPolicy` hook, and strict `ReasoningRolloutPolicy` / `ReasoningRolloutDecision` contracts.
-
-```text
-WorkerBudget
-  max_explorers
-  max_implementers
-  max_reviewers
-  max_total_workers
-  speculation: low | medium | high
-```
-
-A StrategySpec can express:
+Each StrategySpec supplies the optimization preferences used by the generic compiler:
 
 ```text
 adaptive_route(task)
 effort(task, role)
 worker_budget(task)
 independent_review(task)
-capability(task, role)       → worker | parent
-exploration_bonus(task)      → non-negative integer
-reviewer_bonus(task)         → non-negative integer
-notes(task)                  → tuple[str, ...]
-task_budget(task)            → TaskBudgetPolicy | None
-reasoning_rollout(task, role, policy, parent_reasoning, legacy_worker_reasoning)
-                             → ReasoningRolloutDecision
-allow_parallel_write
-quota_sensitive
+capability(task, role)
+exploration_bonus(task)
+reviewer_bonus(task)
+notes(task)
+lifecycle(task, stage)
+task_budget(task)
+reasoning_rollout(...) | none
 ```
 
-The role-based `capability()` hook is intentionally abstract. `"worker"` means the configured efficient Worker policy; `"parent"` means the configured Parent-class capability policy. Strategy modules do not hard-code model slugs.
+The compiler owns generic policy precedence, runtime ceilings, writable-isolation proof, quota normalization, concrete topology, and final ExecutionPlan construction.
 
-Runtime remains responsible for generic mechanics only:
+## ExecutionPlan schema v11
 
-```text
-policy precedence
-TaskProfile validation
-routing overrides
-modifiers
-configured reasoning floors
-Worker-role-over-Parent reasoning invariant
-base exploration/reviewer demand formulas
-strategy bonus application
-writable isolation proof
-write-conflict checks
-per-stage thread ceilings
-quota normalization/enforcement
-role-resource materialization
-ExecutionPlan construction
-```
-
-This split lets strategies become more aggressive without duplicating safety logic or leaking strategy-specific conditions back into the compiler.
-
-### StagePolicy and bounded implementation
-
-`StagePolicy` carries lifecycle preferences plus optional bounded-unit controls:
-
-```text
-work_unit_mode: single | bounded
-minimum_work_units
-join_between_work_units
-maximum_work_units | none
-require_write_paths
-soft_timeout_seconds | none
-checkpoint_rearm_seconds | none
-max_worker_repair_attempts | none
-```
-
-For the `efficient` strategy, routine implementation stays single (`minimum_work_units=maximum_work_units=1`) and uses a 180-second post-harvest checkpoint cooldown. Complex, cross-module, repo-wide, and heavy-loop implementation uses a 240-second cooldown; critical or critical-risk implementation uses 300 seconds. Together with the 600/900/1200-second soft budgets, these place a possible second checkpoint at 780/1140/1500 seconds, before the 1800-second hard ceiling. Complex, cross-module, critical, and critical-risk work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=2`; repo-wide or heavy-loop work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=3`. Parent should raise the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
-
-`maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota or worker-count. When a strategy emits a task budget, the compiler requires its `max_work_units` to equal the implementation StagePolicy maximum. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
-
-`write_paths` checks are static lexical preflight only. They reject absolute/traversal/glob/backslash/NUL/Windows drive or UNC forms and detect equal or ancestor/descendant overlaps; they do not resolve symlinks, lock the OS, fence processes, persist checkpoints, or enforce a durable scheduler. The surrounding runtime must enforce writable fencing and persist/compare the current `(scope_id, unit_id, generation)` lineage.
-
-Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The first soft checkpoint is unchanged. A later checkpoint requires an explicit Worker `last_meaningful_progress_at` later than the latest harvested timestamp plus the policy's minimum `checkpoint_rearm_seconds` cooldown; legacy `last_progress_at` activity cannot re-arm a harvested checkpoint. Missing rearm policy keeps older plans one-shot. The lifecycle evaluator reports these decisions and cooldown observability (`checkpoint_rearm_at` / `checkpoint_rearm_remaining_seconds`), while `scripts/strategies/task_budget_runtime.py` provides the separate cross-process task ledger; neither helper automatically schedules or cancels Workers.
-
-### Efficient cumulative task budget
-
-Only delegated `efficient` plans currently emit `task_budget`. It has a 1500-second soft deadline and 1800-second hard deadline. The reservation caps are: routine/local/module work units `1` and implementation attempts `2`; complex, cross-module, or critical work units `2` and attempts `3`; repo-wide or heavy-loop work units `3` and attempts `4`. `max_replans=1` and `max_replacements=1` apply to every efficient delegated task. Direct plans and legacy strategies emit `task_budget=null`.
-
-FlowPilot initializes the ledger immediately after initial compilation, checks `status` before every Worker spawn and after each join/wait, reserves logical work units/implementation attempts/replans/replacements, and calls `finish` when the task completes. Exploration/review Workers consume the wall-clock deadline but not implementation counters. Replanning reuses the original state path and cannot reset counters. Bounded `work_unit` reservations use the validator's stable logical fingerprint (generation excluded); `implementation_attempt` reservations use the generation-aware fingerprint. At soft deadline no new work may start; existing Workers checkpoint/converge. At hard deadline received checkpoints are harvested first, then active writers are fenced/cancelled and no replacement or Parent writer may start. The helper stores task/policy hashes and reservation hashes rather than raw prompt, path, or output data; it returns decisions but is not a scheduler.
-
-### Efficient reasoning rollout
-
-The optional `[reasoning.rollout]` section is release-defaulted to:
-
-```toml
-[reasoning.rollout]
-mode = "shadow"
-minimum = "high"
-routine = "high"
-complex = "xhigh"
-critical = "max"
-```
-
-It is consumed only by delegated `efficient` Worker roles. The runtime first
-computes the historical (legacy) Worker effort. The proposal is then:
-
-```text
-max(rollout class target, rollout minimum, parent_reasoning)
-```
-
-`legacy` is a kill switch and selects the historical effort. `shadow` also
-selects historical effort but reports the proposal. `adaptive` selects the
-proposal, including when it equals Parent at the `max` ceiling. The plan's
-`reasoning_rollout` object records `mode`, `legacy_worker_reasoning`,
-`proposed_worker_reasoning`, `selected_worker_reasoning`, and `applied`; all
-planned Explorer/Implementer/Reviewer reasoning fields match the selected
-value. Direct and non-efficient plans emit `null` and retain their previous
-behavior.
-
-User policy may set the mode and floors. Repository policy can only raise the
-rollout floors and cannot change a user's `legacy` or `shadow` mode to
-`adaptive`. `--efficient-reasoning legacy|shadow|adaptive` is a current-task
-override and does not mutate persistent policy. The fields describe requested
-planner intent, not runtime-observed/effective effort. When per-spawn override
-is unsupported, the runtime falls back to the installed baseline; later
-telemetry may record the observed value. Rollout planning itself makes no
-telemetry calls and does not schedule Workers.
-
-## Built-in strategy budgets
-
-The numbers below are **maximum strategy envelopes**, not promises that every task will spawn that many agents. Runtime still requires task evidence and respects the configured thread ceiling.
-
-| Strategy | Typical demanding-task budget | Speculation | Writable fan-out | Quota-sensitive |
-| --- | --- | --- | --- | --- |
-| `efficient` | up to 2 explorers / 2 implementers / 1 reviewer / 5 total | low | only with proven isolation + aggressive modifier | yes |
-| `balanced` | up to 3 explorers / 3 implementers / 1 reviewer / 5 total | medium | proven isolated workstreams | yes |
-| `quality` normal | up to 4 explorers / 3 implementers / 2 reviewers / 6–7 total | high | proven isolated workstreams | no |
-| `quality` strong | up to 4 explorers / 3 implementers / 2 reviewers / 7 total | high | proven isolated workstreams | no |
-| `quality` absolute | up to 4 explorers / 4 implementers / 2 reviewers / 8 total | high | proven isolated workstreams | no |
-| `speed` | up to 4 explorers / 8 implementers / 1 reviewer / 8 total | high | saturate proven isolated workstreams | no |
-
-With the default runtime ceiling of four threads, a `speed` or absolute-quality plan can use four isolated implementers simultaneously when four real writable workstreams are proven.
-
-### `efficient`
-
-Objective: minimize expensive Parent usage and total waste while moving deep execution/debug loops to cheaper Workers.
-
-- small low-risk work stays direct;
-- iterative, cross-module, repo-wide, uncertain, or exploration-heavy work delegates more readily;
-- demanding work can use multiple explorers instead of forcing Parent to perform all discovery;
-- quota pressure collapses speculative fan-out and may reduce repair budget;
-- all roles remain on the configured efficient Worker capability policy.
-
-### `balanced`
-
-Objective: balance quality, quota, and latency.
-
-- moderate parallel exploration;
-- up to three isolated implementation workstreams;
-- quota pressure can reduce topology to a conservative shape;
-- Worker-role reasoning remains deeper than Parent reasoning;
-- `quality_intent` does not change topology/resources because `balanced` does not consume it.
-
-### `quality`
-
-Objective: maximize correctness through deep reasoning, broader exploration, independent verification, and premium capability at the stages where it has the highest decision value.
-
-`quality_intent` has three levels:
-
-```text
-normal
-  ordinary quality target
-  prefer latest-efficient roles with deep/max reasoning
-
-strong
-  explicit quality-over-cost preference
-  target xhigh Parent / max Worker-role reasoning
-  ordinary Explorer stays latest-efficient
-  Implementer / Reviewer may use Parent-class latest-capable
-
-absolute
-  explicit highest-quality preference
-  correctness > quota / latency inside hard safety ceilings
-  target max Parent / max Worker-role reasoning
-  ordinary Explorer stays latest-efficient
-  Implementer / Reviewer may use Parent-class latest-capable
-  allow up to two independent reviewers and the largest quality WorkerBudget
-```
-
-Additional rules:
-
-- normal complex/high-risk/high-verification tasks still target `xhigh` Parent and `max` Worker-role reasoning;
-- `strong/absolute` quality preference alone does **not** make read-only exploration premium-model work;
-- when `complexity=critical` or `risk=critical`, Explorer / Implementer / Reviewer may all use Parent-class capability because discovery itself becomes high-risk decision work;
-- strong/absolute intent remains subject to runtime safety ceilings, write-conflict checks, and proven writable workstreams;
-- quota pressure does not cost-collapse `quality`, because the strategy is not quota-sensitive.
-
-This produces the intended economic shape for a routine strong-quality task:
-
-```text
-Parent       latest-capable / xhigh
-Explorer     latest-efficient / max
-Implementer  latest-capable / max
-Reviewer     latest-capable / max
-```
-
-Capability and reasoning remain independent: Explorer can be cheap-model `max` while Implementer/Reviewer use Parent-class `max`.
-
-### `speed`
-
-Objective: minimize wall-clock latency by saturating safe Worker concurrency.
-
-- non-small parallelizable work delegates;
-- writable implementation count scales with `writable_workstreams`, budget, and runtime ceiling instead of being hard-coded to two;
-- read-only exploration can fan out independently;
-- speed never authorizes overlapping writes;
-- `quality_intent` does not alter speed topology/resources.
-
-## Role Agents
-
-```text
-worker-explorer
-  read-only discovery, evidence collection, competing hypotheses
-
-worker-implementer
-  isolated implementation, tests, debugging, bounded repair
-
-worker-reviewer
-  independent read-only review, regression hunting, acceptance validation
-```
-
-The same role can be used differently by each strategy. ExecutionPlan v10 makes resource selection, optional task budget, and optional reasoning rollout explicit rather than treating “Worker” as one task-wide capability bucket.
-
-## Policy precedence
-
-Strongest to weakest:
-
-```text
-hard runtime / safety ceilings
-  > explicit current-task overrides
-  > repository .codex-flow.toml
-  > ~/.codex/codex-flow.toml
-  > codex-flow release defaults
-```
-
-Repository policy may choose strategy/routing/modifiers, raise reasoning floors, and tighten runtime ceilings. It cannot silently weaken user floors.
-
-## Policy schema v4
-
-The persistent policy remains schema v4. WorkerBudget and `quality_intent` are per-task ExecutionPlan concepts and therefore do **not** require a persistent-policy schema bump.
-
-```toml
-schema_version = 4
-
-[strategy]
-profile = "efficient"
-
-[routing]
-mode = "adaptive"
-
-[modifiers]
-review = "auto"
-fanout = "auto"
-```
-
-Current fresh-install reasoning defaults are intentionally asymmetric:
-
-```toml
-[parent]
-min_reasoning_effort = "high"
-routine_effort = "high"
-complex_effort = "high"
-critical_effort = "xhigh"
-
-[worker]
-min_reasoning_effort = "xhigh"
-routine_effort = "xhigh"
-complex_effort = "xhigh"
-critical_effort = "max"
-```
-
-Runtime then enforces for every delegated Worker role:
-
-```text
-role_reasoning >= next_tier(parent_reasoning)
-```
-
-where:
-
-```text
-high  → xhigh
-xhigh → max
-max   → max
-```
-
-User/repository floors can still raise either side. Capability escalation remains independent from this effort ladder.
-
-## Routing and modifiers
-
-Routing is independent from strategy:
-
-- `adaptive`: selected strategy supplies direct/delegate preference from TaskProfile;
-- `direct`: Parent executes with no subagents;
-- `delegate`: delegated execution when supported and safely scoped.
-
-Modifiers:
-
-```text
-review: auto | standard | strict
-fanout: auto | conservative | aggressive
-```
-
-`conservative` reduces speculative exploration and writable fan-out. `aggressive` can increase safe fan-out but still cannot invent isolated writable workstreams or exceed strategy/runtime budgets.
-
-## TaskProfile contract
-
-```text
-TaskProfile
-  complexity: small | routine | complex | critical
-  uncertainty: low | medium | high
-  risk: low | medium | high | critical
-  scope: local | module | cross-module | repo-wide
-  parallelism: none | limited | high
-  write_conflict: low | high
-  exploration_need: low | medium | high
-  verification_cost: low | medium | high
-  iteration_intensity: one-shot | iterative | heavy-loop
-  writable_workstreams: positive integer
-  quality_intent: normal | strong | absolute
-```
-
-`quality_intent` defaults to `normal`. It is set only from explicit current-task user intent. Generic requests to be careful, review code, or produce good work do not automatically imply `strong` or `absolute`.
-
-`writable_workstreams` is evidence, not a desired Worker count. `4` means four isolated non-overlapping writable scopes/worktrees have actually been identified. Runtime may then authorize up to four implementers if strategy budget and hard ceilings allow it.
-
-`parallelism=none` remains a hard TaskProfile constraint: execution stages are sequential and explorer fan-out is disabled.
-
-## Dynamic fan-out
-
-Runtime calculates **strategy-agnostic base exploration demand** from:
-
-```text
-uncertainty
-exploration_need
-complexity
-scope
-verification_cost
-```
-
-The selected strategy may add `exploration_bonus(task)`. For example, only `quality` translates `strong/absolute quality_intent` into extra exploration demand. Therefore the same `quality_intent` on `balanced` cannot silently create extra explorers.
-
-Writable implementation fan-out requires all of:
-
-```text
-parallelism == high
-write_conflict == low
-writable_workstreams >= 2
-strategy allows parallel write OR fanout modifier == aggressive
-```
-
-Implementation count is bounded by:
-
-```text
-writable_workstreams
-strategy.worker_budget.max_implementers
-runtime.max_concurrent_threads
-```
-
-Review demand follows the same split: Runtime owns a generic technical-risk base formula; the selected strategy may add `reviewer_bonus(task)`. Absolute quality uses that hook to request the second independent reviewer.
-
-The total plan can therefore look like:
-
-```text
-2 explorers
-→ 4 isolated implementers
-→ 2 independent reviewers
-→ Parent final verification
-```
-
-while `max_concurrent_threads=4`, because at no single stage are more than four Workers active concurrently.
-
-## RuntimeState and quota
-
-```text
-quota_pressure: unknown | low | medium | high | critical
-max_concurrent_threads
-max_repair_cycles
-```
-
-Quota is read from the existing app-server rate-limit path and normalized before strategy use. `unknown` is used when reliable state is unavailable.
-
-For quota-sensitive strategies (`efficient`, `balanced`), high/critical pressure can reduce explorers, implementers, reviewers, and repair budget. It does **not** reduce configured reasoning floors or the Worker-role-over-Parent reasoning invariant.
-
-`quality` is deliberately not quota-sensitive. Strong/absolute quality retains Parent-class capability for high-value Implementer/Reviewer roles under quota pressure; ordinary Explorer capability remains independently selected. Hard runtime and safety ceilings still apply.
-
-## ExecutionPlan v10
-
-The deterministic planner emits:
+The important runtime fields are:
 
 ```text
 ExecutionPlan
-  schema_version = 10
+  schema_version = 11
   strategy
   routing
   review_modifier
   fanout_modifier
   quality_intent
 
-  parent_capability_policy
-  parent_model_floor
-  parent_reasoning
+  parent_* capability/reasoning
+  explorer_* capability/model/reasoning | none
+  implementer_* capability/model/reasoning | none
+  reviewer_* capability/model/reasoning | none
   reasoning_rollout | none
-    mode: legacy | shadow | adaptive
-    legacy_worker_reasoning
-    proposed_worker_reasoning
-    selected_worker_reasoning
-    applied
-
-  explorer_capability_policy | none
-  explorer_model | none
-  explorer_reasoning | none
-
-  implementer_capability_policy | none
-  implementer_model | none
-  implementer_reasoning | none
-
-  reviewer_capability_policy | none
-  reviewer_model | none
-  reviewer_reasoning | none
 
   worker_budget
-    max_explorers
-    max_implementers
-    max_reviewers
-    max_total_workers
-    speculation
+  exploration_workers
+  implementation_workers
+  reviewer_workers
+  planned_worker_count
+  max_concurrent_threads
+
+  exploration_stage | none
+  implementation_stage | none
+  review_stage | none
 
   task_budget | none
     soft_timeout_seconds
@@ -524,117 +121,294 @@ ExecutionPlan
     max_implementation_attempts
     max_replans
     max_replacements
+    max_review_attempts
+    parent_finalization_seconds
 
-  exploration_workers
-  implementation_workers
-  reviewer_workers
-  planned_worker_count
-  exploration_stage | none
-  implementation_stage | none
-  review_stage | none
-    join_policy
-    min_successful_workers
-    idle_timeout_seconds
-    hard_timeout_seconds
-    soft_timeout_seconds | none
-    checkpoint_rearm_seconds | none
-    max_worker_repair_attempts | none
-    work_unit_mode: single | bounded
-    minimum_work_units
-    join_between_work_units
-    maximum_work_units | none
-    require_write_paths
-    cancel_if_superseded
-    cancel_stragglers_after_quorum
-    fallback_policy
   review_mode
-
   max_repair_cycles
-  max_concurrent_threads
-  escalate_on_failure
   quota_pressure
-  repo_policy | none
-  context_mode
   notes
 ```
 
-The concrete per-role resource fields and `*_workers` values are authoritative. FlowPilot must execute them and must not reinterpret either the strategy name or quality intent after compilation.
+Direct plans have no delegated stages and `task_budget=null`.
 
-When an execution stage is absent, its role resources are `none`. For example, if `exploration_workers=0`, all `explorer_*` fields are `none`; when `review_mode=parent`, `reviewer_workers=0` and all `reviewer_*` fields are `none`.
-
-## Anti-monolith guard
-
-Tests explicitly reject built-in strategy comparisons in `scripts/strategy_runtime.py`:
+For delegated work, compiler validation includes:
 
 ```text
-strategy == "efficient"
-strategy == "balanced"
-strategy == "quality"
-strategy == "speed"
+implementation_stage.maximum_work_units == task_budget.max_work_units
+implementation_workers <= task_budget.max_work_units
+implementation_workers <= task_budget.max_implementation_attempts
+reviewer_workers <= task_budget.max_review_attempts  # when review is planned
 ```
 
-and their `!=` forms. This guard is intentionally regex-based so it matches the real source text rather than escaped shell literals.
+When no reviewer Worker is planned, canonical `max_review_attempts=0`.
 
-Behavioral tests additionally compare `balanced` plans under `quality_intent=normal` and `strong` and require topology/resources to remain identical. Role-resource tests require routine strong/absolute quality to keep Explorer efficient while promoting Implementer/Reviewer.
+## Shared Worker lifecycle
 
-## Installer and update round-trip
+All four strategies use the same lifecycle mechanics. Strategies tune thresholds and semantic logical-unit baselines; already-proven isolated writable topology may raise the total logical-unit envelope within the strategy WorkerBudget.
 
-For supported global policy fields:
+| Strategy | Implementation soft checkpoint | Rearm | Worker-local repairs | Logical-unit envelope | Worker hard ceiling |
+| --- | --- | --- | --- | --- | --- |
+| `efficient` | 600 / 900 / 1200s | 180 / 240 / 300s | 1–2 | semantic 1–3; topology-backed ≤2 where applicable | 1800s |
+| `balanced` | 1200 / 1500 / 1800s | 240 / 300 / 360s | 1–2 | semantic 1–3; topology-backed ≤3 | 2400s |
+| `quality` | 1800 / 2400 / 2700s | 360 / 480 / 600s | 2–3 | semantic 1–4; topology-backed ≤4 | 3600s |
+| `speed` | 420 / 600 / 720s | 180s | 1 | semantic 1 / 3 / 4; topology-backed ≤8 | 1200s |
+
+Lifecycle semantics:
+
+- `last_progress_at` is liveness activity.
+- `last_meaningful_progress_at` is acceptance-relevant progress.
+- soft timeout requests/converges toward checkpoints but does not itself cancel a Worker.
+- repeated checkpoint requests require explicit meaningful progress after the latest harvest plus `checkpoint_rearm_seconds`.
+- an unharvested received checkpoint is harvested before terminal failure, hard timeout, idle fallback, cancellation handling, or writer replacement.
+- implementation `replan` operates on uncovered/remaining delta, not the original complete task.
+
+### Review lifecycle
+
+Review fallback is `retry_review`.
+
+It is intentionally distinct from implementation `replan`:
 
 ```text
-explicit CODEX_FLOW_* environment override
-  > existing ~/.codex/codex-flow.toml value
-  > policy/defaults.toml release value
+review failure
+  → retry_review
+  → read-only replacement_allowed
+  → consume review_attempt
+  → no replan_scope
+  → no writable scope
+  → no writer fence
 ```
 
-Existing users keep their configured reasoning matrix during reinstall/update. Fresh installs receive the Worker-first defaults. `quality_intent` is not persisted by the installer because it is a current-task semantic signal.
+A reviewer retry can occur only while phase admission says `permits_review_start=true`. For required/quorum review, successful completion still requires at least `review_stage.min_successful_workers` accepted reviewer results; reaching `review_deadline` does not satisfy that join by itself.
 
-The optional reasoning-rollout matrix is round-tripped as well. Missing
-`[reasoning.rollout]` on a schema-v3/v4 policy defaults to release `shadow`
-(`high/high/xhigh/max`). The policy schema does not bump. The Unix and
-PowerShell installers preserve existing rollout mode/floors and validate new
-values; the Codex global `default_subagent_reasoning_effort` remains the
-legacy Worker minimum and is not lowered to the rollout's `high` minimum.
+## Evidence-based bounded implementation
 
-## CLI
+`StagePolicy` carries:
+
+```text
+work_unit_mode: single | bounded
+minimum_work_units
+join_between_work_units
+maximum_work_units | none
+require_write_paths
+```
+
+All built-in strategies keep `minimum_work_units=1`. Complexity/risk/scope/quality may raise the semantic maximum, while already-proven isolated writable topology may raise the total envelope only within the strategy's implementer budget.
+
+A split is valid only when Parent has evidence for an independent acceptance delta, validation boundary, ownership/dependency boundary, or already-proven isolated writable stream. Do not split solely to satisfy a number.
+
+For strategies that permit parallel writers, `implementation_maximum_work_units()` also accounts for real writer topology:
+
+```text
+topology_floor = min(writable_workstreams, strategy.max_implementers)
+maximum_work_units = max(semantic_maximum, topology_floor)
+```
+
+This prevents impossible plans such as four proven implementers with only one logical unit/attempt budget. The resulting logical-unit count may exceed simultaneous `implementation_workers`; planned slots are reused across serial waves. Speed is the clearest example: its routine semantic baseline is one unit, but eight independently proven writable workstreams may produce an eight-unit envelope even when runtime concurrency executes them in smaller waves.
+
+The deterministic manifest validator checks:
+
+- required unit fields and types;
+- normalized repository-relative POSIX `write_paths`;
+- no absolute/traversal/glob/backslash/NUL/Windows-drive paths;
+- dependency ordering for overlapping paths/write scopes;
+- no dependency-linked units inside one parallel group;
+- parallel width <= compiled implementation/thread concurrency;
+- manifest count <= `maximum_work_units`.
+
+`write_paths` are lexical preflight only. They are not OS locks, symlink resolution, or durable scheduler fencing.
+
+## Canonical cumulative task budget
+
+Each delegated built-in strategy emits a raw task envelope. The compiler then canonicalizes it against the actual planned topology/review stage.
+
+Typical raw general-work envelopes:
+
+| Strategy | Soft | Base hard | Work units | Implementation attempts | Replans | Replacements | Review attempts | Parent finalization |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `efficient` | 1500s | 1800s | semantic 1–3; topology-backed ≤2 where applicable | units + 1 | 1 | 1 | 2 | 150s |
+| `speed` | 1200s | 1800s | semantic 1 / 3 / 4; topology-backed ≤8 | units + 1 | 1 | 1 | 2 | 120s |
+| `balanced` | 2400–3000s | 3000–3600s | semantic/topology ≤3 | units + 2 | 2 | 2 | 2 | 180s |
+| `quality` | 4800–6000s | 6000–7200s | semantic/topology ≤4 | units + 3 | 3 | 3 | 2–4 | 300s |
+
+When reviewer Workers are planned:
+
+```text
+completion_tail = review_stage.hard_timeout_seconds
+                + task_budget.parent_finalization_seconds
+
+canonical_hard = max(
+  raw_hard,
+  task_budget.soft_timeout_seconds + completion_tail
+)
+```
+
+The resulting canonical budget is written directly into ExecutionPlan. No runtime helper later rewrites the soft/hard values.
+
+Example: `efficient + strict review` keeps its complete 1500-second general-work window and receives the required completion tail instead of shrinking implementation to make review fit.
+
+## Phase-aware admission
+
+Initialize the task ledger with the exact initial ExecutionPlan:
 
 ```bash
-codex-flow strategy show
-codex-flow strategy show --effective
-codex-flow strategy profiles
-codex-flow strategy set quality
-codex-flow strategy routing adaptive
-
-codex-flow strategy plan --efficient-reasoning legacy|shadow|adaptive --complexity complex
-
-codex-flow strategy plan \
-  --profile quality \
-  --quality-intent strong \
-  --complexity complex \
-  --uncertainty high \
-  --parallelism high
-
-codex-flow strategy plan \
-  --profile quality \
-  --quality-intent absolute \
-  --parallelism high \
-  --write-conflict low \
-  --writable-workstreams 4
+python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py init \
+  --state-file <state> \
+  --task-id <task-id> \
+  --plan-json '<ExecutionPlan v11 JSON>' \
+  --now <unix-seconds>
 ```
 
-The resulting JSON shows quality intent, WorkerBudget, concrete per-stage Worker counts, separate Explorer / Implementer / Reviewer capability/model/reasoning resources, and (for delegated efficient work) the reasoning-rollout decision. Legacy/proposed/selected fields are planner intent; they are not runtime-observed usage. If per-spawn overrides are unavailable, the installed baseline is used and later telemetry may record the observed effort.
+The initial budget-plan identity owns this ledger for the task lifetime. A later recompiled plan may control current execution semantics but cannot replace/reset/extend the original ledger.
 
-## Adding a new built-in strategy
+The phase timeline is:
 
-A new strategy should:
+```text
+started_at
+  |
+  | general exploration + writable implementation
+  v
+soft_deadline = general_work_deadline
+  |
+  | required read-only review
+  v
+review_deadline = hard_deadline - parent_finalization_seconds
+  |
+  | Parent finalization only
+  v
+hard_deadline = absolute stop
+```
 
-1. add `scripts/strategies/<name>.py`;
-2. export one `STRATEGY = StrategySpec(...)`;
-3. define a clear optimization objective, WorkerBudget, and only the resource/demand hooks it needs;
-4. register the strategy in `scripts/strategies/__init__.py`;
-5. reuse TaskProfile and ExecutionPlan contracts;
-6. avoid model-slug-specific semantics;
-7. leave isolation checks, reasoning invariant, modifiers, quota enforcement, and hard ceilings in `strategy_runtime.py`;
-8. never add built-in-strategy literal branches to the generic compiler;
-9. add deterministic planner tests, including isolation from unrelated task semantics;
-10. avoid creating a new Skill/Agent unless a genuinely new execution role exists.
+### General work
+
+General reservation kinds:
+
+```text
+work_unit
+implementation_attempt
+replan
+replacement
+```
+
+They must use `phase=implementation`. New general reservations are rejected at soft deadline. Exact replay of an already-recorded reservation stays idempotent because the durable ledger checks identity before its deadline gate.
+
+Existing writable Workers may need bounded convergence after soft, but they do not gain permission to open new general reservations. Before Parent-only finalization begins, every writer must be terminal/cancel-confirmed or safely fenced and every returned checkpoint must have been harvested.
+
+### Required review
+
+Reviewer starts/retries reserve:
+
+```text
+phase=required_completion
+kind=review_attempt
+```
+
+A new reviewer is admitted only before `review_deadline`. At/after that boundary, phase action becomes `finalize_parent`; no reviewer start/retry may consume the Parent finalization reserve.
+
+`action=finalize_parent` is only an admission-state transition. It does **not** prove that required review completed. If `review_stage.join_policy` requires/quorums reviewer evidence and fewer than `review_stage.min_successful_workers` accepted results exist at `review_deadline`, fail/escalate from the collected evidence rather than silently downgrade to Parent-only success.
+
+`task_phase_runtime.py` is the mandatory reviewer admission gate. Callers must not bypass it by invoking raw `task_budget_runtime.py reserve --kind review_attempt` directly.
+
+### Parent finalization
+
+From `review_deadline` until hard deadline:
+
+- no new reviewer;
+- no reopened writable implementation;
+- no unresolved live writer may continue consuming the finalization reserve;
+- Parent reconciles already-collected review evidence and runs final non-writing verification/delivery work;
+- a required/quorum review that missed its join remains a failure/escalation condition, not a successful Parent-only fallback;
+- at hard deadline action is `stop`.
+
+Important phase output:
+
+```text
+permits_general_work
+permits_required_completion
+permits_review_start
+permits_parent_finalization
+general_work_deadline
+review_deadline
+hard_deadline
+checkpoint_convergence_required
+required_completion_handoff
+action
+```
+
+## Durable ledger
+
+`task_budget_runtime.py` schema v2 stores hashes/limits/reservations, not prompts or output payloads.
+
+Reservation kinds:
+
+```text
+work_unit
+implementation_attempt
+replan
+replacement
+review_attempt
+```
+
+The ledger uses file locking, atomic replace, monotonic timestamps, policy/task fingerprints, bounded counters, and idempotent reservation IDs.
+
+The phase helper is the scheduling/admission layer. Raw ledger flags are not a substitute for phase-specific decisions.
+
+## Initial-plan identity and replan
+
+Replanning never receives a fresh task budget.
+
+```text
+initial ExecutionPlan
+  → initialize ledger once
+  → reserve/execute
+  → evidence changes
+  → compile newer ExecutionPlan for current topology/lifecycle
+  → keep initial plan + same ledger for cumulative admission
+```
+
+If newer execution cannot fit the remaining original budget, converge/fail closed rather than resetting counters/deadlines.
+
+Completed bounded units and harvested checkpoints remain evidence unless concrete new information invalidates them.
+
+## Efficient reasoning rollout
+
+Reasoning rollout remains intentionally `efficient`-specific:
+
+```text
+legacy   select historical Worker effort
+shadow   report proposal, select historical effort
+adaptive select proposal
+```
+
+Proposal:
+
+```text
+max(rollout class target, rollout minimum, parent_reasoning)
+```
+
+The plan records intent. Runtime-observed effort must come from runtime evidence and must not be fabricated from the requested value.
+
+## Quota and telemetry
+
+Quota state comes from reliable runtime/app-server data or is `unknown`; it is never guessed.
+
+Telemetry is deterministic and observational. A telemetry failure is fail-open and must not block checkpoint harvest, fencing, cancellation, or delivery.
+
+Use homogeneous samples and success/censoring context before tuning latency thresholds or moving an effort rollout from shadow to adaptive.
+
+## Current limitations
+
+The contract deliberately distinguishes deterministic policy from capabilities supplied by the surrounding scheduler/runtime:
+
+- `write_paths` do not provide OS-level locking or symlink-safe ownership.
+- lifecycle helpers evaluate state but do not independently schedule/cancel Workers.
+- checkpoints require the surrounding runtime to persist/use the returned payload.
+- generation lineage must be enforced when integrating real Worker output.
+- reasoning rollout is currently efficient-specific.
+- task-budget values are policy envelopes, not empirical latency predictions.
+
+These limitations should be addressed through scheduler/runtime integration and telemetry-guided tuning, not by weakening the deterministic contracts above.
+
+## Version invariant
+
+Persistent policy schema remains v4. ExecutionPlan schema v11 and task-ledger schema v2 are the only supported interpretation of this unreleased task-execution contract. There is intentionally no `legacy_unclamped`, effective-budget migration, or grandfathered pre-phase task-ledger path.

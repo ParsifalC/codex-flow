@@ -1,7 +1,7 @@
 """Correctness- and verification-first strategy."""
 from __future__ import annotations
 
-from .base import StagePolicy, StrategySpec, WorkerBudget, small_low_risk_is_direct, standard_effort
+from .base import StagePolicy, StrategySpec, TaskBudgetPolicy, WorkerBudget, small_low_risk_is_direct, standard_effort
 
 
 def adaptive_route(task) -> str:
@@ -46,12 +46,6 @@ def independent_review(task) -> bool:
 
 
 def capability(task, role: str) -> str:
-    """Select Parent-class capability only where it adds decision value.
-
-    Strong/absolute intent upgrades implementation and independent review, while
-    ordinary read-only exploration stays on the efficient Worker capability.
-    Explorers upgrade only for genuinely critical technical risk/complexity.
-    """
     critical = task.complexity == "critical" or task.risk == "critical"
     if role == "explorer":
         return "parent" if critical else "worker"
@@ -80,13 +74,121 @@ def notes(task) -> tuple[str, ...]:
     return ()
 
 
-def lifecycle(_task, stage: str) -> StagePolicy:
+def implementation_soft_timeout(task) -> int:
+    if task.quality_intent == "absolute" or task.complexity == "critical" or task.risk == "critical":
+        return 2700
+    if (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+        or task.verification_cost == "high"
+    ):
+        return 2400
+    return 1800
+
+
+def implementation_checkpoint_rearm_seconds(task) -> int:
+    if task.quality_intent == "absolute" or task.complexity == "critical" or task.risk == "critical":
+        return 600
+    if (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.scope in {"cross-module", "repo-wide"}
+        or task.iteration_intensity == "heavy-loop"
+        or task.verification_cost == "high"
+    ):
+        return 480
+    return 360
+
+
+def implementation_repair_attempts(task) -> int:
+    if (
+        task.quality_intent in {"strong", "absolute"}
+        or task.complexity in {"complex", "critical"}
+        or task.risk in {"high", "critical"}
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+        or task.verification_cost == "high"
+    ):
+        return 3
+    return 2
+
+
+def implementation_maximum_work_units(task) -> int:
+    if (
+        task.quality_intent == "absolute"
+        or task.complexity == "critical"
+        or task.risk == "critical"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        semantic_maximum = 4
+    elif (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.risk == "high"
+        or task.scope == "cross-module"
+        or task.verification_cost == "high"
+    ):
+        semantic_maximum = 3
+    else:
+        semantic_maximum = 1
+    topology_floor = min(task.writable_workstreams, worker_budget(task).max_implementers)
+    return max(semantic_maximum, topology_floor)
+
+
+def task_budget(task) -> TaskBudgetPolicy:
+    maximum_work_units = implementation_maximum_work_units(task)
+    if (
+        task.quality_intent == "absolute"
+        or task.complexity == "critical"
+        or task.risk == "critical"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        soft_timeout, hard_timeout = 6000, 7200
+    elif (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.scope == "cross-module"
+        or task.risk == "high"
+        or task.verification_cost == "high"
+    ):
+        soft_timeout, hard_timeout = 5400, 6600
+    else:
+        soft_timeout, hard_timeout = 4800, 6000
+    return TaskBudgetPolicy(
+        soft_timeout_seconds=soft_timeout,
+        hard_timeout_seconds=hard_timeout,
+        max_work_units=maximum_work_units,
+        max_implementation_attempts=maximum_work_units + 3,
+        max_replans=3,
+        max_replacements=3,
+        max_review_attempts=worker_budget(task).max_reviewers * 2,
+        parent_finalization_seconds=300,
+    )
+
+
+def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 2, 300, 2400, True, False, "parent_delta")
     if stage == "implementation":
-        return StagePolicy("required", 1, 300, 3600, False, False, "replan")
+        maximum_work_units = implementation_maximum_work_units(task)
+        bounded_mode = maximum_work_units > 1
+        return StagePolicy(
+            "required", 1, 300, 3600, False, False, "replan",
+            soft_timeout_seconds=implementation_soft_timeout(task),
+            checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
+            max_worker_repair_attempts=implementation_repair_attempts(task),
+            work_unit_mode="bounded" if bounded_mode else "single",
+            minimum_work_units=1,
+            join_between_work_units=bounded_mode,
+            maximum_work_units=maximum_work_units,
+            require_write_paths=bounded_mode,
+        )
     if stage == "review":
-        return StagePolicy("required", 2, 300, 3000, False, False, "replan")
+        return StagePolicy("required", 2, 300, 3000, False, False, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
@@ -103,4 +205,5 @@ STRATEGY = StrategySpec(
     notes=notes,
     lifecycle=lifecycle,
     allow_parallel_write=True,
+    task_budget=task_budget,
 )

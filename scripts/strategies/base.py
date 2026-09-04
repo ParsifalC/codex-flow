@@ -20,7 +20,7 @@ ReasoningRolloutFn = Callable[
 
 STAGES = ("exploration", "implementation", "review")
 JOIN_POLICIES = ("opportunistic", "quorum", "required")
-FALLBACK_POLICIES = ("continue_partial", "parent_delta", "replan", "fail")
+FALLBACK_POLICIES = ("continue_partial", "parent_delta", "replan", "retry_review", "fail")
 WORK_UNIT_MODES = ("single", "bounded")
 
 
@@ -68,9 +68,11 @@ class WorkerBudget:
 class TaskBudgetPolicy:
     """Cumulative task budget carried across Worker attempts and replans.
 
-    This is deliberately separate from :class:`StagePolicy`: stage lifecycle
-    limits describe one Worker stage, while these counters are reservations in
-    a durable task ledger and therefore cannot be reset by recompiling a plan.
+    Stage lifecycle limits describe one Worker stage. These task-level counters
+    are durable reservations across attempts/replans. `max_review_attempts`
+    counts read-only reviewer Worker starts independently from implementation
+    replans/replacements. `parent_finalization_seconds` is a deterministic tail
+    reserved after the review-stage hard window whenever reviewers are planned.
     """
 
     soft_timeout_seconds: int
@@ -79,6 +81,8 @@ class TaskBudgetPolicy:
     max_implementation_attempts: int
     max_replans: int
     max_replacements: int
+    max_review_attempts: int = 0
+    parent_finalization_seconds: int = 120
 
     @classmethod
     def from_dict(cls, value: Any) -> "TaskBudgetPolicy":
@@ -91,6 +95,8 @@ class TaskBudgetPolicy:
             "max_implementation_attempts",
             "max_replans",
             "max_replacements",
+            "max_review_attempts",
+            "parent_finalization_seconds",
         )
         missing = [name for name in required if name not in value]
         if missing:
@@ -110,9 +116,9 @@ class TaskBudgetPolicy:
             ("max_implementation_attempts", self.max_implementation_attempts),
             ("max_replans", self.max_replans),
             ("max_replacements", self.max_replacements),
+            ("max_review_attempts", self.max_review_attempts),
+            ("parent_finalization_seconds", self.parent_finalization_seconds),
         ):
-            # bool is an int subclass, but accepting it here makes malformed
-            # JSON policy silently turn into a real budget.
             if type(value) is not int:
                 raise ValueError(f"{name} must be an integer")
             if value < 0:
@@ -125,6 +131,8 @@ class TaskBudgetPolicy:
             raise ValueError("max_work_units must be positive")
         if self.max_implementation_attempts < 1:
             raise ValueError("max_implementation_attempts must be positive")
+        if self.parent_finalization_seconds < 1:
+            raise ValueError("parent_finalization_seconds must be positive")
 
 
 REASONING_ROLLOUT_MODES = ("legacy", "shadow", "adaptive")
@@ -194,24 +202,13 @@ class ReasoningRolloutDecision:
 class StagePolicy:
     """Strategy-owned lifecycle preference for one delegated execution stage.
 
-    The planner normalizes worker counts and applies hard Runtime time ceilings.
-    FlowPilot owns live progress/scope observation and executes the resulting
-    policy without treating a wait-call timeout as a Worker timeout. A soft
-    timeout is an advisory convergence/checkpoint budget and never implies
-    cancellation by itself. `max_worker_repair_attempts`, when set on an
-    implementation stage, bounds local validation-failure fix loops inside one
-    Worker and is independent from Parent-level `max_repair_cycles`.
-    `checkpoint_rearm_seconds`, when set, is the minimum cooldown after a
-    harvested checkpoint before a later checkpoint may be requested. A later
-    checkpoint also requires an explicit acceptance-relevant progress timestamp
-    from the Worker; absent fields retain one-shot compatibility.
+    Soft timeout is advisory convergence/checkpoint budget and never implies
+    cancellation by itself. `max_worker_repair_attempts` bounds Worker-local
+    validation/fix loops independently from Parent-level repair cycles.
 
-    `work_unit_mode=bounded` requires Parent to partition implementation into
-    multiple acceptance-bounded units and join back to Parent between units.
-    This is a logical execution boundary, not permission for overlapping writers.
-    `maximum_work_units`, when set, is a plan-level manifest bound; it does not
-    create additional worker capacity. `require_write_paths` opts a new bounded
-    policy into path-level preflight validation.
+    `work_unit_mode=bounded` describes logical acceptance-bounded transactions,
+    not permission for overlapping writers. `retry_review` is a read-only review
+    fallback and must never reopen writable implementation scope.
     """
 
     join_policy: str
@@ -306,13 +303,29 @@ class StagePolicy:
 
 
 def standard_lifecycle(_task: Task, stage: str) -> StagePolicy:
-    """Balanced lifecycle baseline for future strategies that do not override it."""
+    """V11-safe balanced lifecycle baseline for future strategies."""
     if stage == "exploration":
         return StagePolicy("quorum", 1, 180, 1200, True, True, "parent_delta")
     if stage == "implementation":
-        return StagePolicy("required", 1, 240, 2400, False, False, "replan")
+        return StagePolicy(
+            "required",
+            1,
+            240,
+            2400,
+            False,
+            False,
+            "replan",
+            soft_timeout_seconds=1200,
+            checkpoint_rearm_seconds=240,
+            max_worker_repair_attempts=1,
+            work_unit_mode="single",
+            minimum_work_units=1,
+            join_between_work_units=False,
+            maximum_work_units=1,
+            require_write_paths=False,
+        )
     if stage == "review":
-        return StagePolicy("required", 1, 180, 1800, True, False, "parent_delta")
+        return StagePolicy("required", 1, 180, 1800, True, False, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
@@ -336,12 +349,7 @@ class StrategySpec:
 
 
 def standard_effort(task: Task, role: str) -> str:
-    """Cheap-parent / strong-worker baseline.
-
-    Parent effort is reserved for high-value orchestration. Worker effort is one
-    tier higher by default because the efficient worker model is materially
-    cheaper and should absorb the deep execution loop.
-    """
+    """Cheap-parent / strong-worker baseline."""
     if task.complexity == "critical" or task.risk == "critical":
         return "xhigh" if role == "parent" else "max"
     return "high" if role == "parent" else "xhigh"

@@ -62,6 +62,15 @@ printf '%s\n' "$disabled_output"
 [[ -f "$CODEX_HOME/codex-flow/telemetry.py" ]]
 [[ -f "$CODEX_HOME/codex-flow/strategy_runtime.py" ]]
 [[ -d "$CODEX_HOME/codex-flow/strategies" ]]
+[[ -f "$CODEX_HOME/codex-flow/strategies/lifecycle_runtime.py" ]]
+[[ -f "$CODEX_HOME/codex-flow/strategies/task_budget_runtime.py" ]]
+[[ -f "$CODEX_HOME/codex-flow/strategies/task_phase_runtime.py" ]]
+[[ -f "$CODEX_HOME/codex-flow/strategies/work_unit_runtime.py" ]]
+python3 -m py_compile \
+  "$CODEX_HOME/codex-flow/strategies/lifecycle_runtime.py" \
+  "$CODEX_HOME/codex-flow/strategies/task_budget_runtime.py" \
+  "$CODEX_HOME/codex-flow/strategies/task_phase_runtime.py" \
+  "$CODEX_HOME/codex-flow/strategies/work_unit_runtime.py"
 [[ -d "$CODEX_HOME/codex-flow/telemetry_core" ]]
 [[ -f "$CODEX_HOME/codex-flow/telemetry_core/latency.py" ]]
 [[ -f "$CODEX_HOME/codex-flow/menu.py" ]]
@@ -125,7 +134,7 @@ codex-flow strategy plan --complexity complex --uncertainty high > "$TMP/install
 python3 - "$TMP/installed-plan.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['schema_version']==10, p
+assert p['schema_version']==11, p
 assert p['quality_intent']=='normal', p
 assert p['strategy']=='efficient' and p['routing']=='delegate', p
 assert p['parent_reasoning']=='high', p
@@ -135,9 +144,14 @@ assert p['exploration_workers']==2 and p['implementation_workers']==1, p
 assert p['planned_worker_count']==3, p
 assert p['exploration_stage']['join_policy']=='quorum', p
 assert p['implementation_stage']['join_policy']=='required', p
+assert p['implementation_stage']['soft_timeout_seconds']==900, p
+assert p['implementation_stage']['checkpoint_rearm_seconds']==240, p
+assert p['implementation_stage']['maximum_work_units']==2, p
+assert p['implementation_stage']['require_write_paths'] is True, p
 assert p['review_stage'] is None, p
 assert p['task_budget']['soft_timeout_seconds']==1500, p
 assert p['task_budget']['hard_timeout_seconds']==1800, p
+assert p['task_budget']['max_review_attempts']==0, p
 PY
 codex-flow usage list >/dev/null || true
 codex-flow usage stats >/dev/null || true

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Durable task-level budget ledger for FlowPilot.
 
-The strategy compiler supplies an immutable :class:`TaskBudgetPolicy`; this
-helper is the small cross-process decision/ledger boundary that reserves work
-before it starts and reports whether a task should continue, converge, or stop.
-It intentionally does not schedule, cancel, or replace Workers.
+General implementation reservations close at the task soft deadline. Read-only
+`review_attempt` reservations may use a stricter phase-owned admission deadline.
+All reservation deadline gates run only after exact idempotent replay detection,
+so a committed reservation can always be acknowledged without creating work.
 """
 from __future__ import annotations
 
@@ -23,24 +23,26 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterator
 
-try:  # Package import when used by another Python module.
+try:
     from .base import TaskBudgetPolicy
-except ImportError:  # Direct invocation from an installed strategies directory.
+except ImportError:
     from base import TaskBudgetPolicy
 
-
-SCHEMA_VERSION = 1
-RESERVATION_KINDS = (
+SCHEMA_VERSION = 2
+GENERAL_RESERVATION_KINDS = (
     "work_unit",
     "implementation_attempt",
     "replan",
     "replacement",
 )
+REQUIRED_COMPLETION_RESERVATION_KINDS = ("review_attempt",)
+RESERVATION_KINDS = GENERAL_RESERVATION_KINDS + REQUIRED_COMPLETION_RESERVATION_KINDS
 POLICY_LIMIT_FIELDS = {
     "work_unit": "max_work_units",
     "implementation_attempt": "max_implementation_attempts",
     "replan": "max_replans",
     "replacement": "max_replacements",
+    "review_attempt": "max_review_attempts",
 }
 STATE_FIELDS = {
     "schema_version",
@@ -64,7 +66,7 @@ STALE_LOCK_SECONDS = 30.0
 
 
 class LedgerError(ValueError):
-    """Expected user/input/state error rendered without a traceback by the CLI."""
+    pass
 
 
 def _sha256(value: str) -> str:
@@ -83,7 +85,6 @@ def _strict_string(value: Any, label: str) -> str:
 
 
 def _seconds(value: Any, label: str) -> float:
-    """Validate a timestamp/duration as finite, non-negative Unix seconds."""
     if isinstance(value, bool):
         raise LedgerError(f"{label} must be finite seconds")
     try:
@@ -95,9 +96,7 @@ def _seconds(value: Any, label: str) -> float:
     if number < 0:
         raise LedgerError(f"{label} cannot be negative")
     if number > EPOCH_MILLISECONDS_THRESHOLD:
-        raise LedgerError(
-            f"{label} must use Unix seconds, not milliseconds"
-        )
+        raise LedgerError(f"{label} must use Unix seconds, not milliseconds")
     return number
 
 
@@ -107,10 +106,9 @@ def _now(value: Any) -> float:
 
 def _policy(value: Any) -> TaskBudgetPolicy:
     try:
-        policy = TaskBudgetPolicy.from_dict(value)
+        return TaskBudgetPolicy.from_dict(value)
     except (TypeError, ValueError) as exc:
         raise LedgerError(str(exc)) from None
-    return policy
 
 
 def _policy_fingerprint(policy: TaskBudgetPolicy) -> str:
@@ -138,11 +136,7 @@ def _fingerprint_hash(value: Any) -> str:
 def _state_path(value: Any) -> Path:
     raw = _strict_string(value, "state_file")
     path = Path(raw)
-    if not path.is_absolute():
-        # Relative paths are useful for tests and are resolved once so all
-        # lock/temp names refer to the same target during this invocation.
-        path = Path.cwd() / path
-    return path
+    return path if path.is_absolute() else Path.cwd() / path
 
 
 def _reject_symlink(path: Path, label: str) -> None:
@@ -157,12 +151,11 @@ def _reject_symlink(path: Path, label: str) -> None:
 
 
 def _ensure_parent(path: Path) -> None:
-    parent = path.parent
     try:
-        parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise LedgerError(f"cannot create state parent: {exc}") from None
-    if not parent.is_dir():
+    if not path.parent.is_dir():
         raise LedgerError("state-file parent is not a directory")
 
 
@@ -198,14 +191,11 @@ def _lock_is_stale(path: Path) -> bool:
 
 @contextmanager
 def _ledger_lock(path: Path) -> Iterator[None]:
-    """Acquire an O_EXCL lock with bounded retry and stale recovery."""
     _ensure_parent(path)
     _ensure_regular_state(path)
     lock = _lock_path(path)
-    _reject_symlink(lock, "lock file")
     deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-    fd: int | None = None
-    while fd is None:
+    while True:
         _reject_symlink(lock, "lock file")
         try:
             flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
@@ -217,7 +207,6 @@ def _ledger_lock(path: Path) -> Iterator[None]:
                 os.fsync(fd)
             finally:
                 os.close(fd)
-            fd = None
             break
         except FileExistsError:
             if _lock_is_stale(lock):
@@ -232,7 +221,6 @@ def _ledger_lock(path: Path) -> Iterator[None]:
             time.sleep(LOCK_RETRY_SECONDS)
         except OSError as exc:
             raise LedgerError(f"cannot acquire task budget lock: {exc}") from None
-
     try:
         yield
     finally:
@@ -257,7 +245,10 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
         fd = os.open(temporary, flags, 0o600)
         offset = 0
         while offset < len(encoded):
-            offset += os.write(fd, encoded[offset:])
+            written = os.write(fd, encoded[offset:])
+            if written <= 0:
+                raise OSError("short write")
+            offset += written
         os.fsync(fd)
         os.close(fd)
         fd = None
@@ -266,8 +257,6 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
         try:
             os.chmod(path, 0o600)
         except OSError:
-            # Windows ACLs do not map cleanly to POSIX mode bits; the create
-            # mode is still best effort and the file remains private by default.
             pass
         if hasattr(os, "O_DIRECTORY"):
             try:
@@ -298,8 +287,7 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
 def _read_state(path: Path) -> dict[str, Any]:
     _ensure_regular_state(path)
     try:
-        text = path.read_text(encoding="utf-8")
-        value = json.loads(text)
+        value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise LedgerError("task budget state does not exist; run init first") from None
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -318,14 +306,14 @@ def _validate_state(value: Any) -> None:
     if type(value) is not dict:
         raise LedgerError("task budget state must be an object")
     if set(value) != STATE_FIELDS:
-        unknown = sorted(set(value).difference(STATE_FIELDS))
         missing = sorted(STATE_FIELDS.difference(value))
-        detail = []
+        unknown = sorted(set(value).difference(STATE_FIELDS))
+        details = []
         if missing:
-            detail.append(f"missing fields: {missing}")
+            details.append(f"missing fields: {missing}")
         if unknown:
-            detail.append(f"unknown fields: {unknown}")
-        raise LedgerError("invalid task budget state (" + "; ".join(detail) + ")")
+            details.append(f"unknown fields: {unknown}")
+        raise LedgerError("invalid task budget state (" + "; ".join(details) + ")")
     if type(value["schema_version"]) is not int or value["schema_version"] != SCHEMA_VERSION:
         raise LedgerError("unsupported task budget state schema")
     _validate_hash(value["task_id"], "task id hash")
@@ -364,10 +352,10 @@ def _validate_state(value: Any) -> None:
         entries = reservations[kind]
         if type(entries) is not list:
             raise LedgerError(f"reservations.{kind} must be a list")
-        seen: set[str] = set()
-        latest = started
         if len(entries) > limits[kind]:
             raise LedgerError(f"reservations.{kind} exceeds its limit")
+        seen: set[str] = set()
+        latest = started
         for entry in entries:
             if type(entry) is not dict or set(entry) != RESERVATION_FIELDS:
                 raise LedgerError(f"invalid {kind} reservation")
@@ -398,6 +386,7 @@ def _check_now(state: dict[str, Any], now: float) -> None:
 
 
 def _new_state(task_hash: str, policy: TaskBudgetPolicy, now: float) -> dict[str, Any]:
+    limits = {kind: getattr(policy, POLICY_LIMIT_FIELDS[kind]) for kind in RESERVATION_KINDS}
     return {
         "schema_version": SCHEMA_VERSION,
         "task_id": task_hash,
@@ -407,14 +396,7 @@ def _new_state(task_hash: str, policy: TaskBudgetPolicy, now: float) -> dict[str
         "hard_deadline": now + policy.hard_timeout_seconds,
         "closed": False,
         "outcome": None,
-        # Keep only the immutable numeric limits needed by later processes;
-        # never persist the original policy/prompt/path/output payload.
-        "limits": {
-            "work_unit": policy.max_work_units,
-            "implementation_attempt": policy.max_implementation_attempts,
-            "replan": policy.max_replans,
-            "replacement": policy.max_replacements,
-        },
+        "limits": limits,
         "reservations": {kind: [] for kind in RESERVATION_KINDS},
     }
 
@@ -434,7 +416,8 @@ def _status(state: dict[str, Any], now: float) -> dict[str, Any]:
         action = "converge"
     else:
         action = "stop"
-    remaining = max(0.0, float(state["hard_deadline"]) - now)
+    remaining_hard = max(0.0, float(state["hard_deadline"]) - now)
+    counters = _counters(state)
     return {
         "schema_version": SCHEMA_VERSION,
         "task_id": state["task_id"],
@@ -445,18 +428,22 @@ def _status(state: dict[str, Any], now: float) -> dict[str, Any]:
         "closed": closed,
         "outcome": state["outcome"],
         "action": action,
-        "remaining_seconds": remaining,
+        "remaining_seconds": remaining_hard,
         "remaining_soft_seconds": max(0.0, float(state["soft_deadline"]) - now),
-        "remaining_hard_seconds": remaining,
-        "counters": _counters(state),
+        "remaining_hard_seconds": remaining_hard,
+        "counters": counters,
         "limits": dict(state["limits"]),
         "permits_new_work": action == "continue",
+        "permits_new_review": (
+            not closed
+            and now < state["hard_deadline"]
+            and counters["review_attempt"] < state["limits"]["review_attempt"]
+        ),
         "cancel_required": action == "stop" and not closed and now >= state["hard_deadline"],
     }
 
 
 def init_ledger(state_file: str | Path, task_id: str, policy: TaskBudgetPolicy, now: Any) -> dict[str, Any]:
-    """Create a ledger, or idempotently validate an existing same-task ledger."""
     path = _state_path(state_file)
     task_hash = _task_hash(task_id)
     policy.validate()
@@ -502,10 +489,17 @@ def reserve(
     reservation_id: str,
     fingerprint: str,
     now: Any,
+    *,
+    new_reservation_deadline: Any | None = None,
 ) -> dict[str, Any]:
     path = _state_path(state_file)
     task_hash = _task_hash(task_id)
     current_now = _now(now)
+    admission_deadline = (
+        None
+        if new_reservation_deadline is None
+        else _seconds(new_reservation_deadline, "new_reservation_deadline")
+    )
     if kind not in RESERVATION_KINDS:
         raise LedgerError(f"invalid reservation kind: {kind}")
     reservation_hash = _reservation_hash(reservation_id)
@@ -522,44 +516,42 @@ def reserve(
             if entry["reservation_id"] == reservation_hash:
                 if entry["fingerprint"] != fp_hash:
                     raise LedgerError("reservation id already used with a different fingerprint")
-                # Idempotent replay is not new work, including after a deadline.
                 result = _status(state, current_now)
-                result.update(
-                    {
-                        "kind": kind,
-                        "reservation_id": reservation_hash,
-                        "fingerprint": fp_hash,
-                        "reserved": True,
-                        "idempotent": True,
-                    }
-                )
+                result.update({
+                    "kind": kind,
+                    "reservation_id": reservation_hash,
+                    "fingerprint": fp_hash,
+                    "reserved": True,
+                    "idempotent": True,
+                })
                 return result
+        if admission_deadline is not None:
+            if admission_deadline > state["hard_deadline"]:
+                raise LedgerError("new reservation deadline cannot exceed task hard deadline")
+            if current_now >= admission_deadline:
+                raise LedgerError("reservation admission deadline reached; new reservation is not permitted")
         if current_now >= state["hard_deadline"]:
             raise LedgerError("task hard deadline reached; new reservations are not permitted")
-        if current_now >= state["soft_deadline"]:
-            raise LedgerError("task soft deadline reached; new reservations are not permitted")
+        if kind in GENERAL_RESERVATION_KINDS and current_now >= state["soft_deadline"]:
+            raise LedgerError("task soft deadline reached; new general-work reservations are not permitted")
         limit = state["limits"][kind]
         if len(entries) >= limit:
             raise LedgerError(f"{kind} reservation limit reached")
-        entries.append(
-            {
-                "reservation_id": reservation_hash,
-                "fingerprint": fp_hash,
-                "reserved_at": current_now,
-            }
-        )
+        entries.append({
+            "reservation_id": reservation_hash,
+            "fingerprint": fp_hash,
+            "reserved_at": current_now,
+        })
         _validate_state(state)
         _atomic_write(path, state)
         result = _status(state, current_now)
-        result.update(
-            {
-                "kind": kind,
-                "reservation_id": reservation_hash,
-                "fingerprint": fp_hash,
-                "reserved": True,
-                "idempotent": False,
-            }
-        )
+        result.update({
+            "kind": kind,
+            "reservation_id": reservation_hash,
+            "fingerprint": fp_hash,
+            "reserved": True,
+            "idempotent": False,
+        })
         return result
 
 
@@ -599,36 +591,32 @@ def _json_argument(raw: str) -> Any:
         raise LedgerError(f"invalid policy JSON: {exc.msg}") from None
 
 
+def _common_args(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--state-file", required=True)
+    command.add_argument("--task-id", required=True)
+    command.add_argument("--now", required=True)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="task_budget_runtime.py",
         description="durable FlowPilot task budget ledger",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-
-    init = commands.add_parser("init")
-    _common_args(init)
-    init.add_argument("--policy-json", required=True)
-
-    status = commands.add_parser("status")
-    _common_args(status)
-
+    init_cmd = commands.add_parser("init")
+    _common_args(init_cmd)
+    init_cmd.add_argument("--policy-json", required=True)
+    status_cmd = commands.add_parser("status")
+    _common_args(status_cmd)
     reserve_cmd = commands.add_parser("reserve")
     _common_args(reserve_cmd)
     reserve_cmd.add_argument("--kind", choices=RESERVATION_KINDS, required=True)
     reserve_cmd.add_argument("--reservation-id", required=True)
     reserve_cmd.add_argument("--fingerprint", required=True)
-
     finish_cmd = commands.add_parser("finish")
     _common_args(finish_cmd)
     finish_cmd.add_argument("--outcome", default="success")
     return parser
-
-
-def _common_args(command: argparse.ArgumentParser) -> None:
-    command.add_argument("--state-file", required=True)
-    command.add_argument("--task-id", required=True)
-    command.add_argument("--now", required=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -636,26 +624,14 @@ def main(argv: list[str] | None = None) -> int:
     ns = parser.parse_args(argv)
     try:
         if ns.command == "init":
-            result = init_ledger(
-                ns.state_file,
-                ns.task_id,
-                _policy(_json_argument(ns.policy_json)),
-                ns.now,
-            )
+            result = init_ledger(ns.state_file, ns.task_id, _policy(_json_argument(ns.policy_json)), ns.now)
         elif ns.command == "status":
             result = ledger_status(ns.state_file, ns.task_id, ns.now)
         elif ns.command == "reserve":
-            result = reserve(
-                ns.state_file,
-                ns.task_id,
-                ns.kind,
-                ns.reservation_id,
-                ns.fingerprint,
-                ns.now,
-            )
+            result = reserve(ns.state_file, ns.task_id, ns.kind, ns.reservation_id, ns.fingerprint, ns.now)
         elif ns.command == "finish":
             result = finish(ns.state_file, ns.task_id, ns.outcome, ns.now)
-        else:  # pragma: no cover - argparse choices make this unreachable.
+        else:  # pragma: no cover
             raise LedgerError(f"unsupported command: {ns.command}")
     except (LedgerError, ValueError, OSError) as exc:
         print(f"task-budget: {exc}", file=sys.stderr)

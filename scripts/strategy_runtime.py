@@ -31,7 +31,7 @@ from strategies.base import (
 
 try:
     from telemetry_core.app_server import quota_windows as app_server_quota_windows
-except ImportError:  # pragma: no cover - standalone installs always bundle it
+except ImportError:  # pragma: no cover
     app_server_quota_windows = None
 
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
@@ -51,10 +51,6 @@ QUALITY_INTENTS = ("normal", "strong", "absolute")
 REVIEW_MODES = ("auto", "standard", "strict")
 FANOUT_MODES = ("auto", "conservative", "aggressive")
 EFFORT_RANK = {name: idx for idx, name in enumerate(EFFORTS)}
-
-# Lifecycle preferences belong to strategies, but no strategy may wait forever.
-# These hard ceilings are deliberately not user-tunable in v1; later telemetry can
-# inform configurable/predictive limits without weakening the safety boundary.
 RUNTIME_MAX_WORKER_IDLE_SECONDS = 600
 RUNTIME_MAX_WORKER_WALL_SECONDS = 3600
 
@@ -239,10 +235,7 @@ class ExecutionPlan:
 
 
 def _section_body(text: str, section: str) -> re.Match[str] | None:
-    return re.search(
-        rf"(?ms)^\[{re.escape(section)}\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)",
-        text,
-    )
+    return re.search(rf"(?ms)^\[{re.escape(section)}\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)", text)
 
 
 def policy_value(path: Path | None, section: str, key: str, default: str = "") -> str:
@@ -312,7 +305,6 @@ def _release_bool(section: str, key: str, fallback: bool) -> bool:
 
 
 def _release_reasoning_rollout() -> ReasoningRolloutPolicy:
-    """Load optional rollout defaults while preserving old installations."""
     rollout = ReasoningRolloutPolicy(
         mode=_release_value("reasoning.rollout", "mode", "shadow"),
         minimum=_release_value("reasoning.rollout", "minimum", "high"),
@@ -343,7 +335,7 @@ def set_policy_value(path: Path, section: str, key: str, value: str, *, quote: b
             if body and not body.endswith("\n"):
                 body += "\n"
             body += line + "\n"
-        text = text[: match.start(1)] + body + text[match.end(1) :]
+        text = text[: match.start(1)] + body + text[match.end(1):]
     else:
         if text and not text.endswith("\n"):
             text += "\n"
@@ -456,9 +448,6 @@ def _raise_capability_floors(base: PolicySnapshot, repo: Path | None) -> PolicyS
         worker_routine_reasoning=repo_effort("worker", "routine_effort", base.worker_routine_reasoning),
         worker_complex_reasoning=repo_effort("worker", "complex_effort", base.worker_complex_reasoning),
         worker_critical_reasoning=repo_effort("worker", "critical_effort", base.worker_critical_reasoning),
-        # Repository policy may raise rollout effort floors, but it cannot
-        # change the user's rollout mode (in particular, it cannot silently
-        # opt a legacy/shadow user into adaptive execution).
         reasoning_rollout=ReasoningRolloutPolicy(
             mode=base.reasoning_rollout.mode,
             minimum=repo_effort("reasoning.rollout", "minimum", base.reasoning_rollout.minimum),
@@ -472,22 +461,14 @@ def _raise_capability_floors(base: PolicySnapshot, repo: Path | None) -> PolicyS
 
 
 def resolve_policy(user_policy: Path, repo_policy: Path | None = None) -> ResolvedPolicy:
-    """Resolve release + user + already-selected repository policy."""
     repo = repo_policy
-    enabled = _policy_bool(
-        user_policy,
-        "strategy",
-        "enabled",
-        _release_bool("strategy", "enabled", True),
-        strict=True,
-    )
+    enabled = _policy_bool(user_policy, "strategy", "enabled", _release_bool("strategy", "enabled", True), strict=True)
     strategy = policy_value(user_policy, "strategy", "profile", _release_value("strategy", "profile"))
     routing = policy_value(user_policy, "routing", "mode", _release_value("routing", "mode"))
     review = policy_value(user_policy, "modifiers", "review", _release_value("modifiers", "review"))
     fanout = policy_value(user_policy, "modifiers", "fanout", _release_value("modifiers", "fanout"))
     max_threads = _policy_int(user_policy, "runtime", "max_concurrent_threads", _release_int("runtime", "max_concurrent_threads", 4))
     max_repairs = _policy_int(user_policy, "runtime", "max_repair_cycles", _release_int("runtime", "max_repair_cycles", 2))
-
     if repo is not None:
         strategy = policy_value(repo, "strategy", "profile", strategy)
         routing = policy_value(repo, "routing", "mode", routing)
@@ -505,7 +486,6 @@ def resolve_policy(user_policy: Path, repo_policy: Path | None = None) -> Resolv
                 max_repairs = min(max_repairs, int(repo_repairs))
             except ValueError:
                 pass
-
     resolved = ResolvedPolicy(
         enabled=enabled,
         strategy=strategy,
@@ -536,10 +516,7 @@ def _configured_effort(task: TaskProfile, policy: PolicySnapshot, role: str) -> 
     return _effort_max(floor, target)
 
 
-def _rollout_policy_with_override(
-    policy: ReasoningRolloutPolicy,
-    mode: str | None,
-) -> ReasoningRolloutPolicy:
+def _rollout_policy_with_override(policy: ReasoningRolloutPolicy, mode: str | None) -> ReasoningRolloutPolicy:
     if mode is None:
         policy.validate()
         return policy
@@ -629,12 +606,7 @@ def _reviewer_demand(task: TaskProfile, review_mode: str, bonus: int = 0) -> int
     return demand
 
 
-def _fit_total_worker_budget(
-    exploration_workers: int,
-    implementation_workers: int,
-    reviewer_workers: int,
-    budget: WorkerBudget,
-) -> tuple[int, int, int]:
+def _fit_total_worker_budget(exploration_workers: int, implementation_workers: int, reviewer_workers: int, budget: WorkerBudget) -> tuple[int, int, int]:
     while exploration_workers + implementation_workers + reviewer_workers > budget.max_total_workers:
         if exploration_workers > 0:
             exploration_workers -= 1
@@ -647,37 +619,15 @@ def _fit_total_worker_budget(
     return exploration_workers, implementation_workers, reviewer_workers
 
 
-def _bounded_stage_policy(
-    spec,
-    task: TaskProfile,
-    stage: str,
-    worker_count: int,
-    modifiers: Modifiers,
-) -> StagePolicy | None:
-    """Normalize one strategy lifecycle policy against actual topology and Runtime ceilings."""
+def _bounded_stage_policy(spec, task: TaskProfile, stage: str, worker_count: int, modifiers: Modifiers) -> StagePolicy | None:
     if worker_count <= 0:
         return None
-
     policy = spec.lifecycle(task, stage)
     policy.validate()
-
     hard_timeout = min(policy.hard_timeout_seconds, RUNTIME_MAX_WORKER_WALL_SECONDS)
     idle_timeout = min(policy.idle_timeout_seconds, RUNTIME_MAX_WORKER_IDLE_SECONDS, hard_timeout)
-    if policy.join_policy == "opportunistic":
-        minimum = 0
-    else:
-        minimum = max(1, min(worker_count, policy.min_successful_workers))
-
-    bounded = replace(
-        policy,
-        min_successful_workers=minimum,
-        idle_timeout_seconds=idle_timeout,
-        hard_timeout_seconds=hard_timeout,
-    )
-
-    # strict is a generic modifier contract: requested independent review must
-    # actually reach a terminal result instead of being silently replaced by
-    # Parent review or quorum-based straggler cancellation.
+    minimum = 0 if policy.join_policy == "opportunistic" else max(1, min(worker_count, policy.min_successful_workers))
+    bounded = replace(policy, min_successful_workers=minimum, idle_timeout_seconds=idle_timeout, hard_timeout_seconds=hard_timeout)
     if stage == "review" and modifiers.review == "strict":
         bounded = replace(
             bounded,
@@ -685,11 +635,46 @@ def _bounded_stage_policy(
             min_successful_workers=worker_count,
             cancel_if_superseded=False,
             cancel_stragglers_after_quorum=False,
-            fallback_policy="replan",
+            fallback_policy="retry_review",
         )
-
     bounded.validate()
     return bounded
+
+
+def _canonical_task_budget(
+    raw: TaskBudgetPolicy,
+    *,
+    implementation_workers: int,
+    reviewer_workers: int,
+    implementation_stage: StagePolicy | None,
+    review_stage: StagePolicy | None,
+) -> TaskBudgetPolicy:
+    raw.validate()
+    if implementation_stage is None:
+        raise ValueError("delegated task budget requires implementation_stage")
+    if implementation_stage.maximum_work_units is None:
+        raise ValueError("delegated task budget requires maximum_work_units")
+    if raw.max_work_units != implementation_stage.maximum_work_units:
+        raise ValueError("task budget max_work_units must match implementation_stage maximum_work_units")
+    if implementation_workers > raw.max_work_units:
+        raise ValueError("implementation topology exceeds task budget max_work_units")
+    if implementation_workers > raw.max_implementation_attempts:
+        raise ValueError("implementation topology exceeds task budget max_implementation_attempts")
+    if implementation_stage.soft_timeout_seconds is not None and raw.soft_timeout_seconds < implementation_stage.soft_timeout_seconds:
+        raise ValueError("task soft timeout cannot precede implementation soft checkpoint budget")
+
+    if reviewer_workers <= 0:
+        if review_stage is not None:
+            raise ValueError("review_stage must be absent when reviewer_workers is zero")
+        return replace(raw, max_review_attempts=0)
+
+    if review_stage is None:
+        raise ValueError("review_stage is required when reviewer_workers is positive")
+    if raw.max_review_attempts < reviewer_workers:
+        raise ValueError("review topology exceeds task budget max_review_attempts")
+    completion_tail = review_stage.hard_timeout_seconds + raw.parent_finalization_seconds
+    canonical_hard = max(raw.hard_timeout_seconds, raw.soft_timeout_seconds + completion_tail)
+    return replace(raw, hard_timeout_seconds=canonical_hard)
 
 
 def compile_plan(
@@ -722,16 +707,9 @@ def compile_plan(
 
     route = spec.adaptive_route(task) if routing_mode == "adaptive" else routing_mode
     delegated = route == "delegate"
-    parent_effort = _effort_max(
-        _configured_effort(task, policy, "parent"),
-        spec.effort(task, "parent"),
-    )
+    parent_effort = _effort_max(_configured_effort(task, policy, "parent"), spec.effort(task, "parent"))
     legacy_role_efforts = {
-        role: _effort_max(
-            _configured_effort(task, policy, "worker"),
-            spec.effort(task, role),
-            _effort_next(parent_effort),
-        )
+        role: _effort_max(_configured_effort(task, policy, "worker"), spec.effort(task, role), _effort_next(parent_effort))
         for role in ("explorer", "implementer", "reviewer")
     }
     role_efforts = dict(legacy_role_efforts)
@@ -749,37 +727,17 @@ def compile_plan(
 
     if delegated:
         implementation_workers = 1
-        exploration_workers = min(
-            _exploration_demand(task, spec.exploration_bonus(task)),
-            budget.max_explorers,
-            runtime.max_concurrent_threads,
-        )
-
-        proven_writable = min(
-            task.writable_workstreams,
-            runtime.max_concurrent_threads,
-            budget.max_implementers,
-        )
-        allow_parallel_write = (
-            task.parallelism == "high"
-            and task.write_conflict == "low"
-            and proven_writable >= 2
-        )
+        exploration_workers = min(_exploration_demand(task, spec.exploration_bonus(task)), budget.max_explorers, runtime.max_concurrent_threads)
+        proven_writable = min(task.writable_workstreams, runtime.max_concurrent_threads, budget.max_implementers)
+        allow_parallel_write = task.parallelism == "high" and task.write_conflict == "low" and proven_writable >= 2
         if allow_parallel_write and (spec.allow_parallel_write or modifiers.fanout == "aggressive"):
             implementation_workers = proven_writable
-            notes.append(
-                f"parallel writable execution authorized across {implementation_workers} proven isolated workstreams"
-            )
-
+            notes.append(f"parallel writable execution authorized across {implementation_workers} proven isolated workstreams")
         if modifiers.fanout == "conservative":
             exploration_workers = min(exploration_workers, 1)
             implementation_workers = 1
         elif modifiers.fanout == "aggressive" and task.parallelism == "high":
-            exploration_workers = min(
-                budget.max_explorers,
-                runtime.max_concurrent_threads,
-                max(exploration_workers, 2),
-            )
+            exploration_workers = min(budget.max_explorers, runtime.max_concurrent_threads, max(exploration_workers, 2))
 
         if modifiers.review == "strict":
             review_mode = "independent+parent"
@@ -787,28 +745,16 @@ def compile_plan(
             review_mode = "parent"
         elif spec.independent_review(task):
             review_mode = "independent+parent"
-
-        reviewer_workers = min(
-            _reviewer_demand(task, review_mode, spec.reviewer_bonus(task)),
-            budget.max_reviewers,
-            runtime.max_concurrent_threads,
-        )
+        reviewer_workers = min(_reviewer_demand(task, review_mode, spec.reviewer_bonus(task)), budget.max_reviewers, runtime.max_concurrent_threads)
 
         if task.parallelism == "none":
             exploration_workers = 0
             implementation_workers = 1
             reviewer_workers = min(reviewer_workers, 1)
-
         exploration_workers, implementation_workers, reviewer_workers = _fit_total_worker_budget(
-            exploration_workers,
-            implementation_workers,
-            reviewer_workers,
-            budget,
+            exploration_workers, implementation_workers, reviewer_workers, budget
         )
-        concurrency = min(
-            runtime.max_concurrent_threads,
-            max(1, exploration_workers, implementation_workers, reviewer_workers),
-        )
+        concurrency = min(runtime.max_concurrent_threads, max(1, exploration_workers, implementation_workers, reviewer_workers))
 
     if runtime.quota_pressure in {"high", "critical"}:
         notes.append("quota pressure is high; speculative fan-out and repair budget are constrained before quality floors")
@@ -824,13 +770,7 @@ def compile_plan(
 
     if delegated and spec.reasoning_rollout is not None:
         decisions = {
-            role: spec.reasoning_rollout(
-                task,
-                role,
-                rollout_policy,
-                parent_effort,
-                legacy_role_efforts[role],
-            )
+            role: spec.reasoning_rollout(task, role, rollout_policy, parent_effort, legacy_role_efforts[role])
             for role in ("explorer", "implementer", "reviewer")
         }
         selected = {decision.selected_worker_reasoning for decision in decisions.values()}
@@ -838,35 +778,20 @@ def compile_plan(
             raise ValueError("strategy reasoning rollout must select one Worker effort across roles")
         reasoning_rollout = next(iter(decisions.values()))
         reasoning_rollout.validate()
-        role_efforts = {
-            role: decisions[role].selected_worker_reasoning
-            for role in decisions
-        }
+        role_efforts = {role: decisions[role].selected_worker_reasoning for role in decisions}
         if reasoning_rollout.mode == "shadow":
-            notes.append(
-                "efficient reasoning rollout is shadow; proposed Worker effort is reported, legacy effort is selected"
-            )
+            notes.append("efficient reasoning rollout is shadow; proposed Worker effort is reported, legacy effort is selected")
         elif reasoning_rollout.mode == "adaptive":
-            notes.append(
-                "efficient reasoning rollout is adaptive; proposed Worker effort is selected and may equal Parent"
-            )
+            notes.append("efficient reasoning rollout is adaptive; proposed Worker effort is selected and may equal Parent")
         else:
             notes.append("efficient reasoning rollout is legacy; current Worker effort is selected")
 
     if route == "direct":
-        exploration_workers = 0
-        implementation_workers = 0
-        reviewer_workers = 0
+        exploration_workers = implementation_workers = reviewer_workers = 0
         concurrency = 1
-        explorer_capability_policy: str | None = None
-        explorer_model: str | None = None
-        explorer_reasoning: str | None = None
-        implementer_capability_policy: str | None = None
-        implementer_model: str | None = None
-        implementer_reasoning: str | None = None
-        reviewer_capability_policy: str | None = None
-        reviewer_model: str | None = None
-        reviewer_reasoning: str | None = None
+        explorer_capability_policy = explorer_model = explorer_reasoning = None
+        implementer_capability_policy = implementer_model = implementer_reasoning = None
+        reviewer_capability_policy = reviewer_model = reviewer_reasoning = None
         review_mode = "parent"
     else:
         if exploration_workers > 0:
@@ -875,51 +800,46 @@ def compile_plan(
             if explorer_capability_policy != policy.worker_capability_policy:
                 notes.append("explorer role requests parent-class capability; use runtime override when supported")
         else:
-            explorer_capability_policy = None
-            explorer_model = None
-            explorer_reasoning = None
-
+            explorer_capability_policy = explorer_model = explorer_reasoning = None
         implementer_capability_policy, implementer_model = _desired_role_capability(task, spec, policy, "implementer")
         implementer_reasoning = role_efforts["implementer"]
         if implementer_capability_policy != policy.worker_capability_policy:
             notes.append("implementer role requests parent-class capability; use runtime override when supported")
-
         if reviewer_workers > 0:
             reviewer_capability_policy, reviewer_model = _desired_role_capability(task, spec, policy, "reviewer")
             reviewer_reasoning = role_efforts["reviewer"]
             if reviewer_capability_policy != policy.worker_capability_policy:
                 notes.append("reviewer role requests parent-class capability; use runtime override when supported")
         else:
-            reviewer_capability_policy = None
-            reviewer_model = None
-            reviewer_reasoning = None
+            reviewer_capability_policy = reviewer_model = reviewer_reasoning = None
 
     exploration_stage = _bounded_stage_policy(spec, task, "exploration", exploration_workers, modifiers)
     implementation_stage = _bounded_stage_policy(spec, task, "implementation", implementation_workers, modifiers)
     review_stage = _bounded_stage_policy(spec, task, "review", reviewer_workers, modifiers)
 
-    # Task budgets are strategy-owned and only meaningful for delegated work.
-    # Keep the compiler generic: a strategy may opt into the hook, while legacy
-    # strategies and direct plans continue to emit no task ledger contract.
     task_budget: TaskBudgetPolicy | None = None
     if delegated and spec.task_budget is not None:
-        task_budget = spec.task_budget(task)
-        if task_budget is not None:
-            if not isinstance(task_budget, TaskBudgetPolicy):
+        raw_budget = spec.task_budget(task)
+        if raw_budget is not None:
+            if not isinstance(raw_budget, TaskBudgetPolicy):
                 raise ValueError("strategy task_budget hook must return TaskBudgetPolicy or None")
+            task_budget = _canonical_task_budget(
+                raw_budget,
+                implementation_workers=implementation_workers,
+                reviewer_workers=reviewer_workers,
+                implementation_stage=implementation_stage,
+                review_stage=review_stage,
+            )
             task_budget.validate()
-            if (
-                implementation_stage is not None
-                and implementation_stage.maximum_work_units is not None
-                and implementation_stage.maximum_work_units != task_budget.max_work_units
-            ):
-                raise ValueError(
-                    "task budget max_work_units must match implementation_stage maximum_work_units"
+            if task_budget.hard_timeout_seconds != raw_budget.hard_timeout_seconds:
+                notes.append(
+                    f"required completion extends task hard deadline to {task_budget.hard_timeout_seconds}s "
+                    f"without shortening the {task_budget.soft_timeout_seconds}s general-work window"
                 )
 
     planned_worker_count = exploration_workers + implementation_workers + reviewer_workers
     return ExecutionPlan(
-        schema_version=10,
+        schema_version=11,
         strategy=strategy,
         routing=route,
         review_modifier=modifiers.review,
@@ -957,13 +877,11 @@ def compile_plan(
     )
 
 
-
 def _temporary_bypass_path() -> Path:
     return CODEX_HOME / "codex-flow" / TEMPORARY_BYPASS_NAME
 
 
 def arm_temporary_bypass() -> None:
-    """Arm a one-shot strategy bypass without mutating persistent policy."""
     path = _temporary_bypass_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -982,7 +900,6 @@ def temporary_bypass_pending() -> bool:
 
 
 def consume_temporary_bypass() -> bool:
-    """Atomically consume the token. At most one concurrent task can succeed."""
     path = _temporary_bypass_path()
     claim = path.with_name(f".{path.name}.{os.getpid()}.claim")
     try:
@@ -997,14 +914,9 @@ def consume_temporary_bypass() -> bool:
         except FileNotFoundError:
             pass
 
+
 def configured_strategy_enabled(path: Path) -> bool:
-    return _policy_bool(
-        path,
-        "strategy",
-        "enabled",
-        _release_bool("strategy", "enabled", True),
-        strict=True,
-    )
+    return _policy_bool(path, "strategy", "enabled", _release_bool("strategy", "enabled", True), strict=True)
 
 
 def configured_strategy(path: Path) -> str:
@@ -1048,13 +960,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex-flow strategy")
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     sub = parser.add_subparsers(dest="command")
-
     sub.add_parser("profiles")
     show = sub.add_parser("show")
     show.add_argument("--json", action="store_true")
     show.add_argument("--effective", action="store_true")
     show.add_argument("--repo-policy", default="auto")
-
     sub.add_parser("enabled")
     sub.add_parser("enable")
     sub.add_parser("disable")
@@ -1063,10 +973,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("consume-bypass")
     set_cmd = sub.add_parser("set")
     set_cmd.add_argument("profile", choices=STRATEGIES)
-
     routing = sub.add_parser("routing")
     routing.add_argument("mode", nargs="?", choices=ROUTING_MODES)
-
     plan = sub.add_parser("plan")
     plan.add_argument("--profile", choices=STRATEGIES)
     plan.add_argument("--routing", choices=ROUTING_MODES)
@@ -1084,16 +992,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--iteration-intensity", choices=ITERATION, default="iterative")
     plan.add_argument("--writable-workstreams", type=int, default=1)
     plan.add_argument("--quality-intent", choices=QUALITY_INTENTS, default="normal")
-    plan.add_argument(
-        "--efficient-reasoning",
-        choices=REASONING_ROLLOUT_MODES,
-        help="current-task efficient Worker reasoning rollout mode",
-    )
-    plan.add_argument(
-        "--quota-pressure",
-        choices=("auto", "unknown", "low", "medium", "high", "critical"),
-        default="auto",
-    )
+    plan.add_argument("--efficient-reasoning", choices=REASONING_ROLLOUT_MODES)
+    plan.add_argument("--quota-pressure", choices=("auto", "unknown", "low", "medium", "high", "critical"), default="auto")
     plan.add_argument("--max-threads", type=int)
     plan.add_argument("--max-repairs", type=int)
     return parser
@@ -1103,10 +1003,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = build_parser()
     ns = parser.parse_args(list(argv) if argv is not None else None)
     command = ns.command or "show"
-
     if command == "profiles":
-        _print_profiles()
-        return 0
+        _print_profiles(); return 0
     if command == "show":
         if getattr(ns, "effective", False):
             repo, _disabled = _repo_arg(getattr(ns, "repo_policy", "auto"))
@@ -1118,38 +1016,19 @@ def main(argv: Iterable[str] | None = None) -> int:
                 else:
                     print(str(exc), file=sys.stderr)
                 return 2
-            result = {
-                "enabled": resolved.enabled,
-                "strategy": resolved.strategy,
-                "routing": resolved.routing,
-                "review": resolved.modifiers.review,
-                "fanout": resolved.modifiers.fanout,
-                "repo_policy": resolved.repo_policy,
-                "valid": True,
-            }
-            if getattr(ns, "json", False):
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-            else:
-                print(
-                    f"strategy={resolved.strategy} routing={resolved.routing} "
-                    f"review={resolved.modifiers.review} fanout={resolved.modifiers.fanout}"
-                )
+            result = {"enabled": resolved.enabled, "strategy": resolved.strategy, "routing": resolved.routing, "review": resolved.modifiers.review, "fanout": resolved.modifiers.fanout, "repo_policy": resolved.repo_policy, "valid": True}
+            print(json.dumps(result, ensure_ascii=False, indent=2) if getattr(ns, "json", False) else f"strategy={resolved.strategy} routing={resolved.routing} review={resolved.modifiers.review} fanout={resolved.modifiers.fanout}")
             return 0
         strategy = configured_strategy(ns.policy)
         routing_mode = configured_routing(ns.policy)
         try:
-            enabled = configured_strategy_enabled(ns.policy)
-            enabled_valid = True
-            enabled_error = None
+            enabled = configured_strategy_enabled(ns.policy); enabled_error = None
         except ValueError as exc:
-            enabled = False
-            enabled_valid = False
-            enabled_error = str(exc)
-        valid = enabled_valid and strategy in STRATEGIES and routing_mode in ROUTING_MODES
+            enabled = False; enabled_error = str(exc)
+        valid = enabled_error is None and strategy in STRATEGIES and routing_mode in ROUTING_MODES
         if getattr(ns, "json", False):
             result = {"enabled": enabled, "strategy": strategy, "routing": routing_mode, "valid": valid}
-            if enabled_error is not None:
-                result["error"] = enabled_error
+            if enabled_error is not None: result["error"] = enabled_error
             print(json.dumps(result, ensure_ascii=False, indent=2))
         elif enabled_error is not None:
             print(enabled_error, file=sys.stderr)
@@ -1157,89 +1036,53 @@ def main(argv: Iterable[str] | None = None) -> int:
             print(f"enabled={'true' if enabled else 'false'} strategy={strategy} routing={routing_mode}")
         return 0 if valid else 2
     if command == "enabled":
-        try:
-            enabled = configured_strategy_enabled(ns.policy)
+        try: enabled = configured_strategy_enabled(ns.policy)
         except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-        print("true" if enabled else "false")
-        return 0
+            print(str(exc), file=sys.stderr); return 2
+        print("true" if enabled else "false"); return 0
     if command == "bypass-once":
-        try:
-            enabled = configured_strategy_enabled(ns.policy)
+        try: enabled = configured_strategy_enabled(ns.policy)
         except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
+            print(str(exc), file=sys.stderr); return 2
         if not enabled:
-            print("strategy dispatch is globally disabled; temporary bypass is unnecessary", file=sys.stderr)
-            return 3
-        arm_temporary_bypass()
-        print("armed=true")
-        return 0
+            print("strategy dispatch is globally disabled; temporary bypass is unnecessary", file=sys.stderr); return 3
+        arm_temporary_bypass(); print("armed=true"); return 0
     if command == "bypass-pending":
-        print("true" if temporary_bypass_pending() else "false")
-        return 0
+        print("true" if temporary_bypass_pending() else "false"); return 0
     if command == "consume-bypass":
-        print("true" if consume_temporary_bypass() else "false")
-        return 0
+        print("true" if consume_temporary_bypass() else "false"); return 0
     if command in {"enable", "disable"}:
         enabled = command == "enable"
         set_policy_value(ns.policy, "strategy", "enabled", "true" if enabled else "false", quote=False)
-        print(f"enabled={'true' if enabled else 'false'}")
-        return 0
+        print(f"enabled={'true' if enabled else 'false'}"); return 0
     if command == "set":
-        set_policy_value(ns.policy, "strategy", "profile", ns.profile)
-        print(f"strategy={ns.profile}")
-        return 0
+        set_policy_value(ns.policy, "strategy", "profile", ns.profile); print(f"strategy={ns.profile}"); return 0
     if command == "routing":
         if ns.mode is None:
-            print(configured_routing(ns.policy))
-            return 0
-        set_policy_value(ns.policy, "routing", "mode", ns.mode)
-        print(f"routing={ns.mode}")
-        return 0
+            print(configured_routing(ns.policy)); return 0
+        set_policy_value(ns.policy, "routing", "mode", ns.mode); print(f"routing={ns.mode}"); return 0
     if command == "plan":
         repo, _disabled = _repo_arg(ns.repo_policy)
-        try:
-            resolved = resolve_policy(ns.policy, repo)
+        try: resolved = resolve_policy(ns.policy, repo)
         except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return 3
+            print(str(exc), file=sys.stderr); return 3
         if not resolved.enabled:
-            print(
-                "codex-flow strategy dispatch is disabled; run `codex-flow strategy enable` to re-enable it.",
-                file=sys.stderr,
-            )
-            return 3
-        strategy = ns.profile or resolved.strategy
-        routing_mode = ns.routing or resolved.routing
-        modifiers = Modifiers(
-            review=ns.review or resolved.modifiers.review,
-            fanout=ns.fanout or resolved.modifiers.fanout,
-        )
-        max_threads = resolved.max_concurrent_threads
-        if ns.max_threads is not None:
-            max_threads = min(max_threads, ns.max_threads)
-        max_repairs = resolved.max_repair_cycles
-        if ns.max_repairs is not None:
-            max_repairs = min(max_repairs, ns.max_repairs)
+            print("codex-flow strategy dispatch is disabled; run `codex-flow strategy enable` to re-enable it.", file=sys.stderr); return 3
+        modifiers = Modifiers(review=ns.review or resolved.modifiers.review, fanout=ns.fanout or resolved.modifiers.fanout)
+        max_threads = resolved.max_concurrent_threads if ns.max_threads is None else min(resolved.max_concurrent_threads, ns.max_threads)
+        max_repairs = resolved.max_repair_cycles if ns.max_repairs is None else min(resolved.max_repair_cycles, ns.max_repairs)
         quota_pressure = detect_quota_pressure() if ns.quota_pressure == "auto" else ns.quota_pressure
         plan_obj = compile_plan(
             _task_from_args(ns),
-            strategy=strategy,
-            routing_mode=routing_mode,
+            strategy=ns.profile or resolved.strategy,
+            routing_mode=ns.routing or resolved.routing,
             modifiers=modifiers,
             policy=resolved.capability,
-            runtime=RuntimeState(
-                quota_pressure=quota_pressure,
-                max_concurrent_threads=max_threads,
-                max_repair_cycles=max_repairs,
-            ),
+            runtime=RuntimeState(quota_pressure=quota_pressure, max_concurrent_threads=max_threads, max_repair_cycles=max_repairs),
             repo_policy=resolved.repo_policy,
             efficient_reasoning=ns.efficient_reasoning,
         )
-        print(json.dumps(plan_obj.to_dict(), ensure_ascii=False, indent=2))
-        return 0
+        print(json.dumps(plan_obj.to_dict(), ensure_ascii=False, indent=2)); return 0
     parser.error(f"unsupported command: {command}")
     return 2
 

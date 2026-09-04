@@ -35,7 +35,6 @@ def worker_budget(task) -> WorkerBudget:
 
 
 def implementation_soft_timeout(task) -> int:
-    """Advisory convergence budget; the hard implementation ceiling stays unchanged."""
     if task.complexity == "critical" or task.risk == "critical":
         return 1200
     if task.complexity == "complex" or task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
@@ -44,17 +43,11 @@ def implementation_soft_timeout(task) -> int:
 
 
 def implementation_checkpoint_rearm_seconds(task) -> int:
-    """Require a minimum cooldown before a harvested checkpoint can re-arm.
-
-    Keep the second checkpoint comfortably ahead of the 1800-second efficient
-    implementation ceiling while scaling the cooldown with task complexity.
-    """
     if task.complexity == "critical" or task.risk == "critical":
         return 300
     if (
         task.complexity == "complex"
-        or task.scope == "repo-wide"
-        or task.scope == "cross-module"
+        or task.scope in {"cross-module", "repo-wide"}
         or task.iteration_intensity == "heavy-loop"
     ):
         return 240
@@ -62,7 +55,6 @@ def implementation_checkpoint_rearm_seconds(task) -> int:
 
 
 def implementation_repair_attempts(task) -> int:
-    """Bound local test-fix loops without conflating them with lifecycle fallback."""
     if (
         task.complexity in {"complex", "critical"}
         or task.risk == "critical"
@@ -73,53 +65,36 @@ def implementation_repair_attempts(task) -> int:
     return 1
 
 
-def implementation_minimum_work_units(task) -> int:
-    """Default to one unit; evidence may still opt the stage into bounded mode."""
+def implementation_minimum_work_units(_task) -> int:
     return 1
 
 
 def implementation_maximum_work_units(task) -> int:
-    """Bounded plans reserve room for independently evidenced deltas."""
     if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
-        return 3
-    if task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
-        return 2
-    return 1
+        semantic_maximum = 3
+    elif task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
+        semantic_maximum = 2
+    else:
+        semantic_maximum = 1
+    topology_floor = min(task.writable_workstreams, worker_budget(task).max_implementers)
+    return max(semantic_maximum, topology_floor)
 
 
 def task_budget(task) -> TaskBudgetPolicy:
-    """Return the efficient strategy's cumulative task-level reservation caps."""
-    if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
-        max_work_units = 3
-        max_attempts = 4
-    elif (
-        task.complexity in {"complex", "critical"}
-        or task.scope == "cross-module"
-        or task.risk == "critical"
-    ):
-        max_work_units = 2
-        max_attempts = 3
-    else:
-        max_work_units = 1
-        max_attempts = 2
+    max_work_units = implementation_maximum_work_units(task)
     return TaskBudgetPolicy(
         soft_timeout_seconds=1500,
         hard_timeout_seconds=1800,
         max_work_units=max_work_units,
-        max_implementation_attempts=max_attempts,
+        max_implementation_attempts=max_work_units + 1,
         max_replans=1,
         max_replacements=1,
+        max_review_attempts=2,
+        parent_finalization_seconds=150,
     )
 
 
-def reasoning_rollout(
-    task,
-    _role: str,
-    policy,
-    parent_reasoning: str,
-    legacy_worker_reasoning: str,
-) -> ReasoningRolloutDecision:
-    """Compare current efficient Worker effort with the rollout proposal."""
+def reasoning_rollout(task, _role: str, policy, parent_reasoning: str, legacy_worker_reasoning: str) -> ReasoningRolloutDecision:
     policy.validate()
     if task.complexity == "critical" or task.risk == "critical":
         class_target = policy.critical
@@ -127,10 +102,6 @@ def reasoning_rollout(
         class_target = policy.complex
     else:
         class_target = policy.routine
-    # Rollout proposal intentionally starts from the explicit rollout floors
-    # and Parent effort. Legacy's next-tier bump is the behavior being tested;
-    # including it here would make adaptive unable to select an effort equal to
-    # Parent, defeating the rollout's allow-equal contract.
     proposed = _max_effort(class_target, policy.minimum, parent_reasoning)
     selected = proposed if policy.mode == "adaptive" else legacy_worker_reasoning
     decision = ReasoningRolloutDecision(
@@ -152,13 +123,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
         maximum_work_units = implementation_maximum_work_units(task)
         bounded_mode = maximum_work_units > 1
         return StagePolicy(
-            "required",
-            1,
-            180,
-            1800,
-            False,
-            False,
-            "replan",
+            "required", 1, 180, 1800, False, False, "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
             checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
             max_worker_repair_attempts=implementation_repair_attempts(task),
@@ -169,7 +134,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
+        return StagePolicy("quorum", 1, 150, 1200, True, True, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
