@@ -161,7 +161,7 @@ If planner/registry is unavailable, treat it as installation/runtime failure. Do
 
 ## 3. ExecutionPlan is the hard strategy/runtime boundary
 
-Current contract remains schema v8. StagePolicy may contain optional convergence/repair/work-unit fields:
+Current contract (schema v8):
 
 ```text
 ExecutionPlan
@@ -329,6 +329,8 @@ Checkpoint is not completion. Never reset/revert/clean/stash/discard work merely
 
 ### Remaining-delta replan
 
+Fallback always operates on the missing delta, never by restarting the whole stage:
+
 When `fallback_policy=replan`, obey evaluator `replan_scope`:
 
 - `uncovered_scope`: replan only demonstrably uncovered scope, never automatically the full original task;
@@ -360,7 +362,7 @@ If `exploration_workers=0`, Parent performs targeted discovery and `exploration_
 
 Otherwise delegate exactly the planned count to distinct bounded read-only questions, each with a unique `scope_id`. Respect `max_concurrent_threads` and role capability/model/reasoning. Do not collapse multiple planned explorers merely out of habit.
 
-Execute exploration join/cancellation/fallback only from `exploration_stage`. Do not kill a progressing high-reasoning Explorer because it has taken multiple Parent wait intervals.
+Execute exploration join/cancellation/fallback only from `exploration_stage`. In particular, do not kill a Luna `xhigh/max` Explorer merely because it has taken multiple Parent wait intervals while continuing to read files, run commands, or produce other observable progress.
 
 ## 7. Partition bounded implementation before spawning
 
@@ -385,7 +387,7 @@ Validate the manifest deterministically before spawn:
 ```bash
 python3 ~/.codex/codex-flow/strategies/work_unit_runtime.py \
   --policy-json '<implementation_stage JSON>' \
-  --manifest-json '<{"units":[...]}> '
+  --manifest-json '<{"units":[...]}>'
 ```
 
 Use the helper result as the gate. If validation fails, fix the manifest; do not bypass the work-unit contract.
