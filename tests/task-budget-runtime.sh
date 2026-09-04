@@ -8,7 +8,13 @@ RUNTIME="$ROOT/scripts/strategies/task_budget_runtime.py"
 STATE="$TMP/task-budget.json"
 POLICY='{"soft_timeout_seconds":10,"hard_timeout_seconds":20,"max_work_units":2,"max_implementation_attempts":2,"max_replans":1,"max_replacements":1}'
 
-python3 -m py_compile "$ROOT/scripts/strategies/base.py" "$ROOT/scripts/strategies/efficient.py" "$RUNTIME"
+python3 -m py_compile \
+  "$ROOT/scripts/strategies/base.py" \
+  "$ROOT/scripts/strategies/efficient.py" \
+  "$ROOT/scripts/strategies/balanced.py" \
+  "$ROOT/scripts/strategies/quality.py" \
+  "$ROOT/scripts/strategies/speed.py" \
+  "$RUNTIME"
 
 run() {
   python3 "$RUNTIME" "$@"
@@ -27,7 +33,6 @@ run init --state-file "$STATE" --task-id task-alpha --now 100 --policy-json "$PO
 python3 - "$TMP/init.json" "$STATE" <<'PY'
 import hashlib
 import json
-import pathlib
 import sys
 
 result = json.load(open(sys.argv[1]))
@@ -125,7 +130,7 @@ ln -s "$TMP/lock-target" "$TMP/lock-link.json.lock"
 touch "$TMP/lock-target"
 expect_fail run init --state-file "$TMP/lock-link.json" --task-id task-lock --now 0 --policy-json "$POLICY"
 
-# At least one concurrent atomic reserve per process succeeds without lost updates.
+# Concurrent reservations are atomic and do not lose updates.
 CONCURRENT="$TMP/concurrent.json"
 CONCURRENT_POLICY='{"soft_timeout_seconds":100,"hard_timeout_seconds":200,"max_work_units":8,"max_implementation_attempts":1,"max_replans":1,"max_replacements":1}'
 run init --state-file "$CONCURRENT" --task-id concurrent --now 1000 --policy-json "$CONCURRENT_POLICY" >/dev/null
@@ -140,8 +145,6 @@ import json, sys
 p=json.load(open(sys.argv[1])); assert p["counters"]["work_unit"] == 8, p
 PY
 
-# Reservations from different kinds may interleave in wall-clock order; only
-# each individual kind's append order must be monotonic.
 INTERLEAVED="$TMP/interleaved.json"
 run init --state-file "$INTERLEAVED" --task-id interleaved --now 2000 --policy-json "$POLICY" >/dev/null
 run reserve --state-file "$INTERLEAVED" --task-id interleaved --now 2001 --kind implementation_attempt \
@@ -155,7 +158,7 @@ p=json.load(open(sys.argv[1])); assert p["counters"]["implementation_attempt"] =
 assert p["counters"]["work_unit"] == 1, p
 PY
 
-# Compiler carries the efficient budget only for delegated plans; direct and legacy strategies stay None.
+# Every delegated built-in strategy now emits a cumulative task budget; direct plans remain unbudgeted.
 cat >"$TMP/policy.toml" <<'EOF'
 schema_version = 4
 [strategy]
@@ -185,27 +188,33 @@ critical_effort = "max"
 max_concurrent_threads = 4
 max_repair_cycles = 2
 EOF
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/policy.toml" plan --repo-policy none --quota-pressure unknown \
-  --routing delegate --complexity complex --scope cross-module >"$TMP/plan.json"
+
+for profile in efficient balanced quality speed; do
+  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/policy.toml" plan --repo-policy none --quota-pressure unknown \
+    --profile "$profile" --routing delegate --complexity complex --scope cross-module >"$TMP/${profile}-plan.json"
+done
 python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/policy.toml" plan --repo-policy none --quota-pressure unknown \
   --routing direct --complexity complex --scope cross-module >"$TMP/direct-plan.json"
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/policy.toml" plan --repo-policy none --quota-pressure unknown \
-  --profile balanced --routing delegate --complexity complex --scope cross-module >"$TMP/legacy-plan.json"
-python3 - "$TMP/plan.json" "$TMP/direct-plan.json" "$TMP/legacy-plan.json" <<'PY'
-import json, sys
-delegated, direct, legacy = (json.load(open(path)) for path in sys.argv[1:])
-assert delegated["schema_version"] == 10, delegated
-assert delegated["task_budget"] == {
-    "soft_timeout_seconds": 1500,
-    "hard_timeout_seconds": 1800,
-    "max_work_units": 2,
-    "max_implementation_attempts": 3,
-    "max_replans": 1,
-    "max_replacements": 1,
-}, delegated
-assert delegated["implementation_stage"]["maximum_work_units"] == delegated["task_budget"]["max_work_units"], delegated
+
+python3 - "$TMP" <<'PY'
+import json
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+expected = {
+    "efficient": {"soft_timeout_seconds":1500,"hard_timeout_seconds":1800,"max_work_units":2,"max_implementation_attempts":3,"max_replans":1,"max_replacements":1},
+    "balanced": {"soft_timeout_seconds":2700,"hard_timeout_seconds":3300,"max_work_units":2,"max_implementation_attempts":4,"max_replans":2,"max_replacements":2},
+    "quality": {"soft_timeout_seconds":5400,"hard_timeout_seconds":6600,"max_work_units":3,"max_implementation_attempts":6,"max_replans":3,"max_replacements":3},
+    "speed": {"soft_timeout_seconds":1200,"hard_timeout_seconds":1800,"max_work_units":3,"max_implementation_attempts":4,"max_replans":1,"max_replacements":1},
+}
+for name, budget in expected.items():
+    plan = json.load(open(root / f"{name}-plan.json"))
+    assert plan["schema_version"] == 10 and plan["strategy"] == name, plan
+    assert plan["task_budget"] == budget, plan
+    assert plan["implementation_stage"]["maximum_work_units"] == budget["max_work_units"], plan
+
+direct = json.load(open(root / "direct-plan.json"))
 assert direct["schema_version"] == 10 and direct["task_budget"] is None, direct
-assert legacy["schema_version"] == 10 and legacy["task_budget"] is None, legacy
 PY
 
 printf 'task budget runtime test passed\n'
