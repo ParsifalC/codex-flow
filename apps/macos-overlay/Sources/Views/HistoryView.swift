@@ -419,12 +419,18 @@ public struct HistoryChatRow: View {
     @ViewBuilder
     private var quotaDelta: some View {
         if let delta = chat.totalQuotaDelta, abs(delta) >= 0.1 {
-            Text(String(format: "%+.0f%%", -delta))
+            let formatted = abs(delta) < 0.95
+                ? String(format: "%+.1f%%", -delta)
+                : String(format: "%+.0f%%", -delta)
+            let deltaMagnitude = abs(delta) < 0.95
+                ? String(format: "%.1f%%", abs(delta))
+                : String(format: "%.0f%%", abs(delta))
+            Text(formatted)
                 .font(.system(size: 7.5, weight: .bold))
                 .foregroundColor(delta > 0 ? .orange : .green)
                 .help(delta > 0
-                    ? String(format: L("Quota consumed: %.0f%%", "配额消耗：%.0f%%"), delta)
-                    : String(format: L("Quota restored: %.0f%%", "配额恢复：%.0f%%"), -delta)
+                    ? String(format: L("Quota consumed: %@", "配额消耗：%@"), deltaMagnitude)
+                    : String(format: L("Quota restored: %@", "配额恢复：%@"), deltaMagnitude)
                 )
         }
     }
@@ -560,9 +566,30 @@ public struct HistoryRunRow: View {
                     .font(.system(size: 7.2, weight: .semibold))
                     .foregroundColor(.teal.opacity(0.8))
             }
+            quotaDelta
             Text(run.formattedTotalTokens)
                 .font(.system(size: 7.8, weight: .bold, design: .rounded))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+        }
+    }
+
+    @ViewBuilder
+    private var quotaDelta: some View {
+        let deltaValue = run.canonicalQuotaDelta ?? run.shortWindowQuotaDelta ?? run.effectiveQuotaWindows.first(where: { $0.deltaPercentagePoints != nil })?.deltaPercentagePoints
+        if let delta = deltaValue, abs(delta) >= 0.1 {
+            let formatted = abs(delta) < 0.95
+                ? String(format: "%+.1f%%", -delta)
+                : String(format: "%+.0f%%", -delta)
+            let deltaMagnitude = abs(delta) < 0.95
+                ? String(format: "%.1f%%", abs(delta))
+                : String(format: "%.0f%%", abs(delta))
+            Text(formatted)
+                .font(.system(size: 7.2, weight: .bold))
+                .foregroundColor(delta > 0 ? .orange : .green)
+                .help(delta > 0
+                    ? String(format: L("Quota consumed: %@", "配额消耗：%@"), deltaMagnitude)
+                    : String(format: L("Quota restored: %@", "配额恢复：%@"), deltaMagnitude)
+                )
         }
     }
 

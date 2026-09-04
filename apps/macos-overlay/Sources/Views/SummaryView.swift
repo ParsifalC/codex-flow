@@ -999,6 +999,22 @@ public struct QuotaWindowsView: View {
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.72))
 
+                if let delta = window.deltaPercentagePoints, abs(delta) >= 0.1 {
+                    let deltaText = abs(delta) < 0.95
+                        ? String(format: "%.1f%%", abs(delta))
+                        : String(format: "%.0f%%", abs(delta))
+                    Text(delta > 0
+                        ? String(format: L("(%@ used)", "(消耗 %@)"), deltaText)
+                        : String(format: L("(%@ restored)", "(恢复 %@)"), deltaText)
+                    )
+                    .font(.system(size: 7.6, weight: .bold, design: .rounded))
+                    .foregroundColor(delta > 0 ? .orange : .green)
+                    .help(delta > 0
+                        ? String(format: L("Quota consumed during this run: %@", "本轮任务配额消耗：%@"), deltaText)
+                        : String(format: L("Quota restored during this run: %@", "本轮任务配额恢复：%@"), deltaText)
+                    )
+                }
+
                 Spacer(minLength: 2)
 
                 if let reset = window.localizedFormattedResetsAt {

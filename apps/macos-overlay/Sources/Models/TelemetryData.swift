@@ -688,9 +688,40 @@ public struct TaskRun: Codable, Identifiable {
     
     public var effectiveQuotaWindows: [QuotaWindow] {
         if let current = quotaChangeDuringRun, !current.isEmpty {
+            if current.contains(where: { $0.deltaPercentagePoints == nil }),
+               let before = quotaBefore, !before.isEmpty {
+                return current.map { w in
+                    var window = w
+                    if window.deltaPercentagePoints == nil {
+                        let match = before.first(where: {
+                            ($0.windowDurationMins != nil && $0.windowDurationMins == w.windowDurationMins) ||
+                            ($0.slot != nil && $0.slot == w.slot)
+                        })
+                        if let afterUsed = w.usedPercent, let beforeUsed = match?.usedPercent {
+                            window.deltaPercentagePoints = afterUsed - beforeUsed
+                        }
+                    }
+                    return window
+                }
+            }
             return current
         }
         if let after = quotaAfter, !after.isEmpty {
+            if let before = quotaBefore, !before.isEmpty {
+                return after.map { w in
+                    var window = w
+                    if window.deltaPercentagePoints == nil {
+                        let match = before.first(where: {
+                            ($0.windowDurationMins != nil && $0.windowDurationMins == w.windowDurationMins) ||
+                            ($0.slot != nil && $0.slot == w.slot)
+                        })
+                        if let afterUsed = w.usedPercent, let beforeUsed = match?.usedPercent {
+                            window.deltaPercentagePoints = afterUsed - beforeUsed
+                        }
+                    }
+                    return window
+                }
+            }
             return after
         }
         return quotaBefore ?? []
