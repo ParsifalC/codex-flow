@@ -69,6 +69,11 @@ assert routine["implementation_stage"]["soft_timeout_seconds"] == 600, routine
 assert critical["implementation_stage"]["soft_timeout_seconds"] == 1200, critical
 assert routine["implementation_stage"]["hard_timeout_seconds"] == 1800, routine
 assert critical["implementation_stage"]["hard_timeout_seconds"] == 1800, critical
+assert routine["implementation_stage"]["checkpoint_rearm_seconds"] == 180, routine
+assert critical["implementation_stage"]["checkpoint_rearm_seconds"] == 300, critical
+for plan in (routine, critical):
+    stage = plan["implementation_stage"]
+    assert stage["soft_timeout_seconds"] + stage["checkpoint_rearm_seconds"] < stage["hard_timeout_seconds"], stage
 PY
 
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
@@ -662,8 +667,9 @@ assert p["parent_reasoning"]=="high", p
 assert p["explorer_reasoning"]=="xhigh" and p["implementer_reasoning"]=="xhigh", p
 PY
 
-# Multi-round checkpoints are immutable, contiguous, and re-arm only after a
-# new meaningful delta. The latest record is the current lifecycle status.
+# Multi-round checkpoints are immutable, contiguous, and re-arm only after an
+# explicit meaningful delta plus the configured cooldown. The latest record is
+# the current lifecycle status.
 SEQ='[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":2,"generation":0,"requested_at":950}]'
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
   --started-at 100 --last-progress-at 960 --last-meaningful-progress-at 960 --now 1000 --writable \
@@ -677,13 +683,59 @@ assert d["next_checkpoint_sequence"] is None, d
 PY
 
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
-  --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 995 --now 1000 --writable --in-flight \
+  --started-at 100 --last-progress-at 1155 --last-meaningful-progress-at 1155 --now 1160 --writable --in-flight \
   --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-rearm.json"
 python3 - "$TMP/multi-rearm.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["action"] == "request_checkpoint" and d["checkpoint_sequence"] == 1, d
 assert d["next_checkpoint_sequence"] == 2, d
+assert d["checkpoint_rearm_at"] == 1160 and d["checkpoint_rearm_remaining_seconds"] == 0, d
+PY
+
+# Explicit meaningful progress does not re-arm before the policy cooldown.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-cooldown --stage implementation \
+  --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 995 --now 1000 --writable --in-flight \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-cooldown.json"
+python3 - "$TMP/multi-cooldown.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
+assert d["checkpoint_rearm_at"] == 1160 and d["checkpoint_rearm_remaining_seconds"] == 160, d
+assert "cooldown" in d["reason"], d
+PY
+
+# Liveness activity alone never re-arms a harvested checkpoint, even when the
+# legacy last_progress_at timestamp advances beyond the harvest.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-liveness --stage implementation \
+  --started-at 100 --last-progress-at 1195 --now 1200 --writable --in-flight \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-liveness.json"
+python3 - "$TMP/multi-liveness.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
+assert d["next_checkpoint_sequence"] is None, d
+assert "last_progress_at cannot re-arm" in d["reason"], d
+PY
+
+# A legacy plan without the rearm field remains one-shot, even with explicit
+# meaningful progress after the harvested checkpoint.
+python3 - "$TMP/impl-policy.json" > "$TMP/legacy-checkpoint-policy.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+p.pop("checkpoint_rearm_seconds", None)
+print(json.dumps(p, separators=(",", ":")))
+PY
+LEGACY_CHECKPOINT_POLICY="$(cat "$TMP/legacy-checkpoint-policy.json")"
+python3 "$LIFECYCLE" --policy-json "$LEGACY_CHECKPOINT_POLICY" --scope-id multi-legacy --stage implementation \
+  --started-at 100 --last-progress-at 1195 --last-meaningful-progress-at 1195 --now 1200 --writable --in-flight \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-legacy.json"
+python3 - "$TMP/multi-legacy.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
+assert d["checkpoint_rearm_at"] is None and d["checkpoint_rearm_remaining_seconds"] is None, d
+assert "legacy/one-shot" in d["reason"], d
 PY
 
 # A pending later round must not hide the earlier durable baseline from replan.
@@ -738,13 +790,15 @@ from strategies.lifecycle_runtime import LifecyclePolicy, WorkerObservation
 from strategies.lifecycle_runtime import CheckpointRecord
 root=sys.argv[1]
 base={"join_policy":"required","min_successful_workers":1,"idle_timeout_seconds":10,"hard_timeout_seconds":20,"cancel_if_superseded":False,"cancel_stragglers_after_quorum":False,"fallback_policy":"replan"}
-for key, value in (("join_policy", 1), ("fallback_policy", 1), ("min_successful_workers", True), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("inf"))):
+for key, value in (("join_policy", 1), ("fallback_policy", 1), ("min_successful_workers", True), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("inf")), ("checkpoint_rearm_seconds", True), ("checkpoint_rearm_seconds", "10"), ("checkpoint_rearm_seconds", float("inf"))):
     candidate=dict(base); candidate[key]=value
     try: LifecyclePolicy.from_dict(candidate)
     except ValueError: pass
     else: raise AssertionError(key)
-for key, value in (("min_successful_workers", "1"), ("min_successful_workers", 1.0), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("nan")), ("hard_timeout_seconds", float("inf")), ("hard_timeout_seconds", 10**400)):
+for key, value in (("min_successful_workers", "1"), ("min_successful_workers", 1.0), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("nan")), ("hard_timeout_seconds", float("inf")), ("hard_timeout_seconds", 10**400), ("checkpoint_rearm_seconds", "10"), ("checkpoint_rearm_seconds", 0), ("checkpoint_rearm_seconds", -1), ("checkpoint_rearm_seconds", 20), ("checkpoint_rearm_seconds", 10)):
     candidate=dict(base); candidate[key]=value
+    if key == "checkpoint_rearm_seconds" and value == 10:
+        candidate["soft_timeout_seconds"] = 10
     result=subprocess.run([sys.executable, root + "/scripts/strategies/lifecycle_runtime.py", "--policy-json", json.dumps(candidate), "--scope-id", "strict", "--stage", "implementation", "--started-at", "0", "--last-progress-at", "0", "--now", "1"], capture_output=True, text=True)
     if result.returncode == 0:
         raise AssertionError((key, value, result.stdout))

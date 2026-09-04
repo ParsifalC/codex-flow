@@ -201,6 +201,10 @@ class StagePolicy:
     cancellation by itself. `max_worker_repair_attempts`, when set on an
     implementation stage, bounds local validation-failure fix loops inside one
     Worker and is independent from Parent-level `max_repair_cycles`.
+    `checkpoint_rearm_seconds`, when set, is the minimum cooldown after a
+    harvested checkpoint before a later checkpoint may be requested. A later
+    checkpoint also requires an explicit acceptance-relevant progress timestamp
+    from the Worker; absent fields retain one-shot compatibility.
 
     `work_unit_mode=bounded` requires Parent to partition implementation into
     multiple acceptance-bounded units and join back to Parent between units.
@@ -218,6 +222,7 @@ class StagePolicy:
     cancel_stragglers_after_quorum: bool = False
     fallback_policy: str = "parent_delta"
     soft_timeout_seconds: int | None = None
+    checkpoint_rearm_seconds: int | None = None
     max_worker_repair_attempts: int | None = None
     work_unit_mode: str = "single"
     minimum_work_units: int = 1
@@ -253,6 +258,20 @@ class StagePolicy:
                 raise ValueError("soft_timeout_seconds must be positive when set")
             if self.soft_timeout_seconds >= self.hard_timeout_seconds:
                 raise ValueError("soft_timeout_seconds must be lower than hard_timeout_seconds")
+        if self.checkpoint_rearm_seconds is not None:
+            if type(self.checkpoint_rearm_seconds) is not int:
+                raise ValueError("checkpoint_rearm_seconds must be an integer when set")
+            if self.checkpoint_rearm_seconds < 1:
+                raise ValueError("checkpoint_rearm_seconds must be positive when set")
+            if self.checkpoint_rearm_seconds >= self.hard_timeout_seconds:
+                raise ValueError("checkpoint_rearm_seconds must be lower than hard_timeout_seconds")
+            if (
+                self.soft_timeout_seconds is not None
+                and self.soft_timeout_seconds + self.checkpoint_rearm_seconds >= self.hard_timeout_seconds
+            ):
+                raise ValueError(
+                    "checkpoint_rearm_seconds must leave time for a second checkpoint before hard_timeout_seconds"
+                )
         if self.max_worker_repair_attempts is not None:
             if type(self.max_worker_repair_attempts) is not int:
                 raise ValueError("max_worker_repair_attempts must be an integer when set")

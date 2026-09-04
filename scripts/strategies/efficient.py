@@ -43,6 +43,24 @@ def implementation_soft_timeout(task) -> int:
     return 600
 
 
+def implementation_checkpoint_rearm_seconds(task) -> int:
+    """Require a minimum cooldown before a harvested checkpoint can re-arm.
+
+    Keep the second checkpoint comfortably ahead of the 1800-second efficient
+    implementation ceiling while scaling the cooldown with task complexity.
+    """
+    if task.complexity == "critical" or task.risk == "critical":
+        return 300
+    if (
+        task.complexity == "complex"
+        or task.scope == "repo-wide"
+        or task.scope == "cross-module"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        return 240
+    return 180
+
+
 def implementation_repair_attempts(task) -> int:
     """Bound local test-fix loops without conflating them with lifecycle fallback."""
     if (
@@ -142,6 +160,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             False,
             "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
+            checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
             max_worker_repair_attempts=implementation_repair_attempts(task),
             work_unit_mode="bounded" if bounded_mode else "single",
             minimum_work_units=minimum_work_units,
