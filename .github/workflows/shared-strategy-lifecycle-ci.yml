@@ -1,0 +1,27 @@
+name: shared-strategy-lifecycle-ci
+
+on:
+  push:
+    paths:
+      - 'scripts/strategies/**'
+      - 'tests/test_shared_strategy_lifecycle.py'
+      - '.github/workflows/shared-strategy-lifecycle-ci.yml'
+  pull_request:
+    paths:
+      - 'scripts/strategies/**'
+      - 'tests/test_shared_strategy_lifecycle.py'
+      - '.github/workflows/shared-strategy-lifecycle-ci.yml'
+
+jobs:
+  shared-strategy-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: |
+          python3 -m py_compile scripts/strategies/balanced.py
+          python3 -m py_compile scripts/strategies/quality.py
+          python3 -m py_compile scripts/strategies/speed.py
+          python3 -m py_compile tests/test_shared_strategy_lifecycle.py
+      - name: Cross-strategy lifecycle contract
+        run: python3 tests/test_shared_strategy_lifecycle.py
