@@ -67,7 +67,9 @@ class StagePolicy:
     FlowPilot owns live progress/scope observation and executes the resulting
     policy without treating a wait-call timeout as a Worker timeout. A soft
     timeout is an advisory convergence/checkpoint budget and never implies
-    cancellation by itself.
+    cancellation by itself. `max_worker_repair_attempts`, when set on an
+    implementation stage, bounds local validation-failure fix loops inside one
+    Worker and is independent from Parent-level `max_repair_cycles`.
     """
 
     join_policy: str
@@ -78,6 +80,7 @@ class StagePolicy:
     cancel_stragglers_after_quorum: bool = False
     fallback_policy: str = "parent_delta"
     soft_timeout_seconds: int | None = None
+    max_worker_repair_attempts: int | None = None
 
     def validate(self) -> None:
         if self.join_policy not in JOIN_POLICIES:
@@ -97,6 +100,8 @@ class StagePolicy:
                 raise ValueError("soft_timeout_seconds must be positive when set")
             if self.soft_timeout_seconds >= self.hard_timeout_seconds:
                 raise ValueError("soft_timeout_seconds must be lower than hard_timeout_seconds")
+        if self.max_worker_repair_attempts is not None and self.max_worker_repair_attempts < 0:
+            raise ValueError("max_worker_repair_attempts cannot be negative")
         if self.fallback_policy not in FALLBACK_POLICIES:
             raise ValueError(f"invalid fallback policy: {self.fallback_policy}")
 
