@@ -24,10 +24,13 @@ from telemetry_core import (
     extract_transcript_insights,
     fmt_duration_ms,
     fmt_tokens,
+    format_latency_report,
     format_repair_summary,
     iter_run_files,
+    latency_report,
     numeric_ms,
     read_json_object,
+    record_latency_event,
     repair_history,
     repair_run,
     run_context,
@@ -38,6 +41,7 @@ from telemetry_core import (
     telemetry_notifications_enabled,
     telemetry_retention_days,
 )
+from telemetry_core.latency import LatencyError
 import telemetry_core.collector as _collector
 from localization import resolve_language, tr
 
@@ -191,10 +195,109 @@ _collector.notification_body = _localized_notification_body
 _collector.send_system_notification = _localized_send_system_notification
 
 
+def _latency_option(args: list[str], name: str) -> str | None:
+    for index, value in enumerate(args):
+        if value == name:
+            if index + 1 >= len(args) or args[index + 1].startswith("-"):
+                raise LatencyError(f"{name} requires a value")
+            return args[index + 1]
+    return None
+
+
+def _latency_state_file(args: list[str]) -> str | None:
+    return _latency_option(args, "--state-file")
+
+
+def _validate_latency_options(action: str, args: list[str]) -> None:
+    value_options = {"--state-file"}
+    if action == "record":
+        value_options.update({"--event-json", "--json"})
+    flag_options = {"--json"} if action == "report" else set()
+    positionals = 0
+    seen: set[str] = set()
+    index = 0
+    while index < len(args):
+        value = args[index]
+        if value in value_options:
+            if value in seen:
+                raise LatencyError(f"{value} may be supplied only once")
+            seen.add(value)
+            if index + 1 >= len(args) or args[index + 1].startswith("-"):
+                raise LatencyError(f"{value} requires a value")
+            index += 2
+            continue
+        if value in flag_options:
+            if value in seen:
+                raise LatencyError(f"{value} may be supplied only once")
+            seen.add(value)
+            index += 1
+            continue
+        if value.startswith("-"):
+            raise LatencyError(f"unknown latency option: {value}")
+        if action != "record" or positionals:
+            raise LatencyError(f"unexpected latency argument: {value}")
+        positionals += 1
+        index += 1
+
+
+def _latency_record_args(args: list[str]) -> tuple[object, str | None]:
+    state_file = _latency_state_file(args)
+    raw = _latency_option(args, "--event-json")
+    if raw is None:
+        # `--json <object>` is accepted as a convenient shell spelling for
+        # record; on report, --json remains the output-format flag.
+        raw = _latency_option(args, "--json")
+    if raw is None:
+        positional = [
+            value
+            for index, value in enumerate(args)
+            if value not in {"--event-json", "--json", "--state-file"}
+            and (index == 0 or args[index - 1] not in {"--event-json", "--json", "--state-file"})
+            and not value.startswith("-")
+        ]
+        raw = positional[0] if positional else None
+    if raw is None and not sys.stdin.isatty():
+        raw = sys.stdin.read()
+    if not raw or not raw.strip():
+        raise LatencyError("latency record requires --event-json or JSON on stdin")
+    try:
+        event = json.loads(raw)
+    except json.JSONDecodeError:
+        raise LatencyError("latency record event JSON is invalid") from None
+    return event, state_file
+
+
+def _latency_cli(args: list[str]) -> int:
+    if len(args) < 2 or args[1] not in {"record", "report"}:
+        print("usage: telemetry latency record|report [options]", file=sys.stderr)
+        return 2
+    action = args[1]
+    options = args[2:]
+    try:
+        _validate_latency_options(action, options)
+        state_file = _latency_state_file(options)
+        if action == "record":
+            event, state_file = _latency_record_args(options)
+            result = record_latency_event(event, state_file=state_file)
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return 0
+        result = latency_report(state_file=state_file)
+        if "--json" in options:
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(format_latency_report(result))
+        return 0
+    except (LatencyError, OSError) as exc:
+        print(f"telemetry latency: {exc}", file=sys.stderr)
+        return 2
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args:
         cmd = args[0]
+        if cmd == "latency":
+            return _latency_cli(args)
         if cmd == "last":
             return show_last("--json" in args[1:])
         if cmd == "list":

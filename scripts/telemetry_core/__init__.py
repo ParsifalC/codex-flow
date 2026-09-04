@@ -96,6 +96,15 @@ from .repair import (
     repair_history,
     repair_run,
 )
+from .latency import (
+    LATENCY_FILE_NAME,
+    LATENCY_SCHEMA_VERSION,
+    LatencyError,
+    format_latency_report,
+    latency_file,
+    latency_report,
+    record_latency_event,
+)
 
 __all__ = [
     "CODEX_HOME",
@@ -172,4 +181,11 @@ __all__ = [
     "format_repair_summary",
     "repair_run",
     "repair_history",
+    "LATENCY_SCHEMA_VERSION",
+    "LATENCY_FILE_NAME",
+    "LatencyError",
+    "latency_file",
+    "record_latency_event",
+    "latency_report",
+    "format_latency_report",
 ]

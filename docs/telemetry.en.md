@@ -127,11 +127,29 @@ codex-flow telemetry repair
 - **Idempotent**: Repeated execution safely reports `repaired: 0`.
 - **Authoritative Sync**: Safely updates `last.json` if the repaired run matches the latest session and turn ID.
 
+### 6. Worker Latency and Reasoning-Rollout Reports
+
+FlowPilot keeps a separate, purpose-limited append-only ledger at `~/.codex/codex-flow/telemetry/latency.jsonl`. It is used only to compare Worker latency, success, and reasoning rollout; it does not reuse the richer run-summary JSON. Records allow only strategy/stage/role/model tokens, legacy/proposed/selected/observed effort, terminal status, Unix-second timing, and repair/checkpoint counters. Task, Worker, and work-unit identifiers are hashed with a random local salt. A strict field allowlist rejects prompts, transcripts, conclusions, tool arguments, output, cwd, and absolute paths.
+
+FlowPilot records observations when it receives a checkpoint and a Worker terminal result. It sets `observed_effort` only when the runtime confirms the effort actually used for that spawn; planner `selected_effort` must never be relabeled as observed. Collection is fail-open and must not block the task.
+
+```bash
+# Pass event JSON with --event-json or stdin.
+codex-flow telemetry latency record --event-json '{...}'
+
+# Human summary or deterministic JSON.
+codex-flow telemetry latency report
+codex-flow telemetry latency report --json
+```
+
+Only timed `completed`/`failed` terminal observations enter the nearest-rank p50/p95 calculation. `cancelled`/`timeout` observations are reported as censored; missing durations and checkpoint observations are separate, so truncation cannot manufacture a lower latency. `eligible_for_tuning` becomes true only after a homogeneous group has at least 20 uncensored terminal observations and a confirmed `observed_effort`. The report is advisory and never mutates policy; inspect success and censoring rates before enabling `adaptive`.
+
 ---
 
 ## Log Storage & Retention
 
 - **Directory**: `~/.codex/codex-flow/telemetry/runs/`
 - **Latest Pointer**: `~/.codex/codex-flow/telemetry/last.json`
+- **Redacted Latency Ledger**: `~/.codex/codex-flow/telemetry/latency.jsonl`
 - **Default Retention**: 30 days (`retention_days = 30`).
 - **Orphan Auto-Merging**: Unattached worker transcripts are linked by `agent_id` or parent/worker timestamp windows and merged on the next parent stop event.

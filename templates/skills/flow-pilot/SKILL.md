@@ -588,6 +588,12 @@ Quota is never guessed. Planner reads app-server rate-limit state when available
 
 Telemetry is observational and deterministic. Never call a model solely to estimate tokens/quota/duration or produce a usage summary.
 
+For every Worker spawn, retain its Unix-second start time and the plan's strategy, task class, stage/role/model, rollout mode, and legacy/proposed/selected effort. On each received checkpoint and once at terminal state, invoke the installed telemetry CLI's `latency record` path with a stable event ID, task/Worker/work-unit IDs, the boundary time, repair/checkpoint counters, and terminal outcome where applicable. The helper hashes identifiers with a local salt and rejects free-form payload fields; never send prompt, transcript, conclusion, tool arguments/output, cwd, or paths. A checkpoint has `boundary=checkpoint` and no outcome. A terminal observation has `boundary=terminal` and `outcome=completed|failed|cancelled|timeout`.
+
+`observed_effort` means effort confirmed by the runtime for that exact spawn. If the runtime does not expose it, record null; never copy `selected_worker_reasoning` into observed merely because it was requested. Telemetry is fail-open: a collection failure is reported concisely but must not block checkpoint harvest, fencing, cancellation, join, or delivery.
+
+`telemetry latency report` uses deterministic nearest-rank p50/p95 over uncensored terminal observations and separately reports completed, success, censored, missing, and checkpoint counts. Treat `eligible_for_tuning=true` only as permission to evaluate a homogeneous group after at least 20 uncensored samples with confirmed observed effort. It is not permission to mutate policy automatically. Compare latency with success/censoring before moving `shadow` to `adaptive`, and keep `legacy` as the rollback switch.
+
 Quota pressure may constrain speculative fan-out and Parent repair budget for quota-sensitive strategies, but must not silently lower configured reasoning/quality floors. Safety ceilings remain authoritative.
 
 Lifecycle/work-unit policy is deterministic. Do not invent historical latency predictions outside explicit runtime logic.

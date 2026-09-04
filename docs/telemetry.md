@@ -126,11 +126,29 @@ codex-flow telemetry repair
 - **幂等性**：重复执行时显示 `repaired: 0`。
 - **状态同步**：若修复的 run 对应当前的最新任务，同步原子更新 `last.json`。
 
+### 6. Worker 延迟与 reasoning rollout 报告
+
+FlowPilot 另有一份用途受限的 append-only ledger：`~/.codex/codex-flow/telemetry/latency.jsonl`。它只用于比较 Worker 延迟、成功率与 reasoning rollout，不复用包含任务摘要的 run JSON。每条记录只允许策略/阶段/角色/模型 token、legacy/proposed/selected/observed effort、终态、Unix 秒时间与 repair/checkpoint 计数；task、Worker 和 work-unit 标识在本机随机盐下哈希。prompt、transcript、结论、工具参数、输出、cwd 和绝对路径会被字段白名单拒绝。
+
+FlowPilot 在收到 checkpoint 和 Worker 终态时记录一条事件。`observed_effort` 只有在 runtime 能确认每次 spawn 实际采用的 effort 时才填写；不能把 planner 的 `selected_effort` 冒充 observed。记录失败采用 fail-open，不得阻塞主任务。
+
+```bash
+# event JSON 可以通过 --event-json 或 stdin 传入
+codex-flow telemetry latency record --event-json '{...}'
+
+# 人类可读摘要或确定性 JSON
+codex-flow telemetry latency report
+codex-flow telemetry latency report --json
+```
+
+报告仅将有时长的 `completed`/`failed` 终态纳入 nearest-rank p50/p95；`cancelled`/`timeout` 作为 censored 单列，缺失时长与 checkpoint observation 也单列，避免截尾样本制造虚假的低延迟。每个同质分组至少有 20 个未截尾终态样本且 `observed_effort` 已确认时，`eligible_for_tuning` 才为 `true`。这只是调参证据，不会自动修改 policy；启用 `adaptive` 前还应同时检查 success/censored 比例。
+
 ---
 
 ## 日志存储与生命周期
 
 - **存储目录**：`~/.codex/codex-flow/telemetry/runs/`
 - **最新任务指针**：`~/.codex/codex-flow/telemetry/last.json`
+- **脱敏延迟 ledger**：`~/.codex/codex-flow/telemetry/latency.jsonl`
 - **默认保留期**：30 天（可由 `retention_days = 30` 配置）。
 - **孤儿 Worker 自动归集**：无挂载的 Worker 会根据 `agent_id` 或时间窗口在下次 Parent Stop 事件时自动合并入父级 Session。

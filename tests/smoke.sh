@@ -63,6 +63,7 @@ printf '%s\n' "$disabled_output"
 [[ -f "$CODEX_HOME/codex-flow/strategy_runtime.py" ]]
 [[ -d "$CODEX_HOME/codex-flow/strategies" ]]
 [[ -d "$CODEX_HOME/codex-flow/telemetry_core" ]]
+[[ -f "$CODEX_HOME/codex-flow/telemetry_core/latency.py" ]]
 [[ -f "$CODEX_HOME/codex-flow/menu.py" ]]
 [[ -f "$CODEX_HOME/codex-flow/manage-hooks.py" ]]
 [[ -f "$CODEX_HOME/hooks.json" ]]
@@ -140,6 +141,12 @@ assert p['task_budget']['hard_timeout_seconds']==1800, p
 PY
 codex-flow usage list >/dev/null || true
 codex-flow usage stats >/dev/null || true
+codex-flow telemetry latency report --json > "$TMP/installed-latency-report.json"
+python3 - "$TMP/installed-latency-report.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+assert p["n"] == 0 and p["eligible_for_tuning"] is False and p["policy_mutation"] is False, p
+PY
 doctor_output="$(codex-flow doctor 2>&1)"
 printf '%s\n' "$doctor_output"
 [[ "$doctor_output" == *"policy schema v4"* ]]
@@ -150,6 +157,7 @@ printf '%s\n' "$doctor_output"
 [[ "$doctor_output" == *"release policy defaults installed"* ]]
 [[ "$doctor_output" == *"FlowPilot lifecycle hooks installed"* ]]
 [[ "$doctor_output" == *"task budget runtime helper installed"* ]]
+[[ "$doctor_output" == *"latency telemetry helper installed"* ]]
 [[ "$doctor_output" == *"thread-attributed telemetry may be unavailable"* ]]
 [[ "$doctor_output" == *"FlowPilot hook authorization: approval required"* ]]
 [[ "$doctor_output" == *"Installed with action required"* ]]
