@@ -1,0 +1,17 @@
+name: work-unit-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bounded-work-units:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: |
+          bash -n tests/work-unit-runtime.sh
+          python3 -m py_compile scripts/strategies/work_unit_runtime.py
+      - name: Bounded work-unit runtime test
+        run: bash tests/work-unit-runtime.sh
