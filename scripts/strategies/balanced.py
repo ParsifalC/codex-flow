@@ -1,7 +1,15 @@
 """Balanced quality/quota/latency strategy."""
 from __future__ import annotations
 
-from .base import StagePolicy, StrategySpec, WorkerBudget, never, small_low_risk_is_direct, standard_effort
+from .base import (
+    StagePolicy,
+    StrategySpec,
+    TaskBudgetPolicy,
+    WorkerBudget,
+    never,
+    small_low_risk_is_direct,
+    standard_effort,
+)
 
 
 def adaptive_route(task) -> str:
@@ -57,6 +65,25 @@ def implementation_maximum_work_units(task) -> int:
     return 1
 
 
+def task_budget(task) -> TaskBudgetPolicy:
+    """Bound cumulative balanced work without forcing efficient-style latency."""
+    maximum_work_units = implementation_maximum_work_units(task)
+    if task.complexity == "critical" or task.risk == "critical" or task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
+        soft_timeout, hard_timeout = 3000, 3600
+    elif task.complexity == "complex" or task.scope == "cross-module" or task.risk == "high":
+        soft_timeout, hard_timeout = 2700, 3300
+    else:
+        soft_timeout, hard_timeout = 2400, 3000
+    return TaskBudgetPolicy(
+        soft_timeout_seconds=soft_timeout,
+        hard_timeout_seconds=hard_timeout,
+        max_work_units=maximum_work_units,
+        max_implementation_attempts=maximum_work_units + 2,
+        max_replans=2,
+        max_replacements=2,
+    )
+
+
 def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 1, 180, 1200, True, True, "parent_delta")
@@ -95,4 +122,5 @@ STRATEGY = StrategySpec(
     lifecycle=lifecycle,
     allow_parallel_write=True,
     quota_sensitive=True,
+    task_budget=task_budget,
 )
