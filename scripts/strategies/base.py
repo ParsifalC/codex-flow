@@ -65,7 +65,9 @@ class StagePolicy:
 
     The planner normalizes worker counts and applies hard Runtime time ceilings.
     FlowPilot owns live progress/scope observation and executes the resulting
-    policy without treating a wait-call timeout as a Worker timeout.
+    policy without treating a wait-call timeout as a Worker timeout. A soft
+    timeout is an advisory convergence/checkpoint budget and never implies
+    cancellation by itself.
     """
 
     join_policy: str
@@ -75,6 +77,7 @@ class StagePolicy:
     cancel_if_superseded: bool = True
     cancel_stragglers_after_quorum: bool = False
     fallback_policy: str = "parent_delta"
+    soft_timeout_seconds: int | None = None
 
     def validate(self) -> None:
         if self.join_policy not in JOIN_POLICIES:
@@ -89,6 +92,11 @@ class StagePolicy:
             raise ValueError("idle_timeout_seconds must be positive")
         if self.hard_timeout_seconds < self.idle_timeout_seconds:
             raise ValueError("hard_timeout_seconds must be >= idle_timeout_seconds")
+        if self.soft_timeout_seconds is not None:
+            if self.soft_timeout_seconds < 1:
+                raise ValueError("soft_timeout_seconds must be positive when set")
+            if self.soft_timeout_seconds >= self.hard_timeout_seconds:
+                raise ValueError("soft_timeout_seconds must be lower than hard_timeout_seconds")
         if self.fallback_policy not in FALLBACK_POLICIES:
             raise ValueError(f"invalid fallback policy: {self.fallback_policy}")
 
