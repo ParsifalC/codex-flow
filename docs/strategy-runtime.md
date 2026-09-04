@@ -302,6 +302,8 @@ kind=review_attempt
 
 A new reviewer is admitted only before `review_deadline`. At/after that boundary, phase action becomes `finalize_parent`; no reviewer start/retry may consume the Parent finalization reserve.
 
+The phase helper deliberately rejects reviewer admission once that window closes. The raw ledger remains an atomic counter store and is not a standalone scheduler/admission API for reviewer spawning.
+
 ### Parent finalization
 
 From `review_deadline` until hard deadline:
