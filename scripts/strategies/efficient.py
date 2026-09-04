@@ -79,34 +79,25 @@ def implementation_minimum_work_units(task) -> int:
 
 
 def implementation_maximum_work_units(task) -> int:
-    """Bounded plans reserve room for independently evidenced deltas."""
+    """Bound logical units while never under-provisioning proven writer topology."""
     if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
-        return 3
-    if task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
-        return 2
-    return 1
+        semantic_maximum = 3
+    elif task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
+        semantic_maximum = 2
+    else:
+        semantic_maximum = 1
+    topology_floor = min(task.writable_workstreams, worker_budget(task).max_implementers)
+    return max(semantic_maximum, topology_floor)
 
 
 def task_budget(task) -> TaskBudgetPolicy:
-    """Return the efficient strategy's cumulative task-level reservation caps."""
-    if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
-        max_work_units = 3
-        max_attempts = 4
-    elif (
-        task.complexity in {"complex", "critical"}
-        or task.scope == "cross-module"
-        or task.risk == "critical"
-    ):
-        max_work_units = 2
-        max_attempts = 3
-    else:
-        max_work_units = 1
-        max_attempts = 2
+    """Return cumulative caps consistent with the final writable topology envelope."""
+    max_work_units = implementation_maximum_work_units(task)
     return TaskBudgetPolicy(
         soft_timeout_seconds=1500,
         hard_timeout_seconds=1800,
         max_work_units=max_work_units,
-        max_implementation_attempts=max_attempts,
+        max_implementation_attempts=max_work_units + 1,
         max_replans=1,
         max_replacements=1,
     )
@@ -169,7 +160,9 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
+        # Efficient strict review must fit inside the 1800s whole-task envelope
+        # together with exploration/implementation convergence and Parent finalization.
+        return StagePolicy("quorum", 1, 150, 300, True, True, "parent_delta")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
