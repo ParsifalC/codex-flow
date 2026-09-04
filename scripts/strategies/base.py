@@ -74,7 +74,8 @@ class StagePolicy:
 
     `work_unit_mode=bounded` requires Parent to partition implementation into
     multiple acceptance-bounded units and join back to Parent between units.
-    This is a logical execution boundary, not permission for overlapping writers.
+    `max_parallel_work_units` is normalized by Runtime from the already-authorized
+    implementer topology; it never grants additional writable concurrency.
     """
 
     join_policy: str
@@ -89,6 +90,7 @@ class StagePolicy:
     work_unit_mode: str = "single"
     minimum_work_units: int = 1
     join_between_work_units: bool = False
+    max_parallel_work_units: int = 1
 
     def validate(self) -> None:
         if self.join_policy not in JOIN_POLICIES:
@@ -114,11 +116,15 @@ class StagePolicy:
             raise ValueError(f"invalid work_unit_mode: {self.work_unit_mode}")
         if self.minimum_work_units < 1:
             raise ValueError("minimum_work_units must be positive")
+        if self.max_parallel_work_units < 1:
+            raise ValueError("max_parallel_work_units must be positive")
         if self.work_unit_mode == "single":
             if self.minimum_work_units != 1:
                 raise ValueError("single work-unit mode requires minimum_work_units=1")
             if self.join_between_work_units:
                 raise ValueError("single work-unit mode cannot join between work units")
+            if self.max_parallel_work_units != 1:
+                raise ValueError("single work-unit mode requires max_parallel_work_units=1")
         elif self.minimum_work_units < 2:
             raise ValueError("bounded work-unit mode requires at least two work units")
         elif not self.join_between_work_units:
