@@ -2,6 +2,8 @@
 """Regression coverage for task-budget phase admission and required review tail."""
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -156,9 +158,8 @@ def main() -> None:
         else:
             raise AssertionError("new implementation reservation unexpectedly entered required-review tail")
 
-    # The phase helper refuses a different plan against an existing ledger,
-    # preventing a caller from extending the admission window with another
-    # review topology or task budget after initialization.
+    # The phase helper refuses a different budget plan against an existing
+    # ledger, preventing a caller from extending the admission window after init.
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "identity.json")
@@ -169,7 +170,56 @@ def main() -> None:
         except LedgerError as exc:
             assert "plan/policy mismatch" in str(exc), exc
         else:
-            raise AssertionError("different ExecutionPlan unexpectedly reused task phase ledger")
+            raise AssertionError("different budget plan unexpectedly reused task phase ledger")
+
+    # Exercise the real argparse path: --now arrives as text in every shell.
+    phase_cli = ROOT / "scripts/strategies/task_phase_runtime.py"
+    quality = plan("quality")
+    with tempfile.TemporaryDirectory() as tmp:
+        state = str(Path(tmp) / "cli.json")
+        plan_json = json.dumps(quality.to_dict(), separators=(",", ":"))
+        init_run = subprocess.run(
+            [
+                sys.executable,
+                str(phase_cli),
+                "init",
+                "--state-file",
+                state,
+                "--task-id",
+                "cli",
+                "--plan-json",
+                plan_json,
+                "--now",
+                "100",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        initialized = json.loads(init_run.stdout)
+        assert initialized["soft_deadline"] == 3100, initialized
+        status_run = subprocess.run(
+            [
+                sys.executable,
+                str(phase_cli),
+                "status",
+                "--state-file",
+                state,
+                "--task-id",
+                "cli",
+                "--plan-json",
+                plan_json,
+                "--phase",
+                "required_completion",
+                "--now",
+                "3100",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        required = json.loads(status_run.stdout)
+        assert required["action"] == "complete_required" and required["permits_phase_start"], required
 
     # High technical risk may opt into multiple evidence-backed quality units,
     # but minimum_work_units remains one so this never forces a fake split.
