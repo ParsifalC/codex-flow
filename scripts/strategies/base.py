@@ -14,6 +14,9 @@ DemandFn = Callable[[Task], int]
 NotesFn = Callable[[Task], Tuple[str, ...]]
 LifecycleFn = Callable[[Task, str], "StagePolicy"]
 TaskBudgetFn = Callable[[Task], "TaskBudgetPolicy | None"]
+ReasoningRolloutFn = Callable[
+    [Task, str, "ReasoningRolloutPolicy", str, str], "ReasoningRolloutDecision"
+]
 
 STAGES = ("exploration", "implementation", "review")
 JOIN_POLICIES = ("opportunistic", "quorum", "required")
@@ -122,6 +125,69 @@ class TaskBudgetPolicy:
             raise ValueError("max_work_units must be positive")
         if self.max_implementation_attempts < 1:
             raise ValueError("max_implementation_attempts must be positive")
+
+
+REASONING_ROLLOUT_MODES = ("legacy", "shadow", "adaptive")
+REASONING_EFFORTS = ("high", "xhigh", "max")
+
+
+@dataclass(frozen=True)
+class ReasoningRolloutPolicy:
+    """Optional efficient-worker reasoning rollout configuration."""
+
+    mode: str = "shadow"
+    minimum: str = "high"
+    routine: str = "high"
+    complex: str = "xhigh"
+    critical: str = "max"
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "ReasoningRolloutPolicy":
+        if type(value) is not dict:
+            raise ValueError("reasoning rollout policy must be an object")
+        fields = ("mode", "minimum", "routine", "complex", "critical")
+        unknown = sorted(set(value).difference(fields))
+        if unknown:
+            raise ValueError(f"reasoning rollout policy has unknown fields: {unknown}")
+        policy = cls(**{name: value[name] for name in fields if name in value})
+        policy.validate()
+        return policy
+
+    def validate(self) -> None:
+        if type(self.mode) is not str or self.mode not in REASONING_ROLLOUT_MODES:
+            raise ValueError(f"invalid reasoning rollout mode: {self.mode}")
+        for name, value in (
+            ("minimum", self.minimum),
+            ("routine", self.routine),
+            ("complex", self.complex),
+            ("critical", self.critical),
+        ):
+            if type(value) is not str or value not in REASONING_EFFORTS:
+                raise ValueError(f"invalid reasoning rollout {name}: {value}")
+
+
+@dataclass(frozen=True)
+class ReasoningRolloutDecision:
+    """Planner output comparing legacy and rollout-selected Worker effort."""
+
+    mode: str
+    legacy_worker_reasoning: str
+    proposed_worker_reasoning: str
+    selected_worker_reasoning: str
+    applied: bool
+
+    def validate(self) -> None:
+        if type(self.mode) is not str or self.mode not in REASONING_ROLLOUT_MODES:
+            raise ValueError(f"invalid reasoning rollout mode: {self.mode}")
+        for name, value in (
+            ("legacy_worker_reasoning", self.legacy_worker_reasoning),
+            ("proposed_worker_reasoning", self.proposed_worker_reasoning),
+            ("selected_worker_reasoning", self.selected_worker_reasoning),
+        ):
+            if type(value) is not str or value not in REASONING_EFFORTS:
+                raise ValueError(f"invalid {name}: {value}")
+        if type(self.applied) is not bool:
+            raise ValueError("reasoning rollout applied must be boolean")
 
 
 @dataclass(frozen=True)
@@ -249,6 +315,7 @@ class StrategySpec:
     allow_parallel_write: bool = False
     quota_sensitive: bool = False
     task_budget: TaskBudgetFn | None = None
+    reasoning_rollout: ReasoningRolloutFn | None = None
 
 
 def standard_effort(task: Task, role: str) -> str:

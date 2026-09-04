@@ -90,6 +90,8 @@ grep -Fq '[strategy]' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'profile = "efficient"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq '[routing]' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'mode = "adaptive"' "$CODEX_HOME/codex-flow.toml"
+grep -Fq '[reasoning.rollout]' "$CODEX_HOME/codex-flow.toml"
+grep -Fq 'mode = "shadow"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'model = "auto"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'resolved_model = "gpt-5.6-luna"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'enabled = true' "$CODEX_HOME/codex-flow.toml"
@@ -122,7 +124,7 @@ codex-flow strategy plan --complexity complex --uncertainty high > "$TMP/install
 python3 - "$TMP/installed-plan.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['schema_version']==9, p
+assert p['schema_version']==10, p
 assert p['quality_intent']=='normal', p
 assert p['strategy']=='efficient' and p['routing']=='delegate', p
 assert p['parent_reasoning']=='high', p
@@ -187,6 +189,7 @@ replacements = {
     'mode = "adaptive"': 'mode = "delegate"',
     'review = "auto"': 'review = "strict"',
     'fanout = "auto"': 'fanout = "conservative"',
+    '[reasoning.rollout]\nmode = "shadow"\nminimum = "high"\nroutine = "high"\ncomplex = "xhigh"\ncritical = "max"': '[reasoning.rollout]\nmode = "legacy"\nminimum = "xhigh"\nroutine = "xhigh"\ncomplex = "max"\ncritical = "max"',
     'min_reasoning_effort = "high"\nreasoning_policy = "adaptive"\nroutine_effort = "high"\ncomplex_effort = "high"\ncritical_effort = "xhigh"': 'min_reasoning_effort = "xhigh"\nreasoning_policy = "adaptive"\nroutine_effort = "xhigh"\ncomplex_effort = "max"\ncritical_effort = "max"',
     'min_reasoning_effort = "xhigh"\nreasoning_policy = "adaptive"\nroutine_effort = "xhigh"\ncomplex_effort = "xhigh"\ncritical_effort = "max"': 'min_reasoning_effort = "xhigh"\nreasoning_policy = "adaptive"\nroutine_effort = "max"\ncomplex_effort = "max"\ncritical_effort = "max"',
     'max_concurrent_threads = 4': 'max_concurrent_threads = 3',
@@ -207,6 +210,9 @@ grep -Fq 'profile = "balanced"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'mode = "delegate"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'review = "strict"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'fanout = "conservative"' "$CODEX_HOME/codex-flow.toml"
+grep -Fq '[reasoning.rollout]' "$CODEX_HOME/codex-flow.toml"
+grep -Fq 'mode = "legacy"' "$CODEX_HOME/codex-flow.toml"
+grep -Fq 'minimum = "xhigh"' "$CODEX_HOME/codex-flow.toml"
 [[ "$(grep -cF 'routine_effort = "xhigh"' "$CODEX_HOME/codex-flow.toml")" == 1 ]]
 [[ "$(grep -cF 'routine_effort = "max"' "$CODEX_HOME/codex-flow.toml")" == 1 ]]
 [[ "$(grep -cF 'complex_effort = "max"' "$CODEX_HOME/codex-flow.toml")" == 2 ]]
@@ -232,6 +238,8 @@ roundtrip_doctor="$(codex-flow doctor 2>&1)"
 [[ "$roundtrip_doctor" == *"routing mode: delegate"* ]]
 [[ "$roundtrip_doctor" == *"review modifier: strict"* ]]
 [[ "$roundtrip_doctor" == *"fanout modifier: conservative"* ]]
+[[ "$roundtrip_doctor" == *"efficient reasoning rollout: legacy"* ]]
+[[ "$roundtrip_doctor" == *"rollout minimum: xhigh"* ]]
 [[ "$roundtrip_doctor" == *"runtime thread ceiling: 3"* ]]
 [[ "$roundtrip_doctor" == *"runtime repair ceiling: 1"* ]]
 

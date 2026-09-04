@@ -167,6 +167,13 @@ def main() -> int:
         routing = policy_value("routing", "mode", "adaptive")
         review = policy_value("modifiers", "review", "auto")
         fanout = policy_value("modifiers", "fanout", "auto")
+        rollout_mode = policy_value("reasoning.rollout", "mode", "shadow")
+        rollout_floors = {
+            "minimum": policy_value("reasoning.rollout", "minimum", "high"),
+            "routine": policy_value("reasoning.rollout", "routine", "high"),
+            "complex": policy_value("reasoning.rollout", "complex", "xhigh"),
+            "critical": policy_value("reasoning.rollout", "critical", "max"),
+        }
         if strategy_enabled == "true":
             ok(T("strategy dispatch: enabled", "策略分发：已启用"))
         elif strategy_enabled == "false":
@@ -189,6 +196,26 @@ def main() -> int:
             ok(T(f"fanout modifier: {fanout}", f"Fan-out 修饰策略：{fanout}"))
         else:
             fail(T(f"invalid fanout modifier: {fanout or 'missing'}", f"无效 Fan-out 修饰策略：{fanout or 'missing'}"))
+        if rollout_mode in {"legacy", "shadow", "adaptive"}:
+            ok(T(
+                "efficient reasoning rollout: " + rollout_mode + " (minimum=" + rollout_floors["minimum"]
+                + ", routine=" + rollout_floors["routine"] + ", complex=" + rollout_floors["complex"]
+                + ", critical=" + rollout_floors["critical"] + ")",
+                "efficient 推理 rollout：" + rollout_mode + "（最低=" + rollout_floors["minimum"]
+                + "，routine=" + rollout_floors["routine"] + "，complex=" + rollout_floors["complex"]
+                + "，critical=" + rollout_floors["critical"] + "）",
+            ))
+        else:
+            fail(T(
+                f"invalid efficient reasoning rollout mode: {rollout_mode or 'missing'}",
+                f"无效 efficient 推理 rollout 模式：{rollout_mode or 'missing'}",
+            ))
+        for key, label in (("minimum", "rollout minimum"), ("routine", "rollout routine"), ("complex", "rollout complex"), ("critical", "rollout critical")):
+            _check_effort(
+                f"efficient reasoning {label}",
+                f"efficient 推理 {label}",
+                rollout_floors[key],
+            )
 
         parent_effort = policy_value("parent", "min_reasoning_effort")
         worker_effort = policy_value("worker", "min_reasoning_effort")

@@ -194,7 +194,7 @@ python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/policy.toml" plan --r
 python3 - "$TMP/plan.json" "$TMP/direct-plan.json" "$TMP/legacy-plan.json" <<'PY'
 import json, sys
 delegated, direct, legacy = (json.load(open(path)) for path in sys.argv[1:])
-assert delegated["schema_version"] == 9, delegated
+assert delegated["schema_version"] == 10, delegated
 assert delegated["task_budget"] == {
     "soft_timeout_seconds": 1500,
     "hard_timeout_seconds": 1800,
@@ -204,8 +204,8 @@ assert delegated["task_budget"] == {
     "max_replacements": 1,
 }, delegated
 assert delegated["implementation_stage"]["maximum_work_units"] == delegated["task_budget"]["max_work_units"], delegated
-assert direct["schema_version"] == 9 and direct["task_budget"] is None, direct
-assert legacy["schema_version"] == 9 and legacy["task_budget"] is None, legacy
+assert direct["schema_version"] == 10 and direct["task_budget"] is None, direct
+assert legacy["schema_version"] == 10 and legacy["task_budget"] is None, legacy
 PY
 
 printf 'task budget runtime test passed\n'

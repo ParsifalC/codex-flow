@@ -184,7 +184,7 @@ plan --complexity small --risk low > "$TMP/small.json"
 python3 - "$TMP/small.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['schema_version']==9, p
+assert p['schema_version']==10, p
 assert p['strategy']=='efficient' and p['routing']=='direct', p
 assert p['quality_intent']=='normal', p
 for prefix in ('explorer','implementer','reviewer'):
@@ -214,6 +214,182 @@ assert exp['idle_timeout_seconds']==120 and exp['hard_timeout_seconds']==900, ex
 assert imp['join_policy']=='required' and imp['min_successful_workers']==1, imp
 assert imp['cancel_if_superseded'] is False and imp['fallback_policy']=='replan', imp
 assert p['review_stage'] is None, p
+PY
+
+# Efficient delegated workers expose the three rollout modes without changing
+# direct or non-efficient strategy behavior. The proposed effort is the
+# rollout class target/minimum/Parent maximum; shadow and legacy still select
+# the historical worker effort.
+for complexity in routine complex critical; do
+  for mode in legacy shadow adaptive; do
+    plan --routing delegate --complexity "$complexity" --efficient-reasoning "$mode" \
+      > "$TMP/rollout-${complexity}-${mode}.json"
+  done
+done
+python3 - "$TMP" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+expected = {
+    "routine": ("xhigh", "high"),
+    "complex": ("xhigh", "xhigh"),
+    "critical": ("max", "max"),
+}
+for complexity, (legacy, proposed) in expected.items():
+    for mode in ("legacy", "shadow", "adaptive"):
+        p = json.load(open(root / f"rollout-{complexity}-{mode}.json"))
+        d = p["reasoning_rollout"]
+        assert p["schema_version"] == 10, p
+        assert d["mode"] == mode and d["legacy_worker_reasoning"] == legacy, d
+        assert d["proposed_worker_reasoning"] == proposed, d
+        assert d["selected_worker_reasoning"] == (proposed if mode == "adaptive" else legacy), d
+        assert d["applied"] is (mode == "adaptive"), d
+        assert p["explorer_reasoning"] == d["selected_worker_reasoning"], p
+        assert p["implementer_reasoning"] == d["selected_worker_reasoning"], p
+        assert p["reviewer_reasoning"] is None, p
+PY
+
+# A current-task CLI override changes only this plan; the installed policy
+# remains the release-compatible shadow default when its optional section is
+# absent (legacy policy compatibility).
+plan --routing delegate --complexity routine > "$TMP/rollout-default.json"
+plan --routing delegate --complexity routine --efficient-reasoning adaptive > "$TMP/rollout-override.json"
+python3 - "$TMP/rollout-default.json" "$TMP/rollout-override.json" <<'PY'
+import json
+import sys
+
+default, override = (json.load(open(path)) for path in sys.argv[1:])
+assert default["reasoning_rollout"]["mode"] == "shadow", default
+assert default["reasoning_rollout"]["applied"] is False, default
+assert override["reasoning_rollout"]["mode"] == "adaptive", override
+assert override["reasoning_rollout"]["applied"] is True, override
+assert override["implementer_reasoning"] == override["reasoning_rollout"]["selected_worker_reasoning"], override
+PY
+
+# User rollout floors and Parent floors raise the proposal; they never reduce
+# the legacy baseline. Repository floors may raise efforts but cannot switch a
+# user's legacy/shadow mode to adaptive.
+cp "$POLICY" "$TMP/user-rollout-floor.toml"
+cat >> "$TMP/user-rollout-floor.toml" <<'EOF'
+
+[reasoning.rollout]
+minimum = "max"
+routine = "max"
+complex = "max"
+critical = "max"
+EOF
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/user-rollout-floor.toml" plan \
+  --repo-policy none --quota-pressure unknown --routing delegate --complexity routine \
+  --efficient-reasoning adaptive > "$TMP/user-rollout-floor.json"
+cp "$POLICY" "$TMP/parent-rollout-floor.toml"
+python3 - "$TMP/parent-rollout-floor.toml" <<'PY'
+from pathlib import Path
+import sys
+
+p = Path(sys.argv[1])
+s = p.read_text().replace(
+    'min_reasoning_effort = "high"\nroutine_effort = "high"',
+    'min_reasoning_effort = "xhigh"\nroutine_effort = "xhigh"',
+    1,
+)
+p.write_text(s)
+PY
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/parent-rollout-floor.toml" plan \
+  --repo-policy none --quota-pressure unknown --routing delegate --complexity routine \
+  --efficient-reasoning adaptive > "$TMP/parent-rollout-floor.json"
+cat > "$TMP/repo-rollout-floor.toml" <<'EOF'
+[reasoning.rollout]
+mode = "adaptive"
+minimum = "max"
+EOF
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan \
+  --repo-policy "$TMP/repo-rollout-floor.toml" --quota-pressure unknown --routing delegate \
+  --complexity routine > "$TMP/repo-rollout-floor.json"
+python3 - "$TMP/user-rollout-floor.json" "$TMP/parent-rollout-floor.json" "$TMP/repo-rollout-floor.json" <<'PY'
+import json
+import sys
+
+user, parent, repo = (json.load(open(path)) for path in sys.argv[1:])
+assert user["reasoning_rollout"]["proposed_worker_reasoning"] == "max", user
+assert user["reasoning_rollout"]["selected_worker_reasoning"] == "max", user
+assert parent["parent_reasoning"] == "xhigh", parent
+assert parent["reasoning_rollout"]["proposed_worker_reasoning"] == "xhigh", parent
+assert parent["implementer_reasoning"] == "xhigh", parent
+assert repo["reasoning_rollout"]["mode"] == "shadow", repo
+assert repo["reasoning_rollout"]["proposed_worker_reasoning"] == "max", repo
+assert repo["reasoning_rollout"]["selected_worker_reasoning"] == "xhigh", repo
+assert repo["reasoning_rollout"]["applied"] is False, repo
+PY
+
+# Parent=max is allowed to equal the proposed/selected max effort.
+cp "$POLICY" "$TMP/max-parent-rollout.toml"
+python3 - "$TMP/max-parent-rollout.toml" <<'PY'
+from pathlib import Path
+import sys
+
+p = Path(sys.argv[1])
+s = p.read_text().replace(
+    'min_reasoning_effort = "high"\nroutine_effort = "high"',
+    'min_reasoning_effort = "max"\nroutine_effort = "max"',
+    1,
+)
+p.write_text(s)
+PY
+python3 "$ROOT/scripts/strategy_runtime.py" --policy "$TMP/max-parent-rollout.toml" plan \
+  --repo-policy none --quota-pressure unknown --routing delegate --complexity routine \
+  --efficient-reasoning adaptive > "$TMP/max-parent-rollout.json"
+python3 - "$TMP/max-parent-rollout.json" <<'PY'
+import json
+import sys
+
+p = json.load(open(sys.argv[1]))
+d = p["reasoning_rollout"]
+assert p["parent_reasoning"] == "max", p
+assert d["proposed_worker_reasoning"] == d["selected_worker_reasoning"] == "max", d
+assert any("cannot exceed max" in note for note in p["notes"]), p
+PY
+
+# Direct efficient work and delegated non-efficient work do not emit or apply
+# rollout decisions, even when the current task asks for adaptive mode.
+plan --routing direct --complexity routine --efficient-reasoning adaptive > "$TMP/rollout-direct.json"
+plan --profile balanced --routing delegate --complexity routine --efficient-reasoning adaptive > "$TMP/rollout-balanced.json"
+python3 - "$TMP/rollout-direct.json" "$TMP/rollout-balanced.json" <<'PY'
+import json
+import sys
+
+direct, balanced = (json.load(open(path)) for path in sys.argv[1:])
+assert direct["routing"] == "direct" and direct["reasoning_rollout"] is None, direct
+assert balanced["strategy"] == "balanced" and balanced["routing"] == "delegate", balanced
+assert balanced["reasoning_rollout"] is None, balanced
+assert balanced["implementer_reasoning"] == "xhigh", balanced
+PY
+
+# Rollout contracts are strict: booleans and unknown values are rejected.
+python3 - "$ROOT" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from strategies.base import ReasoningRolloutDecision, ReasoningRolloutPolicy
+
+for value in (
+    {"mode": True},
+    {"mode": "adaptive", "minimum": "low"},
+    {"mode": "adaptive", "unknown": "high"},
+):
+    try:
+        ReasoningRolloutPolicy.from_dict(value)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"invalid rollout policy accepted: {value}")
+try:
+    ReasoningRolloutDecision("adaptive", "high", "high", "high", 1).validate()
+except ValueError:
+    pass
+else:
+    raise AssertionError("boolean rollout decision accepted")
 PY
 
 # Delegated Worker reasoning remains at least one tier above Parent when possible.
@@ -555,7 +731,7 @@ PY
 
 # Skill must treat lifecycle as an authoritative plan boundary, not a prose heuristic.
 grep -Fq 'FlowPilot profiles. `strategy_runtime.py` + the strategy registry decide. FlowPilot executes the returned plan.' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'Current contract (schema v9)' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'Current contract (schema v10)' "$ROOT/templates/skills/flow-pilot/SKILL.md"
 grep -Fq 'A `wait()` timeout is never a Worker timeout.' "$ROOT/templates/skills/flow-pilot/SKILL.md"
 grep -Fq 'cancel_if_superseded' "$ROOT/templates/skills/flow-pilot/SKILL.md"
 grep -Fq 'Fallback always operates on the missing delta' "$ROOT/templates/skills/flow-pilot/SKILL.md"

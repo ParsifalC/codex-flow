@@ -20,7 +20,14 @@ from typing import Any, Iterable
 from strategies import all_specs as all_strategy_specs
 from strategies import get as get_strategy
 from strategies import names as strategy_names
-from strategies.base import StagePolicy, TaskBudgetPolicy, WorkerBudget
+from strategies.base import (
+    REASONING_ROLLOUT_MODES,
+    ReasoningRolloutDecision,
+    ReasoningRolloutPolicy,
+    StagePolicy,
+    TaskBudgetPolicy,
+    WorkerBudget,
+)
 
 try:
     from telemetry_core.app_server import quota_windows as app_server_quota_windows
@@ -129,6 +136,7 @@ class PolicySnapshot:
     worker_routine_reasoning: str
     worker_complex_reasoning: str
     worker_critical_reasoning: str
+    reasoning_rollout: ReasoningRolloutPolicy = ReasoningRolloutPolicy()
 
     def validate(self) -> None:
         for label, value in (
@@ -143,6 +151,7 @@ class PolicySnapshot:
         ):
             if value not in EFFORTS:
                 raise ValueError(f"invalid {label}: {value}")
+        self.reasoning_rollout.validate()
 
 
 @dataclass(frozen=True)
@@ -195,6 +204,7 @@ class ExecutionPlan:
     parent_capability_policy: str
     parent_model_floor: str
     parent_reasoning: str
+    reasoning_rollout: ReasoningRolloutDecision | None
     explorer_capability_policy: str | None
     explorer_model: str | None
     explorer_reasoning: str | None
@@ -301,6 +311,19 @@ def _release_bool(section: str, key: str, fallback: bool) -> bool:
     return _policy_bool(_release_defaults_path(), section, key, fallback)
 
 
+def _release_reasoning_rollout() -> ReasoningRolloutPolicy:
+    """Load optional rollout defaults while preserving old installations."""
+    rollout = ReasoningRolloutPolicy(
+        mode=_release_value("reasoning.rollout", "mode", "shadow"),
+        minimum=_release_value("reasoning.rollout", "minimum", "high"),
+        routine=_release_value("reasoning.rollout", "routine", "high"),
+        complex=_release_value("reasoning.rollout", "complex", "xhigh"),
+        critical=_release_value("reasoning.rollout", "critical", "max"),
+    )
+    rollout.validate()
+    return rollout
+
+
 def _quoted(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -359,6 +382,7 @@ def _release_capability() -> PolicySnapshot:
         worker_routine_reasoning=_release_value("reasoning.worker", "routine"),
         worker_complex_reasoning=_release_value("reasoning.worker", "complex"),
         worker_critical_reasoning=_release_value("reasoning.worker", "critical"),
+        reasoning_rollout=_release_reasoning_rollout(),
     )
     snapshot.validate()
     return snapshot
@@ -381,6 +405,14 @@ def _user_capability(path: Path) -> PolicySnapshot:
     release = _release_capability()
     parent_floor = policy_value(path, "parent", "min_reasoning_effort", release.parent_min_reasoning)
     worker_floor = policy_value(path, "worker", "min_reasoning_effort", release.worker_min_reasoning)
+    rollout = ReasoningRolloutPolicy(
+        mode=policy_value(path, "reasoning.rollout", "mode", release.reasoning_rollout.mode),
+        minimum=policy_value(path, "reasoning.rollout", "minimum", release.reasoning_rollout.minimum),
+        routine=policy_value(path, "reasoning.rollout", "routine", release.reasoning_rollout.routine),
+        complex=policy_value(path, "reasoning.rollout", "complex", release.reasoning_rollout.complex),
+        critical=policy_value(path, "reasoning.rollout", "critical", release.reasoning_rollout.critical),
+    )
+    rollout.validate()
     snapshot = PolicySnapshot(
         parent_capability_policy=policy_value(path, "parent", "model_policy", release.parent_capability_policy),
         parent_model_floor=policy_value(path, "parent", "min_model", release.parent_model_floor),
@@ -395,6 +427,7 @@ def _user_capability(path: Path) -> PolicySnapshot:
         worker_routine_reasoning=policy_value(path, "worker", "routine_effort", release.worker_routine_reasoning),
         worker_complex_reasoning=policy_value(path, "worker", "complex_effort", release.worker_complex_reasoning),
         worker_critical_reasoning=policy_value(path, "worker", "critical_effort", release.worker_critical_reasoning),
+        reasoning_rollout=rollout,
     )
     snapshot.validate()
     return snapshot
@@ -423,6 +456,16 @@ def _raise_capability_floors(base: PolicySnapshot, repo: Path | None) -> PolicyS
         worker_routine_reasoning=repo_effort("worker", "routine_effort", base.worker_routine_reasoning),
         worker_complex_reasoning=repo_effort("worker", "complex_effort", base.worker_complex_reasoning),
         worker_critical_reasoning=repo_effort("worker", "critical_effort", base.worker_critical_reasoning),
+        # Repository policy may raise rollout effort floors, but it cannot
+        # change the user's rollout mode (in particular, it cannot silently
+        # opt a legacy/shadow user into adaptive execution).
+        reasoning_rollout=ReasoningRolloutPolicy(
+            mode=base.reasoning_rollout.mode,
+            minimum=repo_effort("reasoning.rollout", "minimum", base.reasoning_rollout.minimum),
+            routine=repo_effort("reasoning.rollout", "routine", base.reasoning_rollout.routine),
+            complex=repo_effort("reasoning.rollout", "complex", base.reasoning_rollout.complex),
+            critical=repo_effort("reasoning.rollout", "critical", base.reasoning_rollout.critical),
+        ),
     )
     result.validate()
     return result
@@ -491,6 +534,20 @@ def _configured_effort(task: TaskProfile, policy: PolicySnapshot, role: str) -> 
     else:
         target = routine
     return _effort_max(floor, target)
+
+
+def _rollout_policy_with_override(
+    policy: ReasoningRolloutPolicy,
+    mode: str | None,
+) -> ReasoningRolloutPolicy:
+    if mode is None:
+        policy.validate()
+        return policy
+    if mode not in REASONING_ROLLOUT_MODES:
+        raise ValueError(f"invalid efficient reasoning rollout mode: {mode}")
+    overridden = replace(policy, mode=mode)
+    overridden.validate()
+    return overridden
 
 
 def quota_pressure_from_snapshot(snapshot: dict[str, Any] | None) -> str:
@@ -644,12 +701,14 @@ def compile_plan(
     policy: PolicySnapshot | None = None,
     runtime: RuntimeState | None = None,
     repo_policy: str | None = None,
+    efficient_reasoning: str | None = None,
 ) -> ExecutionPlan:
     task.validate()
     modifiers = modifiers or Modifiers()
     modifiers.validate()
     policy = policy or _release_capability()
     policy.validate()
+    rollout_policy = _rollout_policy_with_override(policy.reasoning_rollout, efficient_reasoning)
     runtime = runtime or RuntimeState(
         max_concurrent_threads=_release_int("runtime", "max_concurrent_threads", 4),
         max_repair_cycles=_release_int("runtime", "max_repair_cycles", 2),
@@ -667,7 +726,7 @@ def compile_plan(
         _configured_effort(task, policy, "parent"),
         spec.effort(task, "parent"),
     )
-    role_efforts = {
+    legacy_role_efforts = {
         role: _effort_max(
             _configured_effort(task, policy, "worker"),
             spec.effort(task, role),
@@ -675,6 +734,8 @@ def compile_plan(
         )
         for role in ("explorer", "implementer", "reviewer")
     }
+    role_efforts = dict(legacy_role_efforts)
+    reasoning_rollout: ReasoningRolloutDecision | None = None
 
     exploration_workers = 0
     implementation_workers = 0
@@ -761,6 +822,37 @@ def compile_plan(
     if runtime.quota_pressure == "critical" and spec.quota_sensitive:
         repair_cycles = min(repair_cycles, 1)
 
+    if delegated and spec.reasoning_rollout is not None:
+        decisions = {
+            role: spec.reasoning_rollout(
+                task,
+                role,
+                rollout_policy,
+                parent_effort,
+                legacy_role_efforts[role],
+            )
+            for role in ("explorer", "implementer", "reviewer")
+        }
+        selected = {decision.selected_worker_reasoning for decision in decisions.values()}
+        if len(selected) != 1:
+            raise ValueError("strategy reasoning rollout must select one Worker effort across roles")
+        reasoning_rollout = next(iter(decisions.values()))
+        reasoning_rollout.validate()
+        role_efforts = {
+            role: decisions[role].selected_worker_reasoning
+            for role in decisions
+        }
+        if reasoning_rollout.mode == "shadow":
+            notes.append(
+                "efficient reasoning rollout is shadow; proposed Worker effort is reported, legacy effort is selected"
+            )
+        elif reasoning_rollout.mode == "adaptive":
+            notes.append(
+                "efficient reasoning rollout is adaptive; proposed Worker effort is selected and may equal Parent"
+            )
+        else:
+            notes.append("efficient reasoning rollout is legacy; current Worker effort is selected")
+
     if route == "direct":
         exploration_workers = 0
         implementation_workers = 0
@@ -827,7 +919,7 @@ def compile_plan(
 
     planned_worker_count = exploration_workers + implementation_workers + reviewer_workers
     return ExecutionPlan(
-        schema_version=9,
+        schema_version=10,
         strategy=strategy,
         routing=route,
         review_modifier=modifiers.review,
@@ -836,6 +928,7 @@ def compile_plan(
         parent_capability_policy=policy.parent_capability_policy,
         parent_model_floor=policy.parent_model_floor,
         parent_reasoning=parent_effort,
+        reasoning_rollout=reasoning_rollout,
         explorer_capability_policy=explorer_capability_policy,
         explorer_model=explorer_model,
         explorer_reasoning=explorer_reasoning,
@@ -992,6 +1085,11 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--writable-workstreams", type=int, default=1)
     plan.add_argument("--quality-intent", choices=QUALITY_INTENTS, default="normal")
     plan.add_argument(
+        "--efficient-reasoning",
+        choices=REASONING_ROLLOUT_MODES,
+        help="current-task efficient Worker reasoning rollout mode",
+    )
+    plan.add_argument(
         "--quota-pressure",
         choices=("auto", "unknown", "low", "medium", "high", "critical"),
         default="auto",
@@ -1138,6 +1236,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 max_repair_cycles=max_repairs,
             ),
             repo_policy=resolved.repo_policy,
+            efficient_reasoning=ns.efficient_reasoning,
         )
         print(json.dumps(plan_obj.to_dict(), ensure_ascii=False, indent=2))
         return 0

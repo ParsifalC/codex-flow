@@ -58,6 +58,11 @@ $DefaultWorkerMinEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'minimu
 $DefaultWorkerRoutineEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'routine'
 $DefaultWorkerComplexEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'complex'
 $DefaultWorkerCriticalEffort = Get-TomlValue $defaultsText 'reasoning.worker' 'critical'
+$DefaultRolloutMode = Get-TomlValue $defaultsText 'reasoning.rollout' 'mode'
+$DefaultRolloutMinimum = Get-TomlValue $defaultsText 'reasoning.rollout' 'minimum'
+$DefaultRolloutRoutine = Get-TomlValue $defaultsText 'reasoning.rollout' 'routine'
+$DefaultRolloutComplex = Get-TomlValue $defaultsText 'reasoning.rollout' 'complex'
+$DefaultRolloutCritical = Get-TomlValue $defaultsText 'reasoning.rollout' 'critical'
 $DefaultMaxThreads = Get-TomlValue $defaultsText 'runtime' 'max_concurrent_threads'
 $DefaultMaxRepairs = Get-TomlValue $defaultsText 'runtime' 'max_repair_cycles'
 $DefaultTelemetryEnabled = Get-TomlValue $defaultsText 'telemetry' 'enabled'
@@ -81,6 +86,11 @@ $ExistingWorkerMinEffort = Existing-OrDefault $existingText 'worker' 'min_reason
 $ExistingWorkerRoutineEffort = Existing-OrDefault $existingText 'worker' 'routine_effort' $DefaultWorkerRoutineEffort
 $ExistingWorkerComplexEffort = Existing-OrDefault $existingText 'worker' 'complex_effort' $DefaultWorkerComplexEffort
 $ExistingWorkerCriticalEffort = Existing-OrDefault $existingText 'worker' 'critical_effort' $DefaultWorkerCriticalEffort
+$ExistingRolloutMode = Existing-OrDefault $existingText 'reasoning.rollout' 'mode' $DefaultRolloutMode
+$ExistingRolloutMinimum = Existing-OrDefault $existingText 'reasoning.rollout' 'minimum' $DefaultRolloutMinimum
+$ExistingRolloutRoutine = Existing-OrDefault $existingText 'reasoning.rollout' 'routine' $DefaultRolloutRoutine
+$ExistingRolloutComplex = Existing-OrDefault $existingText 'reasoning.rollout' 'complex' $DefaultRolloutComplex
+$ExistingRolloutCritical = Existing-OrDefault $existingText 'reasoning.rollout' 'critical' $DefaultRolloutCritical
 $ExistingMaxThreads = Existing-OrDefault $existingText 'runtime' 'max_concurrent_threads' $DefaultMaxThreads
 $ExistingMaxRepairs = Existing-OrDefault $existingText 'runtime' 'max_repair_cycles' $DefaultMaxRepairs
 $ExistingTelemetryEnabled = Existing-OrDefault $existingText 'telemetry' 'enabled' $DefaultTelemetryEnabled
@@ -111,6 +121,11 @@ $WorkerMinEffort = if ($env:CODEX_FLOW_WORKER_MIN_EFFORT) { $env:CODEX_FLOW_WORK
 $WorkerRoutineEffort = if ($env:CODEX_FLOW_WORKER_ROUTINE_EFFORT) { $env:CODEX_FLOW_WORKER_ROUTINE_EFFORT } else { $ExistingWorkerRoutineEffort }
 $WorkerComplexEffort = if ($env:CODEX_FLOW_WORKER_COMPLEX_EFFORT) { $env:CODEX_FLOW_WORKER_COMPLEX_EFFORT } else { $ExistingWorkerComplexEffort }
 $WorkerCriticalEffort = if ($env:CODEX_FLOW_WORKER_CRITICAL_EFFORT) { $env:CODEX_FLOW_WORKER_CRITICAL_EFFORT } else { $ExistingWorkerCriticalEffort }
+$RolloutMode = if ($env:CODEX_FLOW_REASONING_ROLLOUT_MODE) { $env:CODEX_FLOW_REASONING_ROLLOUT_MODE } else { $ExistingRolloutMode }
+$RolloutMinimum = if ($env:CODEX_FLOW_REASONING_ROLLOUT_MINIMUM) { $env:CODEX_FLOW_REASONING_ROLLOUT_MINIMUM } else { $ExistingRolloutMinimum }
+$RolloutRoutine = if ($env:CODEX_FLOW_REASONING_ROLLOUT_ROUTINE) { $env:CODEX_FLOW_REASONING_ROLLOUT_ROUTINE } else { $ExistingRolloutRoutine }
+$RolloutComplex = if ($env:CODEX_FLOW_REASONING_ROLLOUT_COMPLEX) { $env:CODEX_FLOW_REASONING_ROLLOUT_COMPLEX } else { $ExistingRolloutComplex }
+$RolloutCritical = if ($env:CODEX_FLOW_REASONING_ROLLOUT_CRITICAL) { $env:CODEX_FLOW_REASONING_ROLLOUT_CRITICAL } else { $ExistingRolloutCritical }
 $MaxThreads = if ($env:CODEX_FLOW_MAX_THREADS) { $env:CODEX_FLOW_MAX_THREADS } else { $ExistingMaxThreads }
 $MaxRepairs = if ($env:CODEX_FLOW_MAX_REPAIR_CYCLES) { $env:CODEX_FLOW_MAX_REPAIR_CYCLES } else { $ExistingMaxRepairs }
 $TelemetryEnabled = if ($env:CODEX_FLOW_TELEMETRY_ENABLED) { $env:CODEX_FLOW_TELEMETRY_ENABLED } else { $ExistingTelemetryEnabled }
@@ -135,6 +150,10 @@ if ($ReviewModifier -notin @('auto','standard','strict')) { throw 'CODEX_FLOW_RE
 if ($FanoutModifier -notin @('auto','conservative','aggressive')) { throw 'CODEX_FLOW_FANOUT_MODIFIER must be auto, conservative, or aggressive' }
 foreach ($effort in @($ParentMinEffort,$ParentRoutineEffort,$ParentComplexEffort,$ParentCriticalEffort,$WorkerMinEffort,$WorkerRoutineEffort,$WorkerComplexEffort,$WorkerCriticalEffort)) {
     if ($effort -notin @('high','xhigh','max')) { throw 'reasoning efforts must be high, xhigh, or max' }
+}
+if ($RolloutMode -notin @('legacy','shadow','adaptive')) { throw 'CODEX_FLOW_REASONING_ROLLOUT_MODE must be legacy, shadow, or adaptive' }
+foreach ($effort in @($RolloutMinimum,$RolloutRoutine,$RolloutComplex,$RolloutCritical)) {
+    if ($effort -notin @('high','xhigh','max')) { throw 'reasoning rollout efforts must be high, xhigh, or max' }
 }
 if ($MaxThreads -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_MAX_THREADS must be a positive integer' }
 if ($MaxRepairs -notmatch '^[0-9]+$') { throw 'CODEX_FLOW_MAX_REPAIR_CYCLES must be a non-negative integer' }
@@ -213,6 +232,13 @@ routine_effort = "$WorkerRoutineEffort"
 complex_effort = "$WorkerComplexEffort"
 critical_effort = "$WorkerCriticalEffort"
 
+[reasoning.rollout]
+mode = "$RolloutMode"
+minimum = "$RolloutMinimum"
+routine = "$RolloutRoutine"
+complex = "$RolloutComplex"
+critical = "$RolloutCritical"
+
 [runtime]
 max_concurrent_threads = $MaxThreads
 max_repair_cycles = $MaxRepairs
@@ -275,6 +301,7 @@ Write-Host "  |  * Policy:     $dispPolicy"
 Write-Host "  |  * CLI:        $dispBin"
 Write-Host "  |  * Skill:      FlowPilot (flow-pilot)"
 Write-Host "  |  * Strategy:   $StrategyProfile / $RoutingMode (enabled=$StrategyEnabled)"
+Write-Host "  |  * Reasoning rollout: $RolloutMode ($RolloutMinimum / $RolloutRoutine / $RolloutComplex / $RolloutCritical)"
 Write-Host "  |  * Modifiers:  review=$ReviewModifier / fanout=$FanoutModifier"
 Write-Host "  |  * Models:     parent ($ParentModelPolicy) -> worker ($WorkerModel)"
 Write-Host "  |  * Language:   $UiLanguage (effective: $UiLang)"

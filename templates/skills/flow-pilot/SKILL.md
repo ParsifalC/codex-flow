@@ -153,6 +153,7 @@ For explicit current-task overrides append only requested dimensions:
 --routing adaptive|direct|delegate
 --review auto|standard|strict
 --fanout auto|conservative|aggressive
+--efficient-reasoning legacy|shadow|adaptive
 ```
 
 The planner merges release/user/repository policy, loads the selected strategy, resolves WorkerBudget, computes topology, resolves StagePolicy, chooses per-role capability/reasoning, applies runtime ceilings and writable-isolation checks, reads reliable quota state when available, and emits one ExecutionPlan without extra LLM calls.
@@ -161,7 +162,7 @@ If planner/registry is unavailable, treat it as installation/runtime failure. Do
 
 ## 3. ExecutionPlan is the hard strategy/runtime boundary
 
-Current contract (schema v9):
+Current contract (schema v10):
 
 ```text
 ExecutionPlan
@@ -174,6 +175,12 @@ ExecutionPlan
   parent_capability_policy
   parent_model_floor
   parent_reasoning
+  reasoning_rollout | none
+    mode: legacy | shadow | adaptive
+    legacy_worker_reasoning
+    proposed_worker_reasoning
+    selected_worker_reasoning
+    applied
   explorer_capability_policy | none
   explorer_model | none
   explorer_reasoning | none
@@ -248,6 +255,44 @@ For a bounded manifest, reserve `work_unit` with the validator's stable `logical
 At the 1500-second soft deadline, do not open work or create reservations; ask existing Workers to checkpoint/converge and harvest their evidence. At the 1800-second hard deadline, first harvest any received checkpoint, then apply lifecycle fencing and cancel active writers. Do not start a replacement Worker or Parent writer after hard stop. An implementation handoff must carry the task-budget state path and current remaining seconds/counters.
 
 The task-budget helper is a ledger/decision boundary, not an automatic scheduler: it does not spawn, checkpoint, cancel, fence, or replace Workers. FlowPilot/runtime performs those actions from its result. The lifecycle helper likewise reports requirements; actual cancellation and scheduling remain runtime responsibilities.
+
+### Efficient reasoning rollout
+
+The optional `[reasoning.rollout]` policy applies only when the compiled plan is
+`strategy=efficient` and `routing=delegate` with delegated Worker roles. Its
+release defaults are:
+
+```text
+mode=shadow
+minimum=high, routine=high, complex=xhigh, critical=max
+```
+
+`legacy` is the kill switch: the current Worker reasoning selection remains
+unchanged. `shadow` also selects the legacy effort, while exposing a proposed
+effort in `ExecutionPlan.reasoning_rollout`. `adaptive` selects that proposal.
+The proposal is computed after the existing legacy selection as:
+
+```text
+max(rollout class target, rollout minimum, parent_reasoning)
+```
+
+The selected effort is written consistently to every planned
+`explorer_reasoning`, `implementer_reasoning`, and `reviewer_reasoning` field;
+direct plans and non-efficient strategies emit `reasoning_rollout=null` and
+retain their existing behavior. Adaptive explicitly permits the selected
+Worker effort to equal Parent at the `max` ceiling.
+
+User rollout floors are persistent optional policy. Repository policy may raise
+the rollout minimum/class floors, but cannot change a user's `legacy` or
+`shadow` mode to `adaptive`. `--efficient-reasoning legacy|shadow|adaptive` is
+a current-task override and does not mutate policy.
+
+The decision is intent, not an observation: `proposed_worker_reasoning` and
+`selected_worker_reasoning` do not prove what the runtime actually applied. If
+the active Codex build cannot apply a per-spawn effort override, use the
+installed Worker baseline and report that limitation; later telemetry may
+record the observed effective effort. This helper does not schedule Workers or
+collect telemetry.
 
 Once compiled, execute the plan. Prohibited duplication includes:
 
@@ -584,4 +629,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan schema v9 adds optional task-level cumulative budget alongside StagePolicy convergence/repair/work-unit fields. Older plans without `task_budget`, `soft_timeout_seconds`, meaningful-progress/checkpoint state, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run. In particular, absent task-budget/work-unit fields resolve to the legacy path; updates must not retroactively split, cancel, or reset already-running Workers.
+Persistent policy remains schema v4. ExecutionPlan schema v10 adds optional task-level cumulative budget and reasoning-rollout decision fields alongside StagePolicy convergence/repair/work-unit fields. Older plans without `task_budget`, `reasoning_rollout`, `soft_timeout_seconds`, meaningful-progress/checkpoint state, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run. In particular, absent task-budget/work-unit/rollout fields resolve to the legacy path; updates must not retroactively split, cancel, change reasoning, or reset already-running Workers.

@@ -14,6 +14,8 @@ The benchmark is designed to answer three distinct questions without mixing thei
 
 Results are advisory. Real model runs must accumulate enough evidence before routing changes are considered, and `policy/benchmark.toml` keeps `auto_apply = false`.
 
+The built-in benchmark passes each experimental `reasoning_effort` directly to `codex exec`; it does not traverse the FlowPilot planner. It therefore cannot prove that an `ExecutionPlan.reasoning_rollout` proposed/selected value was actually applied to a delegated Worker. Validate rollout decisions separately with runtime-observed effort, completed/censored sample counts, and p50/p95 latency evidence.
+
 ---
 
 ## Five Pre-Registered Strategies
