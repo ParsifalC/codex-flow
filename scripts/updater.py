@@ -17,6 +17,7 @@ import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -313,6 +314,48 @@ def cache_is_fresh(state: UpdateState, config: UpdateConfig) -> bool:
     return time.time() - checked < config.check_interval_hours * 3600
 
 
+def _ssl_context() -> ssl.SSLContext:
+    try:
+        context = ssl.create_default_context()
+    except Exception:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+
+    paths = ssl.get_default_verify_paths()
+    ca_missing = bool(paths.openssl_cafile and not os.path.exists(paths.openssl_cafile))
+    no_ca_configured = not bool(paths.cafile or paths.capath)
+
+    if ca_missing or no_ca_configured:
+        loaded = False
+        try:
+            import certifi
+
+            ca = certifi.where()
+            if os.path.exists(ca):
+                context.load_verify_locations(cafile=ca)
+                loaded = True
+        except Exception:
+            pass
+
+        if not loaded:
+            common_bundle_paths = (
+                "/etc/ssl/cert.pem",
+                "/etc/pki/tls/certs/ca-bundle.crt",
+                "/etc/ssl/certs/ca-certificates.crt",
+                "/etc/ssl/ca-bundle.pem",
+                "/usr/local/share/certs/ca-root-nss.crt",
+            )
+            for path in common_bundle_paths:
+                if os.path.exists(path):
+                    try:
+                        context.load_verify_locations(cafile=path)
+                        break
+                    except Exception:
+                        pass
+    return context
+
+
 def _request_bytes(url: str, timeout: float = 8.0) -> bytes:
     if url.startswith("file://"):
         return Path(url[7:]).read_bytes()
@@ -323,7 +366,7 @@ def _request_bytes(url: str, timeout: float = 8.0) -> bytes:
         url,
         headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
         return response.read()
 
 
@@ -675,7 +718,7 @@ def _download(url: str, destination: Path) -> None:
         shutil.copy2(local, destination)
         return
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=30) as response, destination.open("wb") as out:
+    with urllib.request.urlopen(request, timeout=30, context=_ssl_context()) as response, destination.open("wb") as out:
         shutil.copyfileobj(response, out, length=1024 * 1024)
 
 

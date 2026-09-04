@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import re
+import ssl
 import sys
 import tarfile
 import tempfile
@@ -378,6 +379,33 @@ class UpdaterTest(unittest.TestCase):
         updater.save_state(state)
         self.assertEqual(updater.main(["--ack-restart", "--quiet"]), 0)
         self.assertFalse(updater.load_state().restart_required)
+
+    def test_ssl_context_returns_valid_context(self) -> None:
+        ctx = updater._ssl_context()
+        self.assertIsInstance(ctx, ssl.SSLContext)
+        self.assertTrue(ctx.check_hostname)
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+
+    def test_ssl_context_falls_back_to_system_bundle(self) -> None:
+        fake_paths = ssl.DefaultVerifyPaths(
+            cafile=None,
+            capath=None,
+            openssl_cafile_env="SSL_CERT_FILE",
+            openssl_cafile="/nonexistent/cert.pem",
+            openssl_capath_env="SSL_CERT_DIR",
+            openssl_capath="/nonexistent/certs",
+        )
+
+        def fake_exists(path: str) -> bool:
+            return path == "/etc/ssl/cert.pem"
+
+        with patch.object(ssl, "get_default_verify_paths", return_value=fake_paths):
+            with patch.dict(sys.modules, {"certifi": None}):
+                with patch.object(os.path, "exists", side_effect=fake_exists):
+                    with patch.object(ssl.SSLContext, "load_verify_locations") as mock_load:
+                        ctx = updater._ssl_context()
+                        self.assertIsInstance(ctx, ssl.SSLContext)
+                        mock_load.assert_called_once_with(cafile="/etc/ssl/cert.pem")
 
     def test_release_package_keeps_runtime_dependencies(self) -> None:
         linux = {path.relative_to(ROOT).as_posix() for path in packager.iter_files("linux-x86_64")}
