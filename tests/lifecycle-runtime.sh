@@ -80,6 +80,7 @@ assert d["state"]=="progressing" and d["action"]=="continue", d
 assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
 assert d["progress_quality"]=="meaningful" and d["meaningful_idle_seconds"]==30, d
+assert d["checkpoint_status"]=="not_requested", d
 PY
 
 # Reaching the soft budget requests convergence/checkpoint only. It never cancels or fences a healthy Worker.
@@ -89,12 +90,99 @@ python3 - "$TMP/soft.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="progressing" and d["action"]=="request_checkpoint", d
+assert d["checkpoint_status"]=="not_requested", d
 assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
 assert d["fallback_policy"] is None, d
 assert d["progress_quality"]=="meaningful", d
 assert "without cancelling Worker" in d["reason"], d
 PY
+
+# Checkpoint request is stateful: after requesting it, do not repeatedly request or cancel the Worker.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
+  --stage implementation --started-at 100 --last-progress-at 995 --now 1010 --writable --in-flight \
+  --checkpoint-requested-at 1000 > "$TMP/checkpoint-requested.json"
+python3 - "$TMP/checkpoint-requested.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="await_checkpoint" and d["checkpoint_status"]=="requested", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+assert d["fence_required"] is False and d["replacement_allowed"] is False, d
+PY
+
+# Once the Worker returns a checkpoint, Parent must harvest it before any later fallback.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
+  --stage implementation --started-at 100 --last-progress-at 1005 --last-meaningful-progress-at 1005 \
+  --now 1010 --writable --in-flight --checkpoint-requested-at 1000 --checkpoint-received-at 1005 \
+  > "$TMP/checkpoint-received.json"
+python3 - "$TMP/checkpoint-received.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+assert d["fence_required"] is False and d["replacement_allowed"] is False, d
+assert "remaining delta" in d["reason"], d
+PY
+
+# A harvested checkpoint is non-terminal; the existing Worker continues instead of being recalled.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
+  --stage implementation --started-at 100 --last-progress-at 1010 --last-meaningful-progress-at 1005 \
+  --now 1020 --writable --in-flight --checkpoint-requested-at 1000 --checkpoint-received-at 1005 \
+  --checkpoint-harvested-at 1010 > "$TMP/checkpoint-harvested.json"
+python3 - "$TMP/checkpoint-harvested.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="continue" and d["checkpoint_status"]=="harvested", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+assert "already been harvested" in d["reason"], d
+PY
+
+# Critical invariant: even at the hard ceiling, an already-returned checkpoint is harvested before cancellation/fallback.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
+  --now 1900 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
+  > "$TMP/hard-checkpoint-unharvested.json"
+python3 - "$TMP/hard-checkpoint-unharvested.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["wall_seconds"]==1800 and d["action"]=="harvest_checkpoint", d
+assert d["checkpoint_status"]=="received", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+assert d["fence_required"] is False, d
+PY
+
+# After harvest is recorded, the unchanged hard-timeout/writer-fencing behavior may proceed.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
+  --now 1901 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
+  --checkpoint-harvested-at 1900 > "$TMP/hard-checkpoint-harvested.json"
+python3 - "$TMP/hard-checkpoint-harvested.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="request_cancel" and d["checkpoint_status"]=="harvested", d
+assert d["cancel_required"] is True and d["fence_required"] is True, d
+assert d["fallback_policy"]=="replan", d
+PY
+
+# Terminal failure also harvests a returned checkpoint before replanning, so partial work is never silently discarded.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-failed-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 300 --now 320 --writable --terminal-failure \
+  --checkpoint-requested-at 250 --checkpoint-received-at 300 > "$TMP/failed-checkpoint.json"
+python3 - "$TMP/failed-checkpoint.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+PY
+
+# Invalid checkpoint timelines fail fast instead of pretending a payload was harvested.
+if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-invalid-checkpoint \
+  --stage implementation --started-at 100 --last-progress-at 500 --now 600 --writable \
+  --checkpoint-received-at 550 > /dev/null 2> "$TMP/checkpoint.err"; then
+  echo "checkpoint without request unexpectedly accepted" >&2
+  exit 1
+fi
+grep -Fq 'checkpoint_received_at requires checkpoint_requested_at' "$TMP/checkpoint.err"
 
 # Liveness activity and meaningful progress are independent: repeated tool activity does not fake an acceptance delta.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-activity-only \
@@ -143,7 +231,7 @@ if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-invalid-mea
 fi
 grep -Fq 'last_meaningful_progress_at cannot be newer than last_progress_at' "$TMP/meaningful.err"
 
-# Old ExecutionPlans/callers without the optional soft/meaningful fields retain historical lifecycle behavior after upgrade.
+# Old ExecutionPlans/callers without the optional soft/meaningful/checkpoint fields retain historical lifecycle behavior after upgrade.
 python3 - "$TMP/impl-policy.json" > "$TMP/legacy-impl-policy.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
@@ -158,6 +246,7 @@ import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="progressing" and d["action"]=="continue", d
 assert d["progress_quality"]=="meaningful", d
+assert d["checkpoint_status"]=="not_requested", d
 assert d["cancel_required"] is False and d["fallback_policy"] is None, d
 PY
 
@@ -256,7 +345,7 @@ assert d["replacement_allowed"] is False, d
 assert "downstream writer is explicitly isolated" in d["reason"], d
 PY
 
-# Terminal failure is already fenced and may immediately replan.
+# Terminal failure without a checkpoint is already fenced and may immediately replan.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 100 --now 120 --writable --terminal-failure > "$TMP/failed.json"
 python3 - "$TMP/failed.json" <<'PY'
@@ -266,7 +355,7 @@ assert d["state"]=="failed" and d["action"]=="replan", d
 assert d["cancel_required"] is False and d["replacement_allowed"] is True, d
 PY
 
-# Hard wall ceiling wins even if an operation is visibly in-flight.
+# Hard wall ceiling still wins when there is no returned checkpoint to preserve, even if work is visibly in-flight.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 1800 --now 2000 --writable --in-flight > "$TMP/hard.json"
 python3 - "$TMP/hard.json" <<'PY'
