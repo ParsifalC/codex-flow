@@ -118,10 +118,6 @@ def reasoning_rollout(
         class_target = policy.complex
     else:
         class_target = policy.routine
-    # Rollout proposal intentionally starts from the explicit rollout floors
-    # and Parent effort. Legacy's next-tier bump is the behavior being tested;
-    # including it here would make adaptive unable to select an effort equal to
-    # Parent, defeating the rollout's allow-equal contract.
     proposed = _max_effort(class_target, policy.minimum, parent_reasoning)
     selected = proposed if policy.mode == "adaptive" else legacy_worker_reasoning
     decision = ReasoningRolloutDecision(
@@ -160,9 +156,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        # Efficient strict review must fit inside the 1800s whole-task envelope
-        # together with exploration/implementation convergence and Parent finalization.
-        return StagePolicy("quorum", 1, 150, 300, True, True, "parent_delta")
+        return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
