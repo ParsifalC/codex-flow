@@ -2,16 +2,22 @@
 """Phase-aware admission on top of the durable task-budget ledger.
 
 The task ledger owns cumulative counters and the absolute task hard deadline.
-This helper adds one missing scheduling invariant: an immutable ExecutionPlan
-that already requires independent review must keep enough tail time for that
-required completion stage.
+This helper adds one missing scheduling invariant: an immutable initial
+ExecutionPlan that already requires independent review must keep enough tail
+time for that required completion stage.
 
-For a new task the helper derives an effective ledger policy from the immutable
-plan. Its soft timeout is clamped to the earlier of the strategy soft timeout
-and ``hard_timeout - review_stage.hard_timeout``. The raw ledger therefore
-keeps its own atomic reservation/idempotency semantics while still enforcing
-that required-completion reserve. Required completion may start after that soft
-boundary and remains permitted until the absolute task hard deadline.
+For a new task the helper derives an effective ledger policy from the initial
+budget plan. Its soft timeout is clamped to the earlier of the strategy soft
+timeout and ``hard_timeout - review_stage.hard_timeout``. The raw ledger
+therefore keeps its own atomic reservation/idempotency semantics while still
+enforcing that required-completion reserve. Required completion may start
+after that soft boundary and remains permitted until the absolute task hard
+deadline.
+
+A ledger created by the pre-phase runtime is grandfathered when its stored
+fingerprint exactly matches the initial plan's original TaskBudgetPolicy. Such
+a running task keeps its historical unclamped soft deadline; upgrades never
+retroactively shorten its execution window or invent a review-tail reservation.
 
 The helper does not schedule Workers. It initializes the ledger, reports
 phase-aware admission, and wraps implementation reservations.
@@ -84,6 +90,13 @@ def _plan(value: Any) -> dict[str, Any]:
     return value
 
 
+def _original_policy(plan: dict[str, Any]) -> TaskBudgetPolicy:
+    try:
+        return TaskBudgetPolicy.from_dict(plan["task_budget"])
+    except (TypeError, ValueError) as exc:
+        raise LedgerError(str(exc)) from None
+
+
 def _review_reserve_seconds(plan: dict[str, Any]) -> int:
     reviewer_workers = _strict_int(plan.get("reviewer_workers"), "reviewer_workers")
     review_stage = plan.get("review_stage")
@@ -96,10 +109,7 @@ def _review_reserve_seconds(plan: dict[str, Any]) -> int:
 
 
 def _effective_policy(plan: dict[str, Any]) -> TaskBudgetPolicy:
-    try:
-        policy = TaskBudgetPolicy.from_dict(plan["task_budget"])
-    except (TypeError, ValueError) as exc:
-        raise LedgerError(str(exc)) from None
+    policy = _original_policy(plan)
     review_reserve = _review_reserve_seconds(plan)
     if review_reserve <= 0:
         return policy
@@ -129,22 +139,33 @@ def _policy_fingerprint(policy: TaskBudgetPolicy) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _policy_mode(plan: dict[str, Any], ledger_value: dict[str, Any]) -> tuple[TaskBudgetPolicy, bool]:
+    """Return the actual ledger policy and whether it is a grandfathered v1 ledger."""
+    original = _original_policy(plan)
+    effective = _effective_policy(plan)
+    stored = ledger_value.get("policy_fingerprint")
+    effective_fp = _policy_fingerprint(effective)
+    original_fp = _policy_fingerprint(original)
+    if stored == effective_fp:
+        return effective, False
+    if effective_fp != original_fp and stored == original_fp:
+        return original, True
+    raise LedgerError("task phase plan/policy mismatch; refusing to use a different budget plan")
+
+
 def phase_decision(
     plan_value: Any,
     ledger_value: Any,
     phase: str,
     now: Any,
 ) -> dict[str, Any]:
-    """Return phase-aware admission from an immutable plan + ledger status."""
+    """Return phase-aware admission from an initial budget plan + ledger status."""
     if phase not in PHASES:
         raise LedgerError(f"invalid task phase: {phase}")
     plan = _plan(plan_value)
-    effective_policy = _effective_policy(plan)
     if type(ledger_value) is not dict:
         raise LedgerError("ledger status must be an object")
-    expected_fingerprint = _policy_fingerprint(effective_policy)
-    if ledger_value.get("policy_fingerprint") != expected_fingerprint:
-        raise LedgerError("task phase plan/policy mismatch; refusing to use a different budget plan")
+    ledger_policy, legacy_unclamped = _policy_mode(plan, ledger_value)
 
     current_now = _strict_number(now, "now")
     started_at = _strict_number(ledger_value.get("started_at"), "started_at")
@@ -152,15 +173,17 @@ def phase_decision(
     hard_deadline = _strict_number(ledger_value.get("hard_deadline"), "hard_deadline")
     if hard_deadline <= soft_deadline:
         raise LedgerError("hard_deadline must be after soft_deadline")
-    if soft_deadline != started_at + effective_policy.soft_timeout_seconds:
-        raise LedgerError("task phase soft deadline does not match the immutable budget plan")
-    if hard_deadline != started_at + effective_policy.hard_timeout_seconds:
-        raise LedgerError("task phase hard deadline does not match the immutable budget plan")
+    if soft_deadline != started_at + ledger_policy.soft_timeout_seconds:
+        raise LedgerError("task phase soft deadline does not match the initial budget plan")
+    if hard_deadline != started_at + ledger_policy.hard_timeout_seconds:
+        raise LedgerError("task phase hard deadline does not match the initial budget plan")
     closed = ledger_value.get("closed")
     if type(closed) is not bool:
         raise LedgerError("ledger closed must be boolean")
 
-    review_reserve = _review_reserve_seconds(plan)
+    # Do not retroactively reserve review tail for a task that was already
+    # running before phase-aware admission existed.
+    review_reserve = 0 if legacy_unclamped else _review_reserve_seconds(plan)
     general_work_deadline = soft_deadline
     hard_open = (not closed) and current_now < hard_deadline
     permits_required_completion = hard_open
@@ -195,6 +218,7 @@ def phase_decision(
         "required_completion_handoff": (
             review_reserve > 0 and hard_open and current_now >= general_work_deadline
         ),
+        "legacy_unclamped": legacy_unclamped,
     }
 
 
@@ -204,9 +228,28 @@ def init(
     plan: dict[str, Any],
     now: Any,
 ) -> dict[str, Any]:
-    """Initialize a new phase-aware ledger from the immutable budget plan."""
-    effective_policy = _effective_policy(_plan(plan))
-    result = init_ledger(state_file, task_id, effective_policy, now)
+    """Initialize a phase-aware ledger, or grandfather an existing pre-phase ledger."""
+    plan = _plan(plan)
+    effective_policy = _effective_policy(plan)
+    try:
+        result = init_ledger(state_file, task_id, effective_policy, now)
+    except LedgerError as init_error:
+        # An already-running task from the pre-phase runtime was initialized
+        # with the original policy. Preserve it rather than shortening its soft
+        # deadline during an update. Any other mismatch still fails closed.
+        try:
+            result = ledger_status(state_file, task_id, now)
+            actual_policy, legacy_unclamped = _policy_mode(plan, result)
+        except LedgerError:
+            raise init_error
+        if not legacy_unclamped:
+            raise init_error
+        result["initialized"] = False
+        result["idempotent"] = True
+        result.update(phase_decision(plan, result, "exploration", now))
+        result["effective_task_budget"] = asdict(actual_policy)
+        return result
+
     result.update(phase_decision(plan, result, "exploration", now))
     result["effective_task_budget"] = asdict(effective_policy)
     return result
@@ -236,9 +279,10 @@ def reserve_implementation(
 ) -> dict[str, Any]:
     if kind not in IMPLEMENTATION_RESERVATION_KINDS:
         raise LedgerError(f"invalid implementation reservation kind: {kind}")
-    # The phase-aware init has already clamped the ledger soft deadline. Calling
-    # the raw atomic reserve preserves its deadline checks and, critically, its
-    # idempotent replay semantics after the deadline.
+    # A phase-aware ledger already has the completion reserve encoded in its
+    # soft deadline. A grandfathered ledger keeps its historical deadline. In
+    # both cases the raw atomic reserve preserves limit/deadline checks and its
+    # deliberate idempotent replay behavior after the deadline.
     result = reserve(
         state_file,
         task_id,
