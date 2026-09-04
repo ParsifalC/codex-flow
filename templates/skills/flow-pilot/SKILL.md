@@ -287,10 +287,12 @@ The phase result is binding:
 - `permits_review_start`: a new read-only reviewer may start.
 - `permits_parent_finalization`: Parent may continue final reconciliation/verification before hard.
 - `review_deadline`: no new reviewer starts at or after this boundary.
-- `action=finalize_parent`: reviewer admission is closed; use the remaining tail only for Parent finalization.
+- `action=finalize_parent`: reviewer admission is closed; use the remaining tail only for Parent finalization. This is an admission transition, **not** evidence that required review succeeded.
 - `action=stop`: task hard deadline/closed state reached; do not start new execution.
 
-A soft deadline must never silently skip an independent/strict review already required by the initial plan. A reviewer must never consume the Parent finalization reserve.
+A soft deadline must never silently skip an independent/strict review already required by the initial plan. A reviewer must never consume the Parent finalization reserve. If `review_stage.join_policy` is required/quorum, successful delivery still requires at least `review_stage.min_successful_workers` accepted reviewer results. Reaching `review_deadline` without satisfying that join is fail-closed: do not silently downgrade to Parent-only review or report task success.
+
+Before entering Parent-only finalization, every writable Worker must already be terminal/cancel-confirmed or safely fenced with its latest returned checkpoint harvested. The Parent finalization tail must not be consumed by unresolved writable execution.
 
 The raw task-budget helper is the durable atomic ledger. The phase helper is the scheduling admission boundary. Neither schedules Workers by itself.
 
@@ -421,7 +423,7 @@ depends_on
 parallel_group: optional
 ```
 
-Do not manufacture meaningless splits solely to satisfy a number. `minimum_work_units` remains the hard minimum; current built-in strategies keep it at `1`. `maximum_work_units` is a hard manifest bound, not a Worker count.
+Do not manufacture meaningless splits solely to satisfy a number. `minimum_work_units` remains the hard minimum; current built-in strategies keep it at `1`. `maximum_work_units` is a hard manifest bound, not a Worker count. Strategy semantic limits may be raised only by already-proven writable topology within the strategy's WorkerBudget; this permits serial waves without inventing extra workstreams.
 
 Validate before spawn:
 
@@ -482,7 +484,9 @@ Review only a terminal workspace or immutable harvested snapshot, never concurre
 
 Multiple reviewers should receive complementary scopes. They are read-only and must not silently implement.
 
-Once `action=finalize_parent`, do not start/retry reviewers. Use the remaining tail for Parent reconciliation, final verification, and delivery. At hard deadline, no new Worker or Parent writer starts; only already-collected evidence may be reported.
+Track accepted reviewer completions against `review_stage.min_successful_workers`. `action=finalize_parent` only closes reviewer admission; it does not satisfy the review join. If the required/quorum reviewer join is still unsatisfied at `review_deadline`, preserve the available review evidence and fail/escalate rather than silently converting the plan to Parent-only success.
+
+Once `action=finalize_parent`, do not start/retry reviewers. Use the remaining tail for Parent reconciliation and final verification. Enter that tail only after writable Workers are terminal/cancel-confirmed or safely fenced and all returned checkpoints have been harvested. At hard deadline, no new Worker or Parent writer starts; only already-collected evidence may be reported.
 
 Direct mode still requires Parent self-review.
 
