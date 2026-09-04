@@ -282,7 +282,7 @@ if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id future \
   echo "future progress unexpectedly accepted" >&2
   exit 1
 fi
-grep -Fq 'last_progress_at cannot be in the future' "$TMP/future.err"
+grep -Fq 'last_progress_at must be between started_at and now' "$TMP/future.err"
 
 if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id ms \
   --stage implementation --started-at 1725324000000 --last-progress-at 1725324001000 --now 1725324002000 \
@@ -290,10 +290,10 @@ if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id ms \
   echo "millisecond timestamp unexpectedly accepted" >&2
   exit 1
 fi
-grep -Fq 'timestamps must use seconds, not milliseconds' "$TMP/ms.err"
+grep -Fq 'timestamps must use Unix seconds' "$TMP/ms.err"
 
 python3 - "$ROOT" <<'PY'
-import math,sys
+import sys
 sys.path.insert(0,sys.argv[1]+'/scripts')
 from strategies.lifecycle_runtime import LifecyclePolicy, WorkerObservation, CheckpointRecord
 base={
