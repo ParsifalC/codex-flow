@@ -1,26 +1,15 @@
 #!/usr/bin/env python3
 """Phase-aware admission on top of the durable task-budget ledger.
 
-The task ledger owns cumulative counters and the absolute task hard deadline.
-This helper adds one missing scheduling invariant: an immutable initial
-ExecutionPlan that already requires independent review must keep enough tail
-time for that required completion stage.
+The strategy ExecutionPlan owns the general-work soft boundary.  When the same
+immutable plan requires independent review, this helper deterministically
+extends only the effective task hard boundary so required read-only review and
+Parent finalization have a real completion tail.  It never shortens the
+strategy's general-work window.
 
-For a new task the helper derives an effective ledger policy from the initial
-budget plan. Its soft timeout is clamped to the earlier of the strategy soft
-timeout and ``hard_timeout - review_stage.hard_timeout``. The raw ledger
-therefore keeps its own atomic reservation/idempotency semantics while still
-enforcing that required-completion reserve. Required completion may start
-after that soft boundary and remains permitted until the absolute task hard
-deadline.
-
-A ledger created by the pre-phase runtime is grandfathered when its stored
-fingerprint exactly matches the initial plan's original TaskBudgetPolicy. Such
-a running task keeps its historical unclamped soft deadline; upgrades never
-retroactively shorten its execution window or invent a review-tail reservation.
-
-The helper does not schedule Workers. It initializes the ledger, reports
-phase-aware admission, and wraps implementation reservations.
+There is intentionally no legacy-ledger migration path: this runtime has not
+shipped with persisted task ledgers, so incompatible/mismatched state fails
+closed instead of preserving obsolete semantics.
 """
 from __future__ import annotations
 
@@ -47,6 +36,7 @@ IMPLEMENTATION_RESERVATION_KINDS = (
     "replan",
     "replacement",
 )
+PARENT_FINALIZATION_MIN_SECONDS = 120
 
 
 def _strict_number(value: Any, label: str) -> float:
@@ -76,50 +66,93 @@ def _strict_int(value: Any, label: str) -> int:
     return value
 
 
-def _plan(value: Any) -> dict[str, Any]:
-    if type(value) is not dict:
-        raise LedgerError("ExecutionPlan must be an object")
-    if value.get("task_budget") is None:
-        raise LedgerError("ExecutionPlan has no task_budget")
-    if type(value.get("task_budget")) is not dict:
-        raise LedgerError("ExecutionPlan task_budget must be an object")
-    _strict_int(value.get("reviewer_workers"), "reviewer_workers")
-    review_stage = value.get("review_stage")
-    if review_stage is not None and type(review_stage) is not dict:
-        raise LedgerError("review_stage must be an object or null")
-    return value
-
-
-def _original_policy(plan: dict[str, Any]) -> TaskBudgetPolicy:
+def _task_policy(plan: dict[str, Any]) -> TaskBudgetPolicy:
     try:
         return TaskBudgetPolicy.from_dict(plan["task_budget"])
     except (TypeError, ValueError) as exc:
         raise LedgerError(str(exc)) from None
 
 
-def _review_reserve_seconds(plan: dict[str, Any]) -> int:
+def _review_reserve(plan: dict[str, Any]) -> tuple[int, int, int]:
     reviewer_workers = _strict_int(plan.get("reviewer_workers"), "reviewer_workers")
     review_stage = plan.get("review_stage")
-    if reviewer_workers <= 0 or review_stage is None:
-        return 0
-    hard = _strict_int(review_stage.get("hard_timeout_seconds"), "review_stage.hard_timeout_seconds")
-    if hard <= 0:
+    if reviewer_workers <= 0:
+        if review_stage is not None:
+            raise LedgerError("review_stage must be null when reviewer_workers is zero")
+        return 0, 0, 0
+    if type(review_stage) is not dict:
+        raise LedgerError("review_stage is required when reviewer_workers is positive")
+    review_hard = _strict_int(
+        review_stage.get("hard_timeout_seconds"),
+        "review_stage.hard_timeout_seconds",
+    )
+    review_idle = _strict_int(
+        review_stage.get("idle_timeout_seconds"),
+        "review_stage.idle_timeout_seconds",
+    )
+    if review_hard <= 0:
         raise LedgerError("required review hard timeout must be positive")
-    return hard
+    if review_idle <= 0 or review_idle > review_hard:
+        raise LedgerError("required review idle timeout must be positive and <= review hard timeout")
+    parent_finalization = max(PARENT_FINALIZATION_MIN_SECONDS, review_idle)
+    return review_hard, parent_finalization, review_hard + parent_finalization
+
+
+def _plan(value: Any) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise LedgerError("ExecutionPlan must be an object")
+    if type(value.get("task_budget")) is not dict:
+        raise LedgerError("ExecutionPlan task_budget must be an object")
+    policy = _task_policy(value)
+    implementation_workers = _strict_int(
+        value.get("implementation_workers"),
+        "implementation_workers",
+    )
+    _strict_int(value.get("reviewer_workers"), "reviewer_workers")
+    implementation_stage = value.get("implementation_stage")
+    if implementation_workers > 0:
+        if type(implementation_stage) is not dict:
+            raise LedgerError("implementation_stage is required when implementation_workers is positive")
+        maximum_work_units = implementation_stage.get("maximum_work_units")
+        if type(maximum_work_units) is not int or maximum_work_units < 1:
+            raise LedgerError("implementation_stage.maximum_work_units must be a positive integer")
+        if maximum_work_units != policy.max_work_units:
+            raise LedgerError("task budget max_work_units must match implementation_stage maximum_work_units")
+        if implementation_workers > maximum_work_units:
+            raise LedgerError("implementation topology exceeds task budget max_work_units")
+        if implementation_workers > policy.max_implementation_attempts:
+            raise LedgerError("implementation topology exceeds task budget max_implementation_attempts")
+        implementation_soft = implementation_stage.get("soft_timeout_seconds")
+        if implementation_soft is not None:
+            implementation_soft = _strict_int(
+                implementation_soft,
+                "implementation_stage.soft_timeout_seconds",
+            )
+            if policy.soft_timeout_seconds < implementation_soft:
+                raise LedgerError(
+                    "task soft timeout cannot be earlier than implementation soft checkpoint budget"
+                )
+    elif implementation_stage is not None:
+        raise LedgerError("implementation_stage must be null when implementation_workers is zero")
+    _review_reserve(value)
+    return value
 
 
 def _effective_policy(plan: dict[str, Any]) -> TaskBudgetPolicy:
-    policy = _original_policy(plan)
-    review_reserve = _review_reserve_seconds(plan)
-    if review_reserve <= 0:
+    policy = _task_policy(plan)
+    _review_hard, _parent_finalization, completion_reserve = _review_reserve(plan)
+    if completion_reserve <= 0:
         return policy
-    latest_general_work = policy.hard_timeout_seconds - review_reserve
-    if latest_general_work < 1:
-        raise LedgerError("task hard budget is too small to reserve the required review stage")
-    effective_soft = min(policy.soft_timeout_seconds, latest_general_work)
+    # Preserve the strategy's general-work soft target. Required completion is
+    # additive: an explicit/strategy-required review may make the task longer,
+    # but must never steal the implementation window it is meant to verify.
+    effective_hard = max(
+        policy.hard_timeout_seconds,
+        policy.soft_timeout_seconds + completion_reserve,
+    )
     effective = TaskBudgetPolicy(
-        soft_timeout_seconds=effective_soft,
-        hard_timeout_seconds=policy.hard_timeout_seconds,
+        soft_timeout_seconds=policy.soft_timeout_seconds,
+        hard_timeout_seconds=effective_hard,
         max_work_units=policy.max_work_units,
         max_implementation_attempts=policy.max_implementation_attempts,
         max_replans=policy.max_replans,
@@ -139,18 +172,11 @@ def _policy_fingerprint(policy: TaskBudgetPolicy) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _policy_mode(plan: dict[str, Any], ledger_value: dict[str, Any]) -> tuple[TaskBudgetPolicy, bool]:
-    """Return the actual ledger policy and whether it is a grandfathered v1 ledger."""
-    original = _original_policy(plan)
+def _validate_ledger_identity(plan: dict[str, Any], ledger_value: dict[str, Any]) -> TaskBudgetPolicy:
     effective = _effective_policy(plan)
-    stored = ledger_value.get("policy_fingerprint")
-    effective_fp = _policy_fingerprint(effective)
-    original_fp = _policy_fingerprint(original)
-    if stored == effective_fp:
-        return effective, False
-    if effective_fp != original_fp and stored == original_fp:
-        return original, True
-    raise LedgerError("task phase plan/policy mismatch; refusing to use a different budget plan")
+    if ledger_value.get("policy_fingerprint") != _policy_fingerprint(effective):
+        raise LedgerError("task phase plan/policy mismatch; refusing to use a different budget plan")
+    return effective
 
 
 def phase_decision(
@@ -159,35 +185,32 @@ def phase_decision(
     phase: str,
     now: Any,
 ) -> dict[str, Any]:
-    """Return phase-aware admission from an initial budget plan + ledger status."""
     if phase not in PHASES:
         raise LedgerError(f"invalid task phase: {phase}")
     plan = _plan(plan_value)
     if type(ledger_value) is not dict:
         raise LedgerError("ledger status must be an object")
-    ledger_policy, legacy_unclamped = _policy_mode(plan, ledger_value)
+    effective = _validate_ledger_identity(plan, ledger_value)
 
     current_now = _strict_number(now, "now")
     started_at = _strict_number(ledger_value.get("started_at"), "started_at")
     soft_deadline = _strict_number(ledger_value.get("soft_deadline"), "soft_deadline")
     hard_deadline = _strict_number(ledger_value.get("hard_deadline"), "hard_deadline")
-    if hard_deadline <= soft_deadline:
-        raise LedgerError("hard_deadline must be after soft_deadline")
-    if soft_deadline != started_at + ledger_policy.soft_timeout_seconds:
-        raise LedgerError("task phase soft deadline does not match the initial budget plan")
-    if hard_deadline != started_at + ledger_policy.hard_timeout_seconds:
-        raise LedgerError("task phase hard deadline does not match the initial budget plan")
+    if soft_deadline != started_at + effective.soft_timeout_seconds:
+        raise LedgerError("task phase soft deadline does not match effective task budget")
+    if hard_deadline != started_at + effective.hard_timeout_seconds:
+        raise LedgerError("task phase hard deadline does not match effective task budget")
     closed = ledger_value.get("closed")
     if type(closed) is not bool:
         raise LedgerError("ledger closed must be boolean")
 
-    # Do not retroactively reserve review tail for a task that was already
-    # running before phase-aware admission existed.
-    review_reserve = 0 if legacy_unclamped else _review_reserve_seconds(plan)
-    general_work_deadline = soft_deadline
+    review_hard, parent_finalization, completion_reserve = _review_reserve(plan)
+    if completion_reserve > 0 and hard_deadline - soft_deadline < completion_reserve:
+        raise LedgerError("effective task budget does not reserve required completion tail")
+
     hard_open = (not closed) and current_now < hard_deadline
+    permits_general_work = hard_open and current_now < soft_deadline
     permits_required_completion = hard_open
-    permits_general_work = hard_open and current_now < general_work_deadline
 
     if not hard_open:
         action = "stop"
@@ -195,30 +218,35 @@ def phase_decision(
         action = "complete_required"
     elif permits_general_work:
         action = "continue"
-    elif review_reserve > 0:
+    elif completion_reserve > 0:
         action = "converge_for_required_completion"
     else:
         action = "converge"
 
+    base_policy = _task_policy(plan)
     return {
         "phase": phase,
         "action": action,
         "permits_phase_start": permits_required_completion if phase == "required_completion" else permits_general_work,
         "permits_general_work": permits_general_work,
         "permits_required_completion": permits_required_completion,
-        "required_completion_reserve_seconds": review_reserve,
-        "general_work_deadline": general_work_deadline,
+        "reviewer_reserve_seconds": review_hard,
+        "parent_finalization_reserve_seconds": parent_finalization,
+        "required_completion_reserve_seconds": completion_reserve,
+        "general_work_deadline": soft_deadline,
         "soft_deadline": soft_deadline,
         "hard_deadline": hard_deadline,
-        "remaining_general_work_seconds": max(0.0, general_work_deadline - current_now),
+        "remaining_general_work_seconds": max(0.0, soft_deadline - current_now),
         "remaining_hard_seconds": max(0.0, hard_deadline - current_now),
         "checkpoint_convergence_required": (
-            phase == "implementation" and hard_open and current_now >= general_work_deadline
+            phase == "implementation" and hard_open and current_now >= soft_deadline
         ),
         "required_completion_handoff": (
-            review_reserve > 0 and hard_open and current_now >= general_work_deadline
+            completion_reserve > 0 and hard_open and current_now >= soft_deadline
         ),
-        "legacy_unclamped": legacy_unclamped,
+        "hard_deadline_extended": effective.hard_timeout_seconds > base_policy.hard_timeout_seconds,
+        "base_task_budget": asdict(base_policy),
+        "effective_task_budget": asdict(effective),
     }
 
 
@@ -228,30 +256,10 @@ def init(
     plan: dict[str, Any],
     now: Any,
 ) -> dict[str, Any]:
-    """Initialize a phase-aware ledger, or grandfather an existing pre-phase ledger."""
     plan = _plan(plan)
-    effective_policy = _effective_policy(plan)
-    try:
-        result = init_ledger(state_file, task_id, effective_policy, now)
-    except LedgerError as init_error:
-        # An already-running task from the pre-phase runtime was initialized
-        # with the original policy. Preserve it rather than shortening its soft
-        # deadline during an update. Any other mismatch still fails closed.
-        try:
-            result = ledger_status(state_file, task_id, now)
-            actual_policy, legacy_unclamped = _policy_mode(plan, result)
-        except LedgerError:
-            raise init_error
-        if not legacy_unclamped:
-            raise init_error
-        result["initialized"] = False
-        result["idempotent"] = True
-        result.update(phase_decision(plan, result, "exploration", now))
-        result["effective_task_budget"] = asdict(actual_policy)
-        return result
-
+    effective = _effective_policy(plan)
+    result = init_ledger(state_file, task_id, effective, now)
     result.update(phase_decision(plan, result, "exploration", now))
-    result["effective_task_budget"] = asdict(effective_policy)
     return result
 
 
@@ -262,6 +270,7 @@ def status(
     phase: str,
     now: Any,
 ) -> dict[str, Any]:
+    plan = _plan(plan)
     ledger = ledger_status(state_file, task_id, now)
     result = dict(ledger)
     result.update(phase_decision(plan, ledger, phase, now))
@@ -277,12 +286,12 @@ def reserve_implementation(
     fingerprint: str,
     now: Any,
 ) -> dict[str, Any]:
+    plan = _plan(plan)
     if kind not in IMPLEMENTATION_RESERVATION_KINDS:
         raise LedgerError(f"invalid implementation reservation kind: {kind}")
-    # A phase-aware ledger already has the completion reserve encoded in its
-    # soft deadline. A grandfathered ledger keeps its historical deadline. In
-    # both cases the raw atomic reserve preserves limit/deadline checks and its
-    # deliberate idempotent replay behavior after the deadline.
+    # The raw ledger's soft deadline is exactly the general-work cutoff, so its
+    # atomic reserve path remains authoritative for implementation admission and
+    # idempotent replay.
     result = reserve(
         state_file,
         task_id,
