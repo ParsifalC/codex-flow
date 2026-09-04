@@ -16,11 +16,63 @@ def worker_budget(task) -> WorkerBudget:
     return WorkerBudget(3, 8, 1, 8, "high")
 
 
-def lifecycle(_task, stage: str) -> StagePolicy:
+def implementation_soft_timeout(task) -> int:
+    if (
+        task.complexity == "critical"
+        or task.risk == "critical"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        return 720
+    if task.complexity == "complex" or task.scope == "cross-module":
+        return 600
+    return 420
+
+
+def implementation_checkpoint_rearm_seconds(_task) -> int:
+    return 180
+
+
+def implementation_repair_attempts(_task) -> int:
+    return 1
+
+
+def implementation_maximum_work_units(task) -> int:
+    if (
+        task.complexity == "critical"
+        or task.risk == "critical"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        return 4
+    if task.complexity == "complex" or task.scope == "cross-module":
+        return 3
+    return 1
+
+
+def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("opportunistic", 0, 60, 600, True, True, "continue_partial")
     if stage == "implementation":
-        return StagePolicy("required", 1, 120, 1200, False, False, "replan")
+        maximum_work_units = implementation_maximum_work_units(task)
+        bounded_mode = maximum_work_units > 1
+        return StagePolicy(
+            "required",
+            1,
+            120,
+            1200,
+            False,
+            False,
+            "replan",
+            soft_timeout_seconds=implementation_soft_timeout(task),
+            checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
+            max_worker_repair_attempts=implementation_repair_attempts(task),
+            work_unit_mode="bounded" if bounded_mode else "single",
+            minimum_work_units=1,
+            join_between_work_units=bounded_mode,
+            maximum_work_units=maximum_work_units,
+            require_write_paths=bounded_mode,
+        )
     if stage == "review":
         return StagePolicy("quorum", 1, 90, 900, True, True, "parent_delta")
     raise ValueError(f"invalid lifecycle stage: {stage}")
