@@ -24,6 +24,7 @@ FALLBACK_ACTIONS = {
 JOIN_POLICIES = {"opportunistic", "quorum", "required"}
 WRITER_FALLBACKS = {"parent_delta", "replan"}
 EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000
+PROGRESS_QUALITIES = {"meaningful", "activity_only", "none"}
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ class WorkerObservation:
     started_at: float
     last_progress_at: float
     now: float
+    last_meaningful_progress_at: float | None = None
     writable: bool = False
     in_flight: bool = False
     terminal_success: bool = False
@@ -104,6 +106,11 @@ class WorkerObservation:
     scope_superseded: bool = False
     cancel_confirmed: bool = False
     replacement_isolated: bool = False
+
+    def meaningful_progress_at(self) -> float:
+        # Backward compatibility: callers that do not yet distinguish liveness
+        # activity from acceptance-relevant progress retain historical behavior.
+        return self.last_progress_at if self.last_meaningful_progress_at is None else self.last_meaningful_progress_at
 
     def validate(self) -> None:
         if not self.scope_id:
@@ -115,6 +122,8 @@ class WorkerObservation:
             "last_progress_at": self.last_progress_at,
             "now": self.now,
         }
+        if self.last_meaningful_progress_at is not None:
+            timestamps["last_meaningful_progress_at"] = self.last_meaningful_progress_at
         if any(not math.isfinite(value) for value in timestamps.values()):
             raise ValueError("timestamps must be finite seconds")
         if any(value < 0 for value in timestamps.values()):
@@ -127,6 +136,11 @@ class WorkerObservation:
             raise ValueError("last_progress_at cannot precede started_at")
         if self.now < self.started_at:
             raise ValueError("now cannot precede started_at")
+        meaningful_at = self.meaningful_progress_at()
+        if meaningful_at < self.started_at:
+            raise ValueError("last_meaningful_progress_at cannot precede started_at")
+        if meaningful_at > self.last_progress_at:
+            raise ValueError("last_meaningful_progress_at cannot be newer than last_progress_at")
         if self.terminal_success and self.terminal_failure:
             raise ValueError("worker cannot be both terminal-success and terminal-failure")
         if self.cancel_confirmed and (self.terminal_success or self.terminal_failure):
@@ -142,11 +156,61 @@ class LifecycleDecision:
     replacement_allowed: bool
     fence_required: bool
     idle_seconds: float
+    meaningful_idle_seconds: float
+    progress_quality: str
     wall_seconds: float
     fallback_policy: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _progress_metrics(
+    policy: LifecyclePolicy,
+    observation: WorkerObservation,
+) -> tuple[float, float, float, str]:
+    idle = max(0.0, observation.now - observation.last_progress_at)
+    wall = max(0.0, observation.now - observation.started_at)
+    meaningful_at = observation.meaningful_progress_at()
+    meaningful_idle = max(0.0, observation.now - meaningful_at)
+    has_meaningful_delta = meaningful_at > observation.started_at
+    if has_meaningful_delta and meaningful_idle < policy.idle_timeout_seconds:
+        quality = "meaningful"
+    elif observation.in_flight or idle < policy.idle_timeout_seconds:
+        quality = "activity_only"
+    else:
+        quality = "none"
+    if quality not in PROGRESS_QUALITIES:  # pragma: no cover - defensive invariant
+        raise AssertionError(f"invalid progress quality: {quality}")
+    return idle, meaningful_idle, wall, quality
+
+
+def _decision(
+    policy: LifecyclePolicy,
+    observation: WorkerObservation,
+    *,
+    state: str,
+    action: str,
+    reason: str,
+    cancel_required: bool,
+    replacement_allowed: bool,
+    fence_required: bool,
+    fallback_policy: str | None,
+) -> LifecycleDecision:
+    idle, meaningful_idle, wall, quality = _progress_metrics(policy, observation)
+    return LifecycleDecision(
+        state=state,
+        action=action,
+        reason=reason,
+        cancel_required=cancel_required,
+        replacement_allowed=replacement_allowed,
+        fence_required=fence_required,
+        idle_seconds=idle,
+        meaningful_idle_seconds=meaningful_idle,
+        progress_quality=quality,
+        wall_seconds=wall,
+        fallback_policy=fallback_policy,
+    )
 
 
 def _fallback_decision(
@@ -182,24 +246,24 @@ def _fallback_decision(
             reason += "; downstream writer is explicitly isolated and old output is fenced from integration"
     if cancel_required:
         reason += "; non-terminal Worker cancellation is required"
-    return LifecycleDecision(
+    return _decision(
+        policy,
+        observation,
         state=state,
         action=action,
         reason=reason,
         cancel_required=cancel_required,
         replacement_allowed=replacement_allowed,
         fence_required=fence_required,
-        idle_seconds=max(0.0, observation.now - observation.last_progress_at),
-        wall_seconds=max(0.0, observation.now - observation.started_at),
         fallback_policy=policy.fallback_policy,
     )
 
 
-def _superseded_decision(observation: WorkerObservation) -> LifecycleDecision:
-    idle = max(0.0, observation.now - observation.last_progress_at)
-    wall = max(0.0, observation.now - observation.started_at)
+def _superseded_decision(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
     terminal = observation.terminal_failure or observation.cancel_confirmed
-    return LifecycleDecision(
+    return _decision(
+        policy,
+        observation,
         state="superseded",
         action="continue" if terminal else "request_cancel",
         reason=(
@@ -210,25 +274,31 @@ def _superseded_decision(observation: WorkerObservation) -> LifecycleDecision:
         cancel_required=not terminal,
         replacement_allowed=False,
         fence_required=False,
-        idle_seconds=idle,
-        wall_seconds=wall,
         fallback_policy=None,
     )
 
 
-def _soft_budget_decision(observation: WorkerObservation) -> LifecycleDecision:
-    idle = max(0.0, observation.now - observation.last_progress_at)
-    wall = max(0.0, observation.now - observation.started_at)
+def _soft_budget_decision(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
+    _idle, meaningful_idle, _wall, quality = _progress_metrics(policy, observation)
     state = "progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running"
-    return LifecycleDecision(
+    if quality == "meaningful":
+        detail = "recent acceptance-relevant progress is visible"
+    elif quality == "activity_only":
+        detail = "liveness activity is visible but no recent acceptance-relevant delta is visible"
+    else:
+        detail = "no recent meaningful or liveness progress is visible"
+    return _decision(
+        policy,
+        observation,
         state=state,
         action="request_checkpoint",
-        reason="soft worker execution budget reached; request checkpoint/convergence without cancelling Worker",
+        reason=(
+            f"soft worker execution budget reached; {detail}; request checkpoint/convergence "
+            "without cancelling Worker"
+        ),
         cancel_required=False,
         replacement_allowed=False,
         fence_required=False,
-        idle_seconds=idle,
-        wall_seconds=wall,
         fallback_policy=None,
     )
 
@@ -238,24 +308,23 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
     policy.validate()
     observation.validate()
 
-    idle = max(0.0, observation.now - observation.last_progress_at)
-    wall = max(0.0, observation.now - observation.started_at)
+    idle, _meaningful_idle, wall, _quality = _progress_metrics(policy, observation)
 
     if observation.terminal_success:
-        return LifecycleDecision(
+        return _decision(
+            policy,
+            observation,
             state="completed",
             action="consume_result",
             reason="worker reported terminal success",
             cancel_required=False,
             replacement_allowed=False,
             fence_required=False,
-            idle_seconds=idle,
-            wall_seconds=wall,
             fallback_policy=None,
         )
 
     if observation.scope_superseded and policy.cancel_if_superseded:
-        return _superseded_decision(observation)
+        return _superseded_decision(policy, observation)
 
     if observation.terminal_failure:
         return _fallback_decision(
@@ -294,17 +363,17 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
         )
 
     if policy.soft_timeout_seconds is not None and wall >= policy.soft_timeout_seconds:
-        return _soft_budget_decision(observation)
+        return _soft_budget_decision(policy, observation)
 
-    return LifecycleDecision(
+    return _decision(
+        policy,
+        observation,
         state="progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running",
         action="continue",
-        reason="worker remains non-terminal with an active progress lease",
+        reason="worker remains non-terminal with an active liveness lease",
         cancel_required=False,
         replacement_allowed=False,
         fence_required=False,
-        idle_seconds=idle,
-        wall_seconds=wall,
         fallback_policy=None,
     )
 
@@ -326,6 +395,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage", choices=("exploration", "implementation", "review"), required=True)
     parser.add_argument("--started-at", type=float, required=True, help="Unix timestamp in seconds")
     parser.add_argument("--last-progress-at", type=float, required=True, help="Unix timestamp in seconds")
+    parser.add_argument(
+        "--last-meaningful-progress-at",
+        type=float,
+        help=(
+            "Unix timestamp for the latest acceptance-relevant delta; omit for legacy behavior "
+            "that treats last-progress-at as meaningful"
+        ),
+    )
     parser.add_argument("--now", type=float, required=True, help="Unix timestamp in seconds")
     parser.add_argument("--writable", action="store_true")
     parser.add_argument("--in-flight", action="store_true")
@@ -346,6 +423,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         started_at=ns.started_at,
         last_progress_at=ns.last_progress_at,
         now=ns.now,
+        last_meaningful_progress_at=ns.last_meaningful_progress_at,
         writable=ns.writable,
         in_flight=ns.in_flight,
         terminal_success=ns.terminal_success,
