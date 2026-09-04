@@ -223,6 +223,7 @@ ExecutionPlan
     min_successful_workers
     idle_timeout_seconds
     hard_timeout_seconds
+    soft_timeout_seconds | none
     cancel_if_superseded
     cancel_stragglers_after_quorum
     fallback_policy: continue_partial | parent_delta | replan | fail
@@ -294,17 +295,26 @@ cancelled
 
 State rules:
 
-- `progressing`: the Worker has recent observable activity, including a completed tool/command/search/file-read event, a new evidence message, or an explicitly visible in-flight operation.
-- `stalled`: no observable progress for at least `idle_timeout_seconds` and no visible in-flight work.
+- `progressing`: the Worker has recent observable liveness activity or explicitly visible in-flight work.
+- `stalled`: no observable liveness activity for at least `idle_timeout_seconds` and no visible in-flight work.
 - `failed`: the Agent/tool/runtime reports a terminal error.
 - `superseded`: the same bounded scope has already been covered with equivalent evidence by Parent or another execution path, and that stage has `cancel_if_superseded=true`.
 - `cancelled`: cancellation/termination has actually been confirmed.
 
-`idle_timeout_seconds` is a renewable **progress lease**, not a completion deadline. New observable progress renews the lease. `hard_timeout_seconds` is the absolute wall-clock ceiling from Worker start.
+Track two timestamps independently whenever the runtime exposes enough evidence:
+
+- `last_progress_at`: **liveness activity**. A command/tool/search/file-read event or visible in-flight operation can renew this lease even if it does not advance acceptance criteria.
+- `last_meaningful_progress_at`: **acceptance-relevant delta**. Advance this only when the Worker produces new evidence that narrows the problem, changes code/output, changes validation state, completes a bounded sub-scope, or reports a concrete blocker that materially narrows the remaining work.
+
+Do **not** advance `last_meaningful_progress_at` for repeated unchanged searches, rereading the same files without new evidence, rerunning the same unchanged failing test, heartbeat/status chatter, or other activity that merely proves the Worker is alive.
+
+This distinction is deliberately non-destructive. Activity-only work can be classified as `progress_quality=activity_only` while the Worker remains `running/progressing`; meaningful-progress quality by itself does **not** authorize cancellation. The existing liveness lease and hard timeout remain the safety boundaries.
+
+`idle_timeout_seconds` is a renewable **liveness lease**, not a completion deadline. `soft_timeout_seconds`, when present, is an advisory convergence/checkpoint budget and never implies cancellation by itself. `hard_timeout_seconds` is the absolute wall-clock ceiling from Worker start.
 
 **A `wait()` timeout is never a Worker timeout.** A high-reasoning Worker can be healthy and slow. Repeated `wait()` calls returning without a terminal result do not by themselves justify `stalled`, `failed`, or cancellation.
 
-If the active Codex runtime does not expose sufficient intermediate activity to measure idle time reliably, do not guess. Keep a non-terminal Worker as `running`/`progressing` unless there is explicit failure, clear stall evidence, supersession, or the hard timeout is reached.
+If the active Codex runtime does not expose sufficient intermediate activity to measure either timestamp reliably, do not guess. For backward compatibility, omit `--last-meaningful-progress-at`; the evaluator then treats `last_progress_at` as meaningful exactly as older lifecycle callers did.
 
 ### Deterministic lifecycle evaluator
 
@@ -317,6 +327,7 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
   --stage exploration|implementation|review \
   --started-at <unix-seconds> \
   --last-progress-at <unix-seconds> \
+  [--last-meaningful-progress-at <unix-seconds>] \
   --now <unix-seconds> \
   [--writable] [--in-flight] \
   [--terminal-success] [--terminal-failure] \
@@ -324,11 +335,19 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
   [--replacement-isolated]
 ```
 
-Use its `state`, `action`, `cancel_required`, `replacement_allowed`, `fence_required`, and `fallback_policy` as the lifecycle decision. Parent supplies only observable facts and semantic scope overlap; the helper owns timing transitions, cancellation requirements, and writable writer fencing.
+Use its `state`, `action`, `cancel_required`, `replacement_allowed`, `fence_required`, `progress_quality`, `meaningful_idle_seconds`, and `fallback_policy` as the lifecycle decision. Parent supplies only observable facts and semantic scope overlap; the helper owns timing transitions, progress-quality classification, cancellation requirements, and writable writer fencing.
+
+`progress_quality` is observational:
+
+- `meaningful`: acceptance-relevant progress occurred within the current liveness lease;
+- `activity_only`: Worker liveness is current but acceptance-relevant progress is stale or not yet visible;
+- `none`: neither recent meaningful progress nor a current liveness signal is visible.
+
+If `action=request_checkpoint`, the soft execution budget has been reached. Ask the existing Worker to converge and return a checkpoint when it can; **do not cancel it, start fallback, or introduce another writer solely because of the soft budget**. Checkpoint harvesting semantics are handled separately from this progress-quality signal.
 
 If `cancel_required=true`, request cancellation/termination of the old non-terminal Worker even when `action` already permits `continue_partial`, `parent_delta`, or an isolated `replan`. A hard/idle lifecycle exit must not leave a Worker silently running in the background. When an isolated downstream writer is authorized with `--replacement-isolated`, it may proceed while cancellation of the old Worker is still required, but the old output must be fenced from integration.
 
-`fallback_policy` is `null` for terminal success and for already-satisfied superseded scopes. A non-null value means failure/cancellation/stall still requires the corresponding fallback handling; do not infer fallback work when it is absent.
+`fallback_policy` is `null` for terminal success, advisory soft-budget checkpoints, and already-satisfied superseded scopes. A non-null value means failure/cancellation/stall still requires the corresponding fallback handling; do not infer fallback work when it is absent.
 
 If the helper is unavailable, treat that as an installation/runtime failure. For writable implementation, fail safe: never introduce another writer into the same live scope while the previous Worker is non-terminal. For any hard-timeout/stalled non-terminal Worker, request cleanup rather than leaving it running indefinitely.
 
@@ -515,4 +534,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies timing/fallback state transitions, cancellation requirements, timestamp validation, and hard writable writer fencing.
+Persistent policy remains schema v4. ExecutionPlan schema v8 adds deterministic StagePolicy fields; the deterministic planner and strategy registry define their concrete values, and the installed lifecycle evaluator applies liveness/meaningful-progress classification, timing/fallback state transitions, cancellation requirements, timestamp validation, and hard writable writer fencing.
