@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from strategy_runtime import Modifiers, TaskProfile, compile_plan  # noqa: E402
 from strategies import get  # noqa: E402
 from strategies.task_budget_runtime import LedgerError, init_ledger  # noqa: E402
-from strategies.task_phase_runtime import init, reserve_implementation, reserve_phase, status  # noqa: E402
+from strategies.task_phase_runtime import init, reserve_phase, status  # noqa: E402
 
 
 def profile(**overrides) -> TaskProfile:
@@ -90,29 +90,15 @@ def assert_tail(
         assert required["permits_review_start"] and required["permits_parent_finalization"], required
 
         review = reserve_phase(
-            state,
-            strategy,
-            plan_json,
-            "required_completion",
-            "review_attempt",
-            "review-0",
-            "review-generation-0",
-            cutoff,
+            state, strategy, plan_json, "required_completion", "review_attempt",
+            "review-0", "review-generation-0", cutoff,
         )
         assert review["reserved"] and not review["idempotent"], review
         assert review["counters"]["review_attempt"] == 1, review
 
-        # A failed reviewer may retry inside the review window, but not one
-        # instant later: the final tail is exclusively Parent finalization.
         retry = reserve_phase(
-            state,
-            strategy,
-            plan_json,
-            "required_completion",
-            "review_attempt",
-            "review-1",
-            "review-generation-1",
-            review_deadline - 1,
+            state, strategy, plan_json, "required_completion", "review_attempt",
+            "review-1", "review-generation-1", review_deadline - 1,
         )
         assert retry["reserved"] and retry["counters"]["review_attempt"] == 2, retry
 
@@ -124,14 +110,8 @@ def assert_tail(
         assert finalization["action"] == "finalize_parent", finalization
         try:
             reserve_phase(
-                state,
-                strategy,
-                plan_json,
-                "required_completion",
-                "review_attempt",
-                "review-too-late",
-                "review-generation-2",
-                review_deadline,
+                state, strategy, plan_json, "required_completion", "review_attempt",
+                "review-too-late", "review-generation-2", review_deadline,
             )
         except LedgerError as exc:
             assert "Parent finalization reserve" in str(exc), exc
@@ -165,7 +145,6 @@ def main() -> None:
     assert_tail("speed", strict=True, expected_soft=1200, expected_hard=2220, expected_reviewer_reserve=900, expected_parent_reserve=120)
     assert_tail("efficient", strict=True, expected_soft=1500, expected_hard=2850, expected_reviewer_reserve=1200, expected_parent_reserve=150)
 
-    # Parent-only plans have no reviewer capacity and keep the strategy base hard deadline.
     balanced = plan("balanced")
     assert balanced.reviewer_workers == 0 and balanced.review_stage is None, balanced
     assert balanced.task_budget.max_review_attempts == 0, balanced
@@ -180,32 +159,45 @@ def main() -> None:
         no_completion = status(state, "balanced-parent", balanced.to_dict(), "required_completion", 2500)
         assert not no_completion["permits_phase_start"] and no_completion["action"] == "stop", no_completion
 
-    # General work closes at soft while exact replay stays idempotent.
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "quality-reserve.json")
         init(state, "quality-reserve", quality.to_dict(), 100)
-        first = reserve_implementation(state, "quality-reserve", quality.to_dict(), "implementation_attempt", "attempt-0", "unit-0-generation-0", 4899)
+        first = reserve_phase(
+            state, "quality-reserve", quality.to_dict(), "implementation", "implementation_attempt",
+            "attempt-0", "unit-0-generation-0", 4899,
+        )
         assert first["reserved"] and not first["idempotent"], first
-        replay = reserve_implementation(state, "quality-reserve", quality.to_dict(), "implementation_attempt", "attempt-0", "unit-0-generation-0", 4900)
+        replay = reserve_phase(
+            state, "quality-reserve", quality.to_dict(), "implementation", "implementation_attempt",
+            "attempt-0", "unit-0-generation-0", 4900,
+        )
         assert replay["reserved"] and replay["idempotent"], replay
         try:
-            reserve_implementation(state, "quality-reserve", quality.to_dict(), "implementation_attempt", "attempt-1", "unit-0-generation-1", 4900)
+            reserve_phase(
+                state, "quality-reserve", quality.to_dict(), "implementation", "implementation_attempt",
+                "attempt-1", "unit-0-generation-1", 4900,
+            )
         except LedgerError as exc:
-            assert "does not permit" in str(exc) or "soft deadline" in str(exc), exc
+            assert "soft deadline" in str(exc), exc
         else:
             raise AssertionError("new implementation attempt entered required-completion tail")
 
-        review = reserve_phase(state, "quality-reserve", quality.to_dict(), "required_completion", "review_attempt", "review-1", "reviewer-1", 4900)
+        review = reserve_phase(
+            state, "quality-reserve", quality.to_dict(), "required_completion", "review_attempt",
+            "review-1", "reviewer-1", 4900,
+        )
         assert review["reserved"] and review["counters"]["review_attempt"] == 1, review
         try:
-            reserve_phase(state, "quality-reserve", quality.to_dict(), "implementation", "review_attempt", "bad-phase", "bad", 4900)
+            reserve_phase(
+                state, "quality-reserve", quality.to_dict(), "implementation", "review_attempt",
+                "bad-phase", "bad", 4900,
+            )
         except LedgerError as exc:
             assert "require" in str(exc), exc
         else:
             raise AssertionError("review_attempt accepted in implementation phase")
 
-    # Budget identity is tied to the original canonical plan.
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "identity.json")
@@ -218,7 +210,6 @@ def main() -> None:
         else:
             raise AssertionError("different canonical budget plan reused task ledger")
 
-    # No grandfathering: a raw pre-canonical policy ledger fails closed.
     quality = plan("quality")
     raw_quality_policy = get("quality").task_budget(profile())
     assert raw_quality_policy.hard_timeout_seconds != quality.task_budget.hard_timeout_seconds
@@ -230,23 +221,24 @@ def main() -> None:
         except LedgerError as exc:
             assert "plan/policy mismatch" in str(exc), exc
         else:
-            raise AssertionError("non-canonical ledger was grandfathered")
+            raise AssertionError("non-canonical ledger was accepted")
 
-    # Real CLI path accepts textual --now and phase/kind pairing.
     phase_cli = ROOT / "scripts/strategies/task_phase_runtime.py"
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "cli.json")
         plan_json = json.dumps(quality.to_dict(), separators=(",", ":"))
         init_run = subprocess.run([
-            sys.executable, str(phase_cli), "init", "--state-file", state, "--task-id", "cli", "--plan-json", plan_json, "--now", "100"
+            sys.executable, str(phase_cli), "init", "--state-file", state, "--task-id", "cli",
+            "--plan-json", plan_json, "--now", "100",
         ], check=True, text=True, capture_output=True)
         initialized = json.loads(init_run.stdout)
         assert initialized["soft_deadline"] == 4900 and initialized["hard_deadline"] == 8200, initialized
         assert initialized["review_deadline"] == 7900, initialized
         review_run = subprocess.run([
-            sys.executable, str(phase_cli), "reserve", "--state-file", state, "--task-id", "cli", "--plan-json", plan_json,
-            "--phase", "required_completion", "--kind", "review_attempt", "--reservation-id", "review-cli", "--fingerprint", "review-cli-v0", "--now", "4900"
+            sys.executable, str(phase_cli), "reserve", "--state-file", state, "--task-id", "cli",
+            "--plan-json", plan_json, "--phase", "required_completion", "--kind", "review_attempt",
+            "--reservation-id", "review-cli", "--fingerprint", "review-cli-v0", "--now", "4900",
         ], check=True, text=True, capture_output=True)
         review = json.loads(review_run.stdout)
         assert review["reserved"] and review["phase"] == "required_completion", review
