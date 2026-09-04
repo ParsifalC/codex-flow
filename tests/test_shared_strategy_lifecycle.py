@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from strategies import get  # noqa: E402
+from strategies.base import standard_lifecycle  # noqa: E402
 from strategies.lifecycle_runtime import CheckpointRecord, LifecyclePolicy, WorkerObservation, evaluate_worker  # noqa: E402
 from strategies.work_unit_runtime import validate_manifest  # noqa: E402
 
@@ -93,6 +94,27 @@ def assert_review_retry(name: str, profile) -> None:
     assert decision.replan_scope is None and decision.checkpoint_reuse_mode is None,decision
 
 
+def assert_v11_default_lifecycle() -> None:
+    implementation=standard_lifecycle(task(),"implementation")
+    implementation.validate()
+    assert implementation.soft_timeout_seconds==1200,implementation
+    assert implementation.checkpoint_rearm_seconds==240,implementation
+    assert implementation.max_worker_repair_attempts==1,implementation
+    assert implementation.work_unit_mode=="single",implementation
+    assert implementation.minimum_work_units==implementation.maximum_work_units==1,implementation
+    decision=evaluate_worker(
+        LifecyclePolicy.from_dict(asdict(implementation)),
+        WorkerObservation(
+            scope_id="default-implementation",stage="implementation",started_at=100,last_progress_at=1300,
+            last_meaningful_progress_at=1300,now=1300,writable=True,in_flight=True,
+        ),
+    )
+    assert decision.action=="request_checkpoint",decision
+    review=standard_lifecycle(task(),"review")
+    review.validate()
+    assert review.fallback_policy=="retry_review",review
+
+
 def main() -> None:
     routine=task()
     complex_cross=task(complexity="complex",scope="cross-module")
@@ -117,11 +139,22 @@ def main() -> None:
             assert_task_budget(strategy,p,budget_expected[strategy][label])
         assert_review_retry(strategy,routine)
 
+    assert_v11_default_lifecycle()
+
     multi=task(parallelism="high",write_conflict="low",writable_workstreams=4)
     assert get("efficient").lifecycle(multi,"implementation").maximum_work_units==1
     assert get("balanced").lifecycle(multi,"implementation").maximum_work_units==2
     assert get("quality").lifecycle(multi,"implementation").maximum_work_units==2
     assert get("speed").lifecycle(multi,"implementation").maximum_work_units==4
+
+    # Speed's 1/3/4 values are semantic baselines. Proven isolated writable
+    # topology may raise the total logical-unit envelope up to its 8-implementer
+    # strategy budget, allowing serial waves without inventing new workstreams.
+    speed_eight=task(parallelism="high",write_conflict="low",writable_workstreams=8)
+    speed_stage=get("speed").lifecycle(speed_eight,"implementation")
+    speed_budget=get("speed").task_budget(speed_eight)
+    assert speed_stage.maximum_work_units==8,speed_stage
+    assert speed_budget.max_work_units==8 and speed_budget.max_implementation_attempts==9,speed_budget
 
     print("shared strategy lifecycle and task-budget contract tests passed")
 
