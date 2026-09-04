@@ -42,7 +42,7 @@ The critical invariant is:
 
 > **FlowPilot profiles. `strategy_runtime.py` plus the strategy registry decide. FlowPilot executes the returned plan.**
 
-The Skill must not keep another copy of strategy topology, Worker counts, capability selection, reasoning policy, review policy, task-budget policy, or quota logic.
+The Skill must not keep another copy of strategy topology, Worker counts, capability selection, reasoning policy, review policy, task-budget policy, phase-admission policy, or quota logic.
 
 ## Design invariants
 
@@ -72,6 +72,9 @@ The Skill must not keep another copy of strategy topology, Worker counts, capabi
 24. **Lineage is explicit.** Bounded units use `(scope_id, unit_id, generation)`; replacement/replan increments generation, checkpoint/continue does not, and Parent accepts only current-generation evidence.
 25. **Reasoning rollout is scoped and observable.** Only delegated `efficient` Worker roles consume the optional `legacy|shadow|adaptive` decision; direct/non-efficient plans remain unchanged, and proposed/selected effort is planner intent rather than runtime-observed usage.
 26. **Every delegated built-in strategy has a cumulative task envelope.** Task budgets are strategy-owned and differ by optimization objective, but all use the same durable admission ledger and cannot be reset by replanning.
+27. **Required completion has a reserved tail.** A new delegated task with reviewer Workers stores an effective ledger soft deadline early enough to preserve the immutable plan's review-stage hard window. General work stops there; required read-only review may continue until the absolute task hard deadline.
+28. **The initial budget plan owns the ledger for the whole task.** A later replan may change execution topology but cannot replace, extend, or reinitialize the task budget. Phase status/reservation continues to use the initial budget-plan identity.
+29. **Running old ledgers are grandfathered.** A task initialized before phase-aware admission retains its original soft deadline and does not gain a retroactive review-tail reservation after an upgrade.
 
 ## Strategy Registry, WorkerBudget, and resource hooks
 
@@ -87,7 +90,8 @@ scripts/strategies/
 ├── speed.py
 ├── lifecycle_runtime.py
 ├── work_unit_runtime.py
-└── task_budget_runtime.py
+├── task_budget_runtime.py
+└── task_phase_runtime.py
 ```
 
 `base.py` defines `StrategySpec`, `WorkerBudget`, the optional `TaskBudgetPolicy` hook, and strict `ReasoningRolloutPolicy` / `ReasoningRolloutDecision` contracts.
@@ -157,7 +161,7 @@ checkpoint_rearm_seconds | none
 max_worker_repair_attempts | none
 ```
 
-All four built-in strategies now use the same convergence/recovery contract for delegated implementation: first soft checkpoint, explicit-meaningful-progress multi-round checkpoint rearm, harvest-before-fallback, remaining-delta replan, local repair bounds, generation lineage, and evidence-based bounded units. Strategy modules tune only the thresholds and maximum logical units.
+All four built-in strategies use the same convergence/recovery contract for delegated implementation: first soft checkpoint, explicit-meaningful-progress multi-round checkpoint rearm, harvest-before-fallback, remaining-delta replan, local repair bounds, generation lineage, and evidence-based bounded units. Strategy modules tune only the thresholds and maximum logical units.
 
 | Strategy | Implementation soft checkpoint | Rearm cooldown | Local repairs | Max work units | Worker hard ceiling |
 | --- | --- | --- | --- | --- | --- |
@@ -166,17 +170,17 @@ All four built-in strategies now use the same convergence/recovery contract for 
 | `quality` | 1800 / 2400 / 2700s | 360 / 480 / 600s | 2–3 | 1–4 | 3600s |
 | `speed` | 420 / 600 / 720s | 180s | 1 | 1–4 | 1200s |
 
-Every strategy keeps `minimum_work_units=1`. Complexity, risk, repo-wide scope, or quality intent may raise only `maximum_work_units`; they never force a fake split. Parent raises the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
+Every strategy keeps `minimum_work_units=1`. Complexity, risk, repo-wide scope, or quality intent may raise only `maximum_work_units`; they never force a fake split. Parent raises the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. High technical risk in `quality` may therefore permit up to three evidence-backed units while still allowing one unit when no natural split exists. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
 
 `maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota or worker-count. When a strategy emits a task budget, the compiler requires its `max_work_units` to equal the implementation StagePolicy maximum. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
 
 `write_paths` checks are static lexical preflight only. They reject absolute/traversal/glob/backslash/NUL/Windows drive or UNC forms and detect equal or ancestor/descendant overlaps; they do not resolve symlinks, lock the OS, fence processes, persist checkpoints, or enforce a durable scheduler. The surrounding runtime must enforce writable fencing and persist/compare the current `(scope_id, unit_id, generation)` lineage.
 
-Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The first soft checkpoint is unchanged. A later checkpoint requires an explicit Worker `last_meaningful_progress_at` later than the latest harvested timestamp plus the policy's minimum `checkpoint_rearm_seconds` cooldown; legacy `last_progress_at` activity cannot re-arm a harvested checkpoint. Missing rearm policy keeps older plans one-shot. The lifecycle evaluator reports these decisions and cooldown observability (`checkpoint_rearm_at` / `checkpoint_rearm_remaining_seconds`), while `scripts/strategies/task_budget_runtime.py` provides the separate cross-process task ledger; neither helper automatically schedules or cancels Workers.
+Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The first soft checkpoint is unchanged. A later checkpoint requires an explicit Worker `last_meaningful_progress_at` later than the latest harvested timestamp plus the policy's minimum `checkpoint_rearm_seconds` cooldown; legacy `last_progress_at` activity cannot re-arm a harvested checkpoint. Missing rearm policy keeps older plans one-shot. The lifecycle evaluator reports these decisions and cooldown observability (`checkpoint_rearm_at` / `checkpoint_rearm_remaining_seconds`); neither it nor the task helpers automatically schedule/cancel Workers.
 
-### Cumulative task budgets
+### Cumulative task budgets and phase-aware admission
 
-Every delegated built-in strategy now emits `task_budget`; direct plans emit `task_budget=null`. The exact policy is strategy-owned and immutable for the task ledger.
+Every delegated built-in strategy emits `task_budget`; direct plans emit `task_budget=null`. The strategy value remains immutable planner intent, while the phase helper may derive a stricter effective **ledger soft timeout** for a new task when required review needs a completion tail.
 
 | Strategy | Task soft / hard | Max work units | Max implementation attempts | Replans | Replacements |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -185,11 +189,28 @@ Every delegated built-in strategy now emits `task_budget`; direct plans emit `ta
 | `balanced` | 2400–3000 / 3000–3600s | 1–3 | work units + 2 | 2 | 2 |
 | `quality` | 4800–6000 / 6000–7200s | 1–4 | work units + 3 | 3 | 3 |
 
-The wider balanced/quality envelopes are deliberate: task budgets are a finite admission boundary, not a demand that every strategy optimize to efficient's 30-minute target. Speed retains a 30-minute total hard cap. `task_budget.max_work_units` must equal `implementation_stage.maximum_work_units`.
+The wider balanced/quality envelopes are deliberate: task budgets are finite admission boundaries, not a demand that every strategy optimize to efficient's 30-minute target. Speed retains a 30-minute total hard cap. `task_budget.max_work_units` must equal `implementation_stage.maximum_work_units`.
 
-FlowPilot initializes the ledger immediately after initial compilation, checks `status` before every Worker spawn and after each join/wait, reserves logical work units/implementation attempts/replans/replacements, and calls `finish` when the task completes. Exploration/review Workers consume the wall-clock deadline but not implementation counters. Replanning reuses the original state path and cannot reset counters. Bounded `work_unit` reservations use the validator's stable logical fingerprint (generation excluded); `implementation_attempt` reservations use the generation-aware fingerprint. At the plan's soft deadline no new work may start; existing Workers checkpoint/converge. At the plan's hard deadline received checkpoints are harvested first, then active writers are fenced/cancelled and no replacement or Parent writer may start. The helper stores task/policy hashes and reservation hashes rather than raw prompt, path, or output data; it returns decisions but is not a scheduler.
+For a newly initialized phase-aware task with `reviewer_workers > 0`, the ledger is initialized through `task_phase_runtime.py init` using:
 
-FlowPilot must read the exact soft/hard deadlines and counters from the immutable ExecutionPlan. It must never hard-code efficient's `1500/1800` values for another strategy.
+```text
+effective_soft_timeout = min(
+  ExecutionPlan.task_budget.soft_timeout_seconds,
+  ExecutionPlan.task_budget.hard_timeout_seconds - review_stage.hard_timeout_seconds
+)
+```
+
+The hard timeout and every reservation counter are unchanged. This moves the raw ledger's real soft deadline to the general-work cutoff, so its atomic reserve path itself rejects genuinely new work after the cutoff while preserving idempotent replay of an already recorded reservation.
+
+General work means exploration plus writable implementation work, including work units, implementation attempts, replans, replacements, and Parent repairs that would reopen writes. At the effective soft deadline, no new general work starts. Existing writable implementation must checkpoint/converge and reach a terminal or safely harvested/fenced state before required completion consumes the reserved tail.
+
+Required completion means the immutable initial plan's already-required read-only independent review followed by Parent final verification. It is allowed after the effective soft deadline and until the absolute task hard deadline. A soft deadline therefore never silently skips `review_mode=independent+parent` or an explicit strict review. At the hard deadline no new reviewer, replacement Worker, or Parent writer starts.
+
+The first ExecutionPlan used to initialize the ledger becomes the task's **initial budget plan**. Every `task_phase_runtime.py status` or `reserve` call for the lifetime of that task continues to use that initial budget plan, even when material evidence causes a later ExecutionPlan recompile. The new plan controls current topology, role resources, lifecycle and remaining-delta execution, but it does not replace or extend the original ledger. Replan uses the same state path, counters, hard deadline, effective soft deadline, and initial budget-plan identity. If the recompiled plan would require work outside remaining original admission, it must converge/fail closed rather than reset the budget.
+
+For compatibility, `task_phase_runtime.py` recognizes a pre-phase running ledger whose stored fingerprint exactly matches the initial plan's original `task_budget`. That task is reported as `legacy_unclamped=true`; it keeps its old soft deadline and receives no retroactive review-tail reservation. New tasks are always initialized through the phase helper and use the clamped policy when required.
+
+The phase helper returns `permits_phase_start`, `permits_general_work`, `permits_required_completion`, `general_work_deadline`, `required_completion_reserve_seconds`, `checkpoint_convergence_required`, `required_completion_handoff`, and `legacy_unclamped`. The raw `task_budget_runtime.py` remains the durable atomic counter/ledger implementation; the phase helper is the scheduling admission layer. FlowPilot must not use raw `permits_new_work` as a generic spawn gate once phase-aware execution is active.
 
 ### Efficient reasoning rollout
 
@@ -296,6 +317,7 @@ absolute
 Additional rules:
 
 - normal complex/high-risk/high-verification tasks still target `xhigh` Parent and `max` Worker-role reasoning;
+- high technical risk may raise bounded-unit maximum to three but never raises `minimum_work_units` above one;
 - `strong/absolute` quality preference alone does **not** make read-only exploration premium-model work;
 - when `complexity=critical` or `risk=critical`, Explorer / Implementer / Reviewer may all use Parent-class capability because discovery itself becomes high-risk decision work;
 - strong/absolute intent remains subject to runtime safety ceilings, write-conflict checks, proven writable workstreams, shared checkpoint/recovery, and the quality task envelope;
@@ -583,7 +605,7 @@ ExecutionPlan
   notes
 ```
 
-The concrete per-role resource fields and `*_workers` values are authoritative. FlowPilot must execute them and must not reinterpret either the strategy name or quality intent after compilation.
+The concrete per-role resource fields and `*_workers` values are authoritative. FlowPilot must execute them and must not reinterpret either the strategy name or quality intent after compilation. `task_budget` is planner intent; the phase helper's effective soft timeout is derived at ledger initialization and returned as `effective_task_budget`.
 
 When an execution stage is absent, its role resources are `none`. For example, if `exploration_workers=0`, all `explorer_*` fields are `none`; when `review_mode=parent`, `reviewer_workers=0` and all `reviewer_*` fields are `none`.
 
@@ -620,6 +642,8 @@ The optional reasoning-rollout matrix is round-tripped as well. Missing
 PowerShell installers preserve existing rollout mode/floors and validate new
 values; the Codex global `default_subagent_reasoning_effort` remains the
 legacy Worker minimum and is not lowered to the rollout's `high` minimum.
+
+Both installers copy the entire `scripts/strategies` directory into the installed state directory, so `task_phase_runtime.py` is delivered together with lifecycle, work-unit, and task-budget helpers on Unix and Windows.
 
 ## CLI
 
@@ -659,7 +683,7 @@ A new strategy should:
 4. register the strategy in `scripts/strategies/__init__.py`;
 5. reuse TaskProfile and ExecutionPlan contracts;
 6. avoid model-slug-specific semantics;
-7. leave isolation checks, reasoning invariant, modifiers, quota enforcement, and hard ceilings in `strategy_runtime.py`;
+7. leave isolation checks, reasoning invariant, modifiers, quota enforcement, hard ceilings, task-ledger mechanics, and phase admission in shared Runtime;
 8. never add built-in-strategy literal branches to the generic compiler;
 9. add deterministic planner tests, including isolation from unrelated task semantics;
 10. avoid creating a new Skill/Agent unless a genuinely new execution role exists.
