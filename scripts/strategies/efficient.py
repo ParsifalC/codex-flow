@@ -27,6 +27,18 @@ def implementation_soft_timeout(task) -> int:
     return 600
 
 
+def implementation_repair_attempts(task) -> int:
+    """Bound local test-fix loops without conflating them with lifecycle fallback."""
+    if (
+        task.complexity in {"complex", "critical"}
+        or task.risk == "critical"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        return 2
+    return 1
+
+
 def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 1, 120, 900, True, True, "parent_delta")
@@ -40,6 +52,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             False,
             "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
+            max_worker_repair_attempts=implementation_repair_attempts(task),
         )
     if stage == "review":
         return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
