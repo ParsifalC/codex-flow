@@ -17,6 +17,7 @@ LifecycleFn = Callable[[Task, str], "StagePolicy"]
 STAGES = ("exploration", "implementation", "review")
 JOIN_POLICIES = ("opportunistic", "quorum", "required")
 FALLBACK_POLICIES = ("continue_partial", "parent_delta", "replan", "fail")
+WORK_UNIT_MODES = ("single", "bounded")
 
 
 def worker_capability(_task: Task, _role: str) -> str:
@@ -70,6 +71,10 @@ class StagePolicy:
     cancellation by itself. `max_worker_repair_attempts`, when set on an
     implementation stage, bounds local validation-failure fix loops inside one
     Worker and is independent from Parent-level `max_repair_cycles`.
+
+    `work_unit_mode=bounded` requires Parent to partition implementation into
+    multiple acceptance-bounded units and join back to Parent between units.
+    This is a logical execution boundary, not permission for overlapping writers.
     """
 
     join_policy: str
@@ -81,6 +86,9 @@ class StagePolicy:
     fallback_policy: str = "parent_delta"
     soft_timeout_seconds: int | None = None
     max_worker_repair_attempts: int | None = None
+    work_unit_mode: str = "single"
+    minimum_work_units: int = 1
+    join_between_work_units: bool = False
 
     def validate(self) -> None:
         if self.join_policy not in JOIN_POLICIES:
@@ -102,6 +110,19 @@ class StagePolicy:
                 raise ValueError("soft_timeout_seconds must be lower than hard_timeout_seconds")
         if self.max_worker_repair_attempts is not None and self.max_worker_repair_attempts < 0:
             raise ValueError("max_worker_repair_attempts cannot be negative")
+        if self.work_unit_mode not in WORK_UNIT_MODES:
+            raise ValueError(f"invalid work_unit_mode: {self.work_unit_mode}")
+        if self.minimum_work_units < 1:
+            raise ValueError("minimum_work_units must be positive")
+        if self.work_unit_mode == "single":
+            if self.minimum_work_units != 1:
+                raise ValueError("single work-unit mode requires minimum_work_units=1")
+            if self.join_between_work_units:
+                raise ValueError("single work-unit mode cannot join between work units")
+        elif self.minimum_work_units < 2:
+            raise ValueError("bounded work-unit mode requires at least two work units")
+        elif not self.join_between_work_units:
+            raise ValueError("bounded work-unit mode requires a Parent join between work units")
         if self.fallback_policy not in FALLBACK_POLICIES:
             raise ValueError(f"invalid fallback policy: {self.fallback_policy}")
 
