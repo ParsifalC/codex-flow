@@ -128,6 +128,7 @@ def implementation_maximum_work_units(task) -> int:
     if (
         task.quality_intent == "strong"
         or task.complexity == "complex"
+        or task.risk == "high"
         or task.scope == "cross-module"
         or task.verification_cost == "high"
     ):
