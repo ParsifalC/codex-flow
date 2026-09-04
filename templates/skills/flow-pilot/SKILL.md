@@ -250,7 +250,28 @@ quality     4800..6000 / 6000..7200 1..4          units + 3                 3 / 
 
 The exact values come only from the current immutable ExecutionPlan. Never infer them from the strategy name and never substitute efficient's numbers for another strategy. When both are present, `task_budget.max_work_units` must equal `implementation_stage.maximum_work_units`.
 
-Immediately after the first plan is compiled, initialize `task_budget_runtime.py` with the plan's exact `task_budget`, task id, and runtime-owned state path. After that, **do not use the raw ledger `permits_new_work` flag as the Worker-spawn gate**. Every delegated phase must go through `task_phase_runtime.py`, because a plan that already requires independent review needs a reserved completion tail.
+Immediately after the first plan is compiled, initialize the durable ledger **through the phase helper**, not through `task_budget_runtime.py init` directly:
+
+```bash
+python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py init \
+  --state-file <task-ledger-path> \
+  --task-id <task-id> \
+  --plan-json '<immutable ExecutionPlan JSON>' \
+  --now <unix-seconds>
+```
+
+For a plan with reviewer Workers, phase-aware init deterministically derives an effective ledger policy whose soft timeout is:
+
+```text
+min(
+  ExecutionPlan.task_budget.soft_timeout_seconds,
+  ExecutionPlan.task_budget.hard_timeout_seconds - review_stage.hard_timeout_seconds
+)
+```
+
+All counters and the absolute hard timeout remain unchanged. This derived soft timeout is the actual general-work admission boundary stored by the ledger, so the raw ledger preserves its own atomic limit checks and deadline-after-idempotent-replay semantics. `task_phase_runtime.py` also binds later status/reserve calls to that same effective policy fingerprint and refuses a different ExecutionPlan.
+
+After initialization, **do not use the raw ledger `permits_new_work` flag as a Worker-spawn gate**. Every delegated phase must go through `task_phase_runtime.py`.
 
 Before exploration or implementation admission:
 
@@ -276,20 +297,9 @@ python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py reserve \
   --fingerprint <stable-fingerprint>
 ```
 
-For a bounded manifest, reserve `work_unit` with the validator's stable `logical_unit_fingerprints[unit_id]`, which excludes generation. Reserve `implementation_attempt` with the generation-aware `unit_fingerprints[unit_id]` and an identity derived from `(scope_id, unit_id, generation)`. A replacement therefore consumes a new implementation attempt/replacement reservation without double-counting the same logical work unit; changing acceptance/scope/path/validation under the same logical unit still fails closed.
+For a bounded manifest, reserve `work_unit` with the validator's stable `logical_unit_fingerprints[unit_id]`, which excludes generation. Reserve `implementation_attempt` with the generation-aware `unit_fingerprints[unit_id]` and an identity derived from `(scope_id, unit_id, generation)`. A replacement therefore consumes a new implementation attempt/replacement reservation without double-counting the same logical work unit; changing acceptance/scope/path/validation under the same logical unit still fails closed. Exact idempotent replay remains valid even after the general-work deadline; a genuinely new reservation is rejected.
 
-The phase helper computes the general-work deadline as:
-
-```text
-min(
-  ledger.soft_deadline,
-  ledger.hard_deadline - review_stage.hard_timeout_seconds
-)
-```
-
-when `reviewer_workers > 0` and `review_stage` exists. With no reviewer Worker, the general-work deadline remains the ordinary task soft deadline. This does not change the immutable strategy budget or ledger fingerprint; it is a deterministic admission reserve derived from that plan's already-required completion stage.
-
-At the general-work deadline, do not open new exploration/implementation work or create implementation/replan/replacement reservations. Existing implementation must checkpoint/converge and return control. If a writable Worker cannot return before it consumes the required-review tail, harvest its latest checkpoint first, then apply the existing lifecycle/writer-fence rules and review only a terminal or immutable harvested snapshot. Never let a moving writable workspace consume a tail already reserved for required review.
+At the effective general-work soft deadline, do not open new exploration/implementation work or create implementation/replan/replacement reservations. Existing implementation must checkpoint/converge and return control. If a writable Worker cannot return before it consumes the required-review tail, harvest its latest checkpoint first, then apply the existing lifecycle/writer-fence rules and review only a terminal or immutable harvested snapshot. Never let a moving writable workspace consume a tail already reserved for required review.
 
 Required completion is a separate phase consisting of the immutable plan's already-required read-only independent review plus Parent final verification. Before starting a reviewer Worker, query:
 
@@ -302,9 +312,9 @@ python3 ~/.codex/codex-flow/strategies/task_phase_runtime.py status \
   --now <unix-seconds>
 ```
 
-`required_completion` may start after the task soft/general-work deadline and remains permitted until the absolute task hard deadline. Soft convergence must therefore **never** silently skip an `independent+parent` or `strict` review that the immutable ExecutionPlan already requires. At the hard deadline, first harvest any received checkpoint, then apply lifecycle fencing/cancellation; no new reviewer, replacement Worker, or Parent writer may start. Parent may still report already-collected evidence, but the task hard deadline is the absolute execution stop.
+`required_completion` may start after the effective task soft/general-work deadline and remains permitted until the absolute task hard deadline. Soft convergence must therefore **never** silently skip an `independent+parent` or `strict` review that the immutable ExecutionPlan already requires. At the hard deadline, first harvest any received checkpoint, then apply lifecycle fencing/cancellation; no new reviewer, replacement Worker, or Parent writer may start. Parent may still report already-collected evidence, but the task hard deadline is the absolute execution stop.
 
-Exploration/review Workers consume wall time but do not consume implementation counters. After every join or wait, re-query the phase gate for the phase you intend to continue. At task completion, call the raw ledger `finish`. A replan reuses the original ledger/state path and remaining counters, never a fresh budget.
+Exploration/review Workers consume wall time but do not consume implementation counters. After every join or wait, re-query the phase gate for the phase you intend to continue. At task completion, call the raw ledger `finish`. A replan reuses the original ledger/state path and remaining counters, never a fresh budget or a newly initialized phase ledger.
 
 The task-budget helper is a durable ledger/decision boundary and the task-phase helper is an admission boundary; neither schedules Workers. FlowPilot/runtime performs checkpointing, harvesting, fencing, cancellation, spawning, and joins from their deterministic results. The lifecycle helper remains authoritative for Worker-level safety decisions.
 
@@ -556,7 +566,7 @@ Logical work-unit boundaries do not enlarge WorkerBudget. Reuse the same planned
 
 Do not send all bounded units to one Worker in a single “complete everything” handoff. That recreates the long transaction this policy is designed to avoid.
 
-Before every implementation spawn/replan/replacement, query `task_phase_runtime.py` with `phase=implementation` and perform the corresponding reservation through its `reserve` subcommand. `permits_phase_start=false` is binding even if the raw task ledger has not yet reached its ordinary soft deadline; the difference is the required-completion tail reserved by the immutable plan.
+Before every implementation spawn/replan/replacement, query `task_phase_runtime.py` with `phase=implementation` and perform the corresponding reservation through its `reserve` subcommand. `permits_phase_start=false` is binding; the effective ledger soft deadline already includes any required-completion tail reserved by phase-aware init.
 
 ## 8. Compact implementation handoff
 
