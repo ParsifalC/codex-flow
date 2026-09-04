@@ -10,6 +10,7 @@ import argparse
 import html
 import json
 import re
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -47,12 +48,54 @@ class ModelInfo:
         return 0.7 * self.input_price + 0.3 * self.output_price
 
 
+def _ssl_context() -> ssl.SSLContext:
+    try:
+        context = ssl.create_default_context()
+    except Exception:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+
+    paths = ssl.get_default_verify_paths()
+    ca_missing = bool(paths.openssl_cafile and not os.path.exists(paths.openssl_cafile))
+    no_ca_configured = not bool(paths.cafile or paths.capath)
+
+    if ca_missing or no_ca_configured:
+        loaded = False
+        try:
+            import certifi
+
+            ca = certifi.where()
+            if os.path.exists(ca):
+                context.load_verify_locations(cafile=ca)
+                loaded = True
+        except Exception:
+            pass
+
+        if not loaded:
+            common_bundle_paths = (
+                "/etc/ssl/cert.pem",
+                "/etc/pki/tls/certs/ca-bundle.crt",
+                "/etc/ssl/certs/ca-certificates.crt",
+                "/etc/ssl/ca-bundle.pem",
+                "/usr/local/share/certs/ca-root-nss.crt",
+            )
+            for path in common_bundle_paths:
+                if os.path.exists(path):
+                    try:
+                        context.load_verify_locations(cafile=path)
+                        break
+                    except Exception:
+                        pass
+    return context
+
+
 def fetch(url: str) -> str:
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "codex-flow-recommendation-bot/0.3"},
     )
-    with urllib.request.urlopen(req, timeout=30) as response:
+    with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as response:
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace")
 

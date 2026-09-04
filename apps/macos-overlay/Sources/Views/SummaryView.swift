@@ -238,7 +238,8 @@ public struct SummaryView: View {
             metricsGrid(run)
 
             if !run.effectiveQuotaWindows.isEmpty {
-                QuotaWindowsView(windows: run.effectiveQuotaWindows)
+                let isPending = run.isRunning && (run.quotaAfter ?? []).isEmpty
+                QuotaWindowsView(windows: run.effectiveQuotaWindows, isRunning: isPending)
             }
 
             taskNarrativeCard(run)
@@ -321,7 +322,7 @@ public struct SummaryView: View {
             }
 
             HoverRevealText(
-                run.thread?.preview ?? run.summary ?? run.sessionTitle,
+                run.turnPreview,
                 font: .system(size: 9.4),
                 foregroundColor: .white.opacity(0.63),
                 lineLimit: 1,
@@ -879,8 +880,8 @@ public struct SummaryView: View {
     private func copySummary(_ run: TaskRun) {
         let usage = run.aggregatedUsage
         let text = L(
-            "FlowPilot Task Summary\nProject: \(run.projectName)\nDuration: \(run.formattedDuration)\nTotal tokens: \(run.formattedTotalTokens)\nInput tokens: \(TaskRun.formatTokenCount(usage.effectivePromptTokens))\nOutput tokens: \(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorkers: \(run.allWorkers.count)\nSummary: \(run.summary ?? run.sessionTitle)",
-            "FlowPilot 任务摘要\n项目：\(run.projectName)\n耗时：\(run.formattedDuration)\n总 Token：\(run.formattedTotalTokens)\n输入 Token：\(TaskRun.formatTokenCount(usage.effectivePromptTokens))\n输出 Token：\(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorker：\(run.allWorkers.count)\n摘要：\(run.summary ?? run.sessionTitle)"
+            "FlowPilot Task Summary\nProject: \(run.projectName)\nDuration: \(run.formattedDuration)\nTotal tokens: \(run.formattedTotalTokens)\nInput tokens: \(TaskRun.formatTokenCount(usage.effectivePromptTokens))\nOutput tokens: \(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorkers: \(run.allWorkers.count)\nSummary: \(run.turnPreview)",
+            "FlowPilot 任务摘要\n项目：\(run.projectName)\n耗时：\(run.formattedDuration)\n总 Token：\(run.formattedTotalTokens)\n输入 Token：\(TaskRun.formatTokenCount(usage.effectivePromptTokens))\n输出 Token：\(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorker：\(run.allWorkers.count)\n摘要：\(run.turnPreview)"
         )
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -955,22 +956,42 @@ public struct InspectorMetricView: View {
 
 public struct QuotaWindowsView: View {
     public let windows: [QuotaWindow]
+    public let isRunning: Bool
 
-    public init(windows: [QuotaWindow]) {
+    public init(windows: [QuotaWindow], isRunning: Bool = false) {
         self.windows = windows
+        self.isRunning = isRunning
     }
 
     private var ordered: [QuotaWindow] {
         windows.sorted { ($0.windowDurationMins ?? Int.max) < ($1.windowDurationMins ?? Int.max) }
     }
 
+    private var cardTitle: String {
+        isRunning
+            ? L("Quota remaining at task start", "任务起始额度剩余")
+            : L("Quota remaining at task completion", "任务结束额度剩余")
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label(L("Quota remaining at task completion", "任务结束额度剩余"), systemImage: "gauge.with.needle.fill")
+                Label(cardTitle, systemImage: "gauge.with.needle.fill")
                     .font(.system(size: 8.8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
+
                 Spacer()
+
+                if isRunning {
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(Color.cyan)
+                            .frame(width: 4, height: 4)
+                        Text(L("Running · Settles upon completion", "运行中 · 结束后结算消耗"))
+                            .font(.system(size: 7.2, weight: .medium))
+                            .foregroundColor(.cyan.opacity(0.85))
+                    }
+                }
             }
 
             ForEach(ordered) { quotaRow($0) }
@@ -998,6 +1019,22 @@ public struct QuotaWindowsView: View {
                 Text(String(format: L("%.0f%% left", "剩余 %.0f%%"), remaining))
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.72))
+
+                if let delta = window.deltaPercentagePoints, abs(delta) >= 0.1 {
+                    let deltaText = abs(delta) < 0.95
+                        ? String(format: "%.1f%%", abs(delta))
+                        : String(format: "%.0f%%", abs(delta))
+                    Text(delta > 0
+                        ? String(format: L("(%@ used)", "(消耗 %@)"), deltaText)
+                        : String(format: L("(%@ restored)", "(恢复 %@)"), deltaText)
+                    )
+                    .font(.system(size: 7.6, weight: .bold, design: .rounded))
+                    .foregroundColor(delta > 0 ? .orange : .green)
+                    .help(delta > 0
+                        ? String(format: L("Quota consumed during this run: %@", "本轮任务配额消耗：%@"), deltaText)
+                        : String(format: L("Quota restored during this run: %@", "本轮任务配额恢复：%@"), deltaText)
+                    )
+                }
 
                 Spacer(minLength: 2)
 

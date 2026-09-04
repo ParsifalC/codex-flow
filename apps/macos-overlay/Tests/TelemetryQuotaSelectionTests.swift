@@ -11,7 +11,32 @@ struct TelemetryQuotaSelectionTests {
         testWindowOrderDoesNotChangeSemantics()
         testMissingWeeklyWindowDoesNotFallBackToFiveHour()
         testRemainingMetricsStayExplicit()
+        testFallbackDeltaComputedFromBeforeAndAfter()
         print("Telemetry quota selection regression tests passed")
+    }
+
+    private static func testFallbackDeltaComputedFromBeforeAndAfter() {
+        let before = [
+            QuotaWindow(slot: "primary", usedPercent: 20.0, windowDurationMins: 300),
+            QuotaWindow(slot: "secondary", usedPercent: 40.0, windowDurationMins: 10_080)
+        ]
+        let after = [
+            QuotaWindow(slot: "primary", usedPercent: 25.0, windowDurationMins: 300),
+            QuotaWindow(slot: "secondary", usedPercent: 46.0, windowDurationMins: 10_080)
+        ]
+        let run = TaskRun(
+            sessionId: "quota-test-fallback",
+            turnId: UUID().uuidString,
+            status: "completed",
+            quotaBefore: before,
+            quotaAfter: after
+        )
+
+        precondition(run.shortWindowQuotaDelta == 5.0)
+        precondition(run.weeklyQuotaDelta == 6.0)
+        precondition(run.canonicalQuotaDelta == 6.0)
+        let weeklyWindow = run.effectiveQuotaWindows.first { $0.windowDurationMins == 10_080 }
+        precondition(weeklyWindow?.deltaPercentagePoints == 6.0)
     }
 
     private static func makeRun(_ windows: [QuotaWindow]) -> TaskRun {

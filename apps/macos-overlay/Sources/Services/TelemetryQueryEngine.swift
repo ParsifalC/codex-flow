@@ -226,6 +226,9 @@ public class TelemetryQueryEngine {
                            let endR = cleanPrompt.range(of: "</USER_REQUEST>") {
                             cleanPrompt = String(cleanPrompt[r.upperBound..<endR.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
                         }
+                        if let reqRange = cleanPrompt.range(of: "## My request:", options: .caseInsensitive) {
+                            cleanPrompt = String(cleanPrompt[reqRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
                         if !cleanPrompt.starts(with: "<") || goal == nil {
                             goal = cleanPrompt
                         }
@@ -301,12 +304,13 @@ public class TelemetryQueryEngine {
             let qNorm = query.lowercased()
             runs = runs.filter { run in
                 let title = run.sessionTitle.lowercased()
+                let turnText = run.turnPreview.lowercased()
                 let proj = run.projectName.lowercased()
                 let branch = (run.gitBranch ?? "").lowercased()
                 let summary = (run.summary ?? "").lowercased()
                 let sess = (run.sessionId ?? "").lowercased()
                 let turn = (run.turnId ?? "").lowercased()
-                return title.contains(qNorm) || proj.contains(qNorm) || branch.contains(qNorm) || summary.contains(qNorm) || sess.contains(qNorm) || turn.contains(qNorm)
+                return title.contains(qNorm) || turnText.contains(qNorm) || proj.contains(qNorm) || branch.contains(qNorm) || summary.contains(qNorm) || sess.contains(qNorm) || turn.contains(qNorm)
             }
         }
         
@@ -422,6 +426,7 @@ public class TelemetryQueryEngine {
                 // Also search across each run within the chat
                 for r in chat.runs {
                     if r.sessionTitle.lowercased().contains(qNorm) { return true }
+                    if r.turnPreview.lowercased().contains(qNorm) { return true }
                     if (r.summary ?? "").lowercased().contains(qNorm) { return true }
                     if (r.turnId ?? "").lowercased().contains(qNorm) { return true }
                     if (r.parent?.displayModel ?? "").lowercased().contains(qNorm) { return true }
