@@ -53,9 +53,23 @@ plan --routing delegate --complexity complex --uncertainty high > "$TMP/plan.jso
 python3 - "$TMP/plan.json" > "$TMP/impl-policy.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
+assert p["implementation_stage"]["soft_timeout_seconds"] == 900, p
+assert p["implementation_stage"]["hard_timeout_seconds"] == 1800, p
 print(json.dumps(p["implementation_stage"], separators=(",", ":")))
 PY
 IMPL_POLICY="$(cat "$TMP/impl-policy.json")"
+
+# Efficient soft budgets are complexity-aware while preserving the existing 30-minute hard ceiling.
+plan --routing delegate --complexity routine > "$TMP/routine-plan.json"
+plan --routing delegate --complexity critical --risk critical > "$TMP/critical-plan.json"
+python3 - "$TMP/routine-plan.json" "$TMP/critical-plan.json" <<'PY'
+import json, sys
+routine=json.load(open(sys.argv[1])); critical=json.load(open(sys.argv[2]))
+assert routine["implementation_stage"]["soft_timeout_seconds"] == 600, routine
+assert critical["implementation_stage"]["soft_timeout_seconds"] == 1200, critical
+assert routine["implementation_stage"]["hard_timeout_seconds"] == 1800, routine
+assert critical["implementation_stage"]["hard_timeout_seconds"] == 1800, critical
+PY
 
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
   --stage implementation --started-at 100 --last-progress-at 220 --now 250 --writable > "$TMP/progress.json"
@@ -65,6 +79,36 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="progressing" and d["action"]=="continue", d
 assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
+PY
+
+# Reaching the soft budget requests convergence/checkpoint only. It never cancels or fences a healthy Worker.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
+  --stage implementation --started-at 100 --last-progress-at 995 --now 1000 --writable --in-flight > "$TMP/soft.json"
+python3 - "$TMP/soft.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="progressing" and d["action"]=="request_checkpoint", d
+assert d["cancel_required"] is False, d
+assert d["replacement_allowed"] is False and d["fence_required"] is False, d
+assert d["fallback_policy"] is None, d
+assert "without cancelling Worker" in d["reason"], d
+PY
+
+# Old ExecutionPlans without the optional soft field retain the historical lifecycle behavior after upgrade.
+python3 - "$TMP/impl-policy.json" > "$TMP/legacy-impl-policy.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+p.pop("soft_timeout_seconds", None)
+print(json.dumps(p, separators=(",", ":")))
+PY
+LEGACY_IMPL_POLICY="$(cat "$TMP/legacy-impl-policy.json")"
+python3 "$LIFECYCLE" --policy-json "$LEGACY_IMPL_POLICY" --scope-id impl-legacy \
+  --stage implementation --started-at 100 --last-progress-at 995 --now 1000 --writable --in-flight > "$TMP/legacy.json"
+python3 - "$TMP/legacy.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="progressing" and d["action"]=="continue", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
 PY
 
 # Millisecond timestamps are rejected rather than silently misclassified as huge elapsed seconds.
