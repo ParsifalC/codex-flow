@@ -4,8 +4,8 @@
 This module is copied automatically with the strategy package by both Unix and
 Windows installers. It turns observable Worker facts plus an ExecutionPlan
 StagePolicy into a deterministic lifecycle decision. Semantic scope overlap
-remains a Parent responsibility; timing/state transitions, cancellation
-requirements, and writable replacement fencing do not.
+remains a Parent responsibility; timing/state transitions, checkpoint harvest,
+cancellation requirements, and writable replacement fencing do not.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ JOIN_POLICIES = {"opportunistic", "quorum", "required"}
 WRITER_FALLBACKS = {"parent_delta", "replan"}
 EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000
 PROGRESS_QUALITIES = {"meaningful", "activity_only", "none"}
+CHECKPOINT_STATUSES = {"not_requested", "requested", "received", "harvested"}
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,9 @@ class WorkerObservation:
     last_progress_at: float
     now: float
     last_meaningful_progress_at: float | None = None
+    checkpoint_requested_at: float | None = None
+    checkpoint_received_at: float | None = None
+    checkpoint_harvested_at: float | None = None
     writable: bool = False
     in_flight: bool = False
     terminal_success: bool = False
@@ -112,6 +116,15 @@ class WorkerObservation:
         # activity from acceptance-relevant progress retain historical behavior.
         return self.last_progress_at if self.last_meaningful_progress_at is None else self.last_meaningful_progress_at
 
+    def checkpoint_status(self) -> str:
+        if self.checkpoint_harvested_at is not None:
+            return "harvested"
+        if self.checkpoint_received_at is not None:
+            return "received"
+        if self.checkpoint_requested_at is not None:
+            return "requested"
+        return "not_requested"
+
     def validate(self) -> None:
         if not self.scope_id:
             raise ValueError("scope_id is required")
@@ -122,8 +135,13 @@ class WorkerObservation:
             "last_progress_at": self.last_progress_at,
             "now": self.now,
         }
-        if self.last_meaningful_progress_at is not None:
-            timestamps["last_meaningful_progress_at"] = self.last_meaningful_progress_at
+        optional_timestamps = {
+            "last_meaningful_progress_at": self.last_meaningful_progress_at,
+            "checkpoint_requested_at": self.checkpoint_requested_at,
+            "checkpoint_received_at": self.checkpoint_received_at,
+            "checkpoint_harvested_at": self.checkpoint_harvested_at,
+        }
+        timestamps.update({key: value for key, value in optional_timestamps.items() if value is not None})
         if any(not math.isfinite(value) for value in timestamps.values()):
             raise ValueError("timestamps must be finite seconds")
         if any(value < 0 for value in timestamps.values()):
@@ -141,6 +159,30 @@ class WorkerObservation:
             raise ValueError("last_meaningful_progress_at cannot precede started_at")
         if meaningful_at > self.last_progress_at:
             raise ValueError("last_meaningful_progress_at cannot be newer than last_progress_at")
+        for label in ("checkpoint_requested_at", "checkpoint_received_at", "checkpoint_harvested_at"):
+            value = getattr(self, label)
+            if value is not None and value < self.started_at:
+                raise ValueError(f"{label} cannot precede started_at")
+            if value is not None and value > self.now:
+                raise ValueError(f"{label} cannot be in the future")
+        if self.checkpoint_received_at is not None and self.checkpoint_requested_at is None:
+            raise ValueError("checkpoint_received_at requires checkpoint_requested_at")
+        if self.checkpoint_harvested_at is not None and self.checkpoint_received_at is None:
+            raise ValueError("checkpoint_harvested_at requires checkpoint_received_at")
+        if (
+            self.checkpoint_requested_at is not None
+            and self.checkpoint_received_at is not None
+            and self.checkpoint_received_at < self.checkpoint_requested_at
+        ):
+            raise ValueError("checkpoint_received_at cannot precede checkpoint_requested_at")
+        if (
+            self.checkpoint_received_at is not None
+            and self.checkpoint_harvested_at is not None
+            and self.checkpoint_harvested_at < self.checkpoint_received_at
+        ):
+            raise ValueError("checkpoint_harvested_at cannot precede checkpoint_received_at")
+        if self.checkpoint_status() not in CHECKPOINT_STATUSES:  # pragma: no cover
+            raise AssertionError(f"invalid checkpoint status: {self.checkpoint_status()}")
         if self.terminal_success and self.terminal_failure:
             raise ValueError("worker cannot be both terminal-success and terminal-failure")
         if self.cancel_confirmed and (self.terminal_success or self.terminal_failure):
@@ -158,6 +200,7 @@ class LifecycleDecision:
     idle_seconds: float
     meaningful_idle_seconds: float
     progress_quality: str
+    checkpoint_status: str
     wall_seconds: float
     fallback_policy: str | None
 
@@ -208,8 +251,26 @@ def _decision(
         idle_seconds=idle,
         meaningful_idle_seconds=meaningful_idle,
         progress_quality=quality,
+        checkpoint_status=observation.checkpoint_status(),
         wall_seconds=wall,
         fallback_policy=fallback_policy,
+    )
+
+
+def _checkpoint_harvest_decision(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
+    return _decision(
+        policy,
+        observation,
+        state="progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running",
+        action="harvest_checkpoint",
+        reason=(
+            "worker checkpoint is available; harvest completed work, changed files/current patch state, "
+            "validation evidence, blockers, and remaining delta before any cancellation or fallback"
+        ),
+        cancel_required=False,
+        replacement_allowed=False,
+        fence_required=False,
+        fallback_policy=None,
     )
 
 
@@ -279,7 +340,7 @@ def _superseded_decision(policy: LifecyclePolicy, observation: WorkerObservation
 
 
 def _soft_budget_decision(policy: LifecyclePolicy, observation: WorkerObservation) -> LifecycleDecision:
-    _idle, meaningful_idle, _wall, quality = _progress_metrics(policy, observation)
+    _idle, _meaningful_idle, _wall, quality = _progress_metrics(policy, observation)
     state = "progressing" if observation.last_progress_at > observation.started_at or observation.in_flight else "running"
     if quality == "meaningful":
         detail = "recent acceptance-relevant progress is visible"
@@ -287,15 +348,26 @@ def _soft_budget_decision(policy: LifecyclePolicy, observation: WorkerObservatio
         detail = "liveness activity is visible but no recent acceptance-relevant delta is visible"
     else:
         detail = "no recent meaningful or liveness progress is visible"
+
+    checkpoint_status = observation.checkpoint_status()
+    if checkpoint_status == "not_requested":
+        action = "request_checkpoint"
+        suffix = "request a non-terminal checkpoint without cancelling Worker"
+    elif checkpoint_status == "requested":
+        action = "await_checkpoint"
+        suffix = "checkpoint has been requested; let Worker reach a safe checkpoint without cancelling it"
+    elif checkpoint_status == "received":
+        return _checkpoint_harvest_decision(policy, observation)
+    else:
+        action = "continue"
+        suffix = "checkpoint has already been harvested; continue until completion or a real lifecycle boundary"
+
     return _decision(
         policy,
         observation,
         state=state,
-        action="request_checkpoint",
-        reason=(
-            f"soft worker execution budget reached; {detail}; request checkpoint/convergence "
-            "without cancelling Worker"
-        ),
+        action=action,
+        reason=f"soft worker execution budget reached; {detail}; {suffix}",
         cancel_required=False,
         replacement_allowed=False,
         fence_required=False,
@@ -322,6 +394,11 @@ def evaluate_worker(policy: LifecyclePolicy, observation: WorkerObservation) -> 
             fence_required=False,
             fallback_policy=None,
         )
+
+    # Preserve already-returned partial work before any terminal failure, hard
+    # timeout, idle fallback, cancellation, or writer replacement can discard it.
+    if observation.checkpoint_status() == "received":
+        return _checkpoint_harvest_decision(policy, observation)
 
     if observation.scope_superseded and policy.cancel_if_superseded:
         return _superseded_decision(policy, observation)
@@ -403,6 +480,9 @@ def build_parser() -> argparse.ArgumentParser:
             "that treats last-progress-at as meaningful"
         ),
     )
+    parser.add_argument("--checkpoint-requested-at", type=float, help="Unix timestamp when Parent requested checkpoint")
+    parser.add_argument("--checkpoint-received-at", type=float, help="Unix timestamp when Worker returned checkpoint payload")
+    parser.add_argument("--checkpoint-harvested-at", type=float, help="Unix timestamp when Parent persisted/consumed checkpoint payload")
     parser.add_argument("--now", type=float, required=True, help="Unix timestamp in seconds")
     parser.add_argument("--writable", action="store_true")
     parser.add_argument("--in-flight", action="store_true")
@@ -424,6 +504,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         last_progress_at=ns.last_progress_at,
         now=ns.now,
         last_meaningful_progress_at=ns.last_meaningful_progress_at,
+        checkpoint_requested_at=ns.checkpoint_requested_at,
+        checkpoint_received_at=ns.checkpoint_received_at,
+        checkpoint_harvested_at=ns.checkpoint_harvested_at,
         writable=ns.writable,
         in_flight=ns.in_flight,
         terminal_success=ns.terminal_success,
