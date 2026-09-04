@@ -44,10 +44,16 @@ def implementation_maximum_work_units(task) -> int:
         or task.scope == "repo-wide"
         or task.iteration_intensity == "heavy-loop"
     ):
-        return 4
-    if task.complexity == "complex" or task.scope == "cross-module":
-        return 3
-    return 1
+        semantic_maximum = 4
+    elif task.complexity == "complex" or task.scope == "cross-module":
+        semantic_maximum = 3
+    else:
+        semantic_maximum = 1
+    # A proven writable workstream is already a natural implementation unit.
+    # Never compile a task budget that authorizes fewer logical units than the
+    # strategy can legitimately schedule as parallel implementers.
+    topology_floor = min(task.writable_workstreams, worker_budget(task).max_implementers)
+    return max(semantic_maximum, topology_floor)
 
 
 def task_budget(task) -> TaskBudgetPolicy:
