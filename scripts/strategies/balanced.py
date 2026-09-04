@@ -59,10 +59,13 @@ def implementation_repair_attempts(task) -> int:
 
 def implementation_maximum_work_units(task) -> int:
     if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
-        return 3
-    if task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
-        return 2
-    return 1
+        semantic_maximum = 3
+    elif task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
+        semantic_maximum = 2
+    else:
+        semantic_maximum = 1
+    topology_floor = min(task.writable_workstreams, worker_budget(task).max_implementers)
+    return max(semantic_maximum, topology_floor)
 
 
 def task_budget(task) -> TaskBudgetPolicy:
@@ -108,7 +111,9 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        return StagePolicy("required", 1, 180, 1800, True, False, "parent_delta")
+        # Keep strict review feasible inside the smallest balanced task envelope
+        # while retaining a Parent finalization reserve after reviewer completion.
+        return StagePolicy("required", 1, 180, 1380, True, False, "parent_delta")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
