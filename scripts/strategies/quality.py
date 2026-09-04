@@ -80,11 +80,89 @@ def notes(task) -> tuple[str, ...]:
     return ()
 
 
-def lifecycle(_task, stage: str) -> StagePolicy:
+def implementation_soft_timeout(task) -> int:
+    if task.quality_intent == "absolute" or task.complexity == "critical" or task.risk == "critical":
+        return 2700
+    if (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+        or task.verification_cost == "high"
+    ):
+        return 2400
+    return 1800
+
+
+def implementation_checkpoint_rearm_seconds(task) -> int:
+    if task.quality_intent == "absolute" or task.complexity == "critical" or task.risk == "critical":
+        return 600
+    if (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.scope in {"cross-module", "repo-wide"}
+        or task.iteration_intensity == "heavy-loop"
+        or task.verification_cost == "high"
+    ):
+        return 480
+    return 360
+
+
+def implementation_repair_attempts(task) -> int:
+    if (
+        task.quality_intent in {"strong", "absolute"}
+        or task.complexity in {"complex", "critical"}
+        or task.risk in {"high", "critical"}
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+        or task.verification_cost == "high"
+    ):
+        return 3
+    return 2
+
+
+def implementation_maximum_work_units(task) -> int:
+    if (
+        task.quality_intent == "absolute"
+        or task.complexity == "critical"
+        or task.risk == "critical"
+        or task.scope == "repo-wide"
+        or task.iteration_intensity == "heavy-loop"
+    ):
+        return 4
+    if (
+        task.quality_intent == "strong"
+        or task.complexity == "complex"
+        or task.scope == "cross-module"
+        or task.verification_cost == "high"
+    ):
+        return 3
+    return 1
+
+
+def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 2, 300, 2400, True, False, "parent_delta")
     if stage == "implementation":
-        return StagePolicy("required", 1, 300, 3600, False, False, "replan")
+        maximum_work_units = implementation_maximum_work_units(task)
+        bounded_mode = maximum_work_units > 1
+        return StagePolicy(
+            "required",
+            1,
+            300,
+            3600,
+            False,
+            False,
+            "replan",
+            soft_timeout_seconds=implementation_soft_timeout(task),
+            checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
+            max_worker_repair_attempts=implementation_repair_attempts(task),
+            work_unit_mode="bounded" if bounded_mode else "single",
+            minimum_work_units=1,
+            join_between_work_units=bounded_mode,
+            maximum_work_units=maximum_work_units,
+            require_write_paths=bounded_mode,
+        )
     if stage == "review":
         return StagePolicy("required", 2, 300, 3000, False, False, "replan")
     raise ValueError(f"invalid lifecycle stage: {stage}")
