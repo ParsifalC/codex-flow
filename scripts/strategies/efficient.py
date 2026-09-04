@@ -39,10 +39,20 @@ def implementation_repair_attempts(task) -> int:
     return 1
 
 
+def implementation_minimum_work_units(task) -> int:
+    """Keep long implementation transactions bounded without creating unsafe write concurrency."""
+    if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
+        return 3
+    if task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
+        return 2
+    return 1
+
+
 def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 1, 120, 900, True, True, "parent_delta")
     if stage == "implementation":
+        minimum_work_units = implementation_minimum_work_units(task)
         return StagePolicy(
             "required",
             1,
@@ -53,6 +63,9 @@ def lifecycle(task, stage: str) -> StagePolicy:
             "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
             max_worker_repair_attempts=implementation_repair_attempts(task),
+            work_unit_mode="bounded" if minimum_work_units > 1 else "single",
+            minimum_work_units=minimum_work_units,
+            join_between_work_units=minimum_work_units > 1,
         )
     if stage == "review":
         return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
