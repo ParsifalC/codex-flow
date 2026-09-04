@@ -155,7 +155,7 @@ soft_timeout_seconds | none
 max_worker_repair_attempts | none
 ```
 
-For the `efficient` strategy, a routine single implementation stage sets `maximum_work_units=1`; complex, cross-module, and critical implementation work sets an exact maximum of 2; repo-wide or heavy-loop work sets an exact maximum of 3. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
+For the `efficient` strategy, routine implementation stays single (`minimum_work_units=maximum_work_units=1`). Complex, cross-module, critical, and critical-risk work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=2`; repo-wide or heavy-loop work uses bounded mode with `minimum_work_units=1` and `maximum_work_units=3`. Parent should raise the unit count only with an independent acceptance delta, validation boundary, and ownership/dependency evidence. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
 
 `maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota or worker-count. When a strategy emits a task budget, the compiler requires its `max_work_units` to equal the implementation StagePolicy maximum. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
 

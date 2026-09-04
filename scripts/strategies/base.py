@@ -276,8 +276,6 @@ class StagePolicy:
                 raise ValueError("single work-unit mode cannot join between work units")
             if self.maximum_work_units is not None and self.maximum_work_units != 1:
                 raise ValueError("single work-unit mode requires maximum_work_units=1")
-        elif self.minimum_work_units < 2:
-            raise ValueError("bounded work-unit mode requires at least two work units")
         elif not self.join_between_work_units:
             raise ValueError("bounded work-unit mode requires a Parent join between work units")
         elif self.maximum_work_units is not None and self.maximum_work_units < self.minimum_work_units:

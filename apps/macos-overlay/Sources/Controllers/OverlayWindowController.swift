@@ -868,18 +868,55 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         }
 
         if state.isExpanded && !state.isPinned && !isInteractingOrDragging {
-            collapseTimer?.invalidate()
-            collapseTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in
-                guard let self,
-                      self.state.isExpanded,
-                      !self.state.isPinned,
-                      !self.isInteractingOrDragging,
-                      !self.isGeometryTransitioning else { return }
-                self.state.collapse()
-            }
+            scheduleAutoCollapseTimer()
         } else if !state.isExpanded && !state.isDocked && !isInteractingOrDragging {
             scheduleTuck()
         }
+    }
+
+    private func scheduleAutoCollapseTimer() {
+        collapseTimer?.invalidate()
+        collapseTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in
+            guard let self,
+                  self.state.isExpanded,
+                  !self.state.isPinned,
+                  !self.isInteractingOrDragging,
+                  !self.isGeometryTransitioning else { return }
+
+            if self.isPointerInAppWindowOrPopover() {
+                self.scheduleAutoCollapseTimer()
+                return
+            }
+
+            self.state.collapse()
+        }
+    }
+
+    private func isPointerInAppWindowOrPopover() -> Bool {
+        let mouseLocation = NSEvent.mouseLocation
+        for appWindow in NSApp.windows {
+            guard appWindow.isVisible,
+                  appWindow.alphaValue > 0.01,
+                  appWindow.frame.width > 10,
+                  appWindow.frame.height > 10 else {
+                continue
+            }
+            if let window, appWindow == window {
+                if appWindow.frame.contains(mouseLocation),
+                   let contentView = appWindow.contentView {
+                    let pointInWindow = appWindow.convertPoint(fromScreen: mouseLocation)
+                    let pointInHost = contentView.convert(pointInWindow, from: nil)
+                    if isPointerInteractive(at: pointInHost, in: contentView.bounds) {
+                        return true
+                    }
+                }
+            } else {
+                if appWindow.frame.contains(mouseLocation) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     // MARK: - Drag Snap

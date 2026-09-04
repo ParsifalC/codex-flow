@@ -609,6 +609,41 @@ public struct TaskRun: Codable, Identifiable {
         return summaryInfo?.conclusion ?? summary
     }
     
+    public var turnPreview: String {
+        if let goal = summaryInfo?.goal, !goal.isEmpty {
+            return TaskRun.cleanPromptText(goal)
+        }
+        if let sum = summary, !sum.isEmpty {
+            return sum
+        }
+        if let conclusion = summaryInfo?.conclusion, !conclusion.isEmpty {
+            return TaskRun.cleanPromptText(conclusion)
+        }
+        return thread?.preview ?? thread?.name ?? sessionTitle
+    }
+    
+    public static func cleanPromptText(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let reqRange = text.range(of: "## My request:", options: .caseInsensitive) {
+            text = String(text[reqRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let reqRange = text.range(of: "<USER_REQUEST>") {
+            if let endRange = text.range(of: "</USER_REQUEST>") {
+                text = String(text[reqRange.upperBound..<endRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                text = String(text[reqRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
+        if let regex = try? NSRegularExpression(pattern: "<image[^>]*>|<file[^>]*>", options: .caseInsensitive) {
+            let range = NSRange(text.startIndex..., in: text)
+            text = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        }
+        
+        let components = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        let result = components.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? raw : result
+    }
+    
     public var hasSkillsOrTools: Bool {
         return !(skillsUsed ?? []).isEmpty || !(toolsUsed ?? []).isEmpty
     }
@@ -688,9 +723,40 @@ public struct TaskRun: Codable, Identifiable {
     
     public var effectiveQuotaWindows: [QuotaWindow] {
         if let current = quotaChangeDuringRun, !current.isEmpty {
+            if current.contains(where: { $0.deltaPercentagePoints == nil }),
+               let before = quotaBefore, !before.isEmpty {
+                return current.map { w in
+                    var window = w
+                    if window.deltaPercentagePoints == nil {
+                        let match = before.first(where: {
+                            ($0.windowDurationMins != nil && $0.windowDurationMins == w.windowDurationMins) ||
+                            ($0.slot != nil && $0.slot == w.slot)
+                        })
+                        if let afterUsed = w.usedPercent, let beforeUsed = match?.usedPercent {
+                            window.deltaPercentagePoints = afterUsed - beforeUsed
+                        }
+                    }
+                    return window
+                }
+            }
             return current
         }
         if let after = quotaAfter, !after.isEmpty {
+            if let before = quotaBefore, !before.isEmpty {
+                return after.map { w in
+                    var window = w
+                    if window.deltaPercentagePoints == nil {
+                        let match = before.first(where: {
+                            ($0.windowDurationMins != nil && $0.windowDurationMins == w.windowDurationMins) ||
+                            ($0.slot != nil && $0.slot == w.slot)
+                        })
+                        if let afterUsed = w.usedPercent, let beforeUsed = match?.usedPercent {
+                            window.deltaPercentagePoints = afterUsed - beforeUsed
+                        }
+                    }
+                    return window
+                }
+            }
             return after
         }
         return quotaBefore ?? []

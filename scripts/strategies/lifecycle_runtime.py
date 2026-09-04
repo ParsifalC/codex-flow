@@ -31,6 +31,19 @@ REPLAN_SCOPES = {"uncovered_scope", "checkpoint_remaining_delta"}
 CHECKPOINT_REUSE_MODES = {"retained_workspace", "harvested_snapshot_only"}
 
 
+def _strict_timeout(value: Any, label: str) -> float:
+    """Accept JSON numbers only (never bool or numeric strings)."""
+    if type(value) not in (int, float):
+        raise ValueError(f"{label} must be a number")
+    try:
+        result = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"{label} must be a finite number") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be finite")
+    return result
+
+
 @dataclass(frozen=True)
 class LifecyclePolicy:
     join_policy: str
@@ -44,6 +57,8 @@ class LifecyclePolicy:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "LifecyclePolicy":
+        if type(value) is not dict:
+            raise ValueError("stage policy must be an object")
         required = {
             "join_policy",
             "min_successful_workers",
@@ -57,23 +72,52 @@ class LifecyclePolicy:
         if missing:
             raise ValueError(f"stage policy missing fields: {sorted(missing)}")
         for key in ("cancel_if_superseded", "cancel_stragglers_after_quorum"):
-            if not isinstance(value[key], bool):
+            if type(value[key]) is not bool:
                 raise ValueError(f"{key} must be boolean")
+        if type(value["join_policy"]) is not str:
+            raise ValueError("join_policy must be a string")
+        if type(value["fallback_policy"]) is not str:
+            raise ValueError("fallback_policy must be a string")
+        if type(value["min_successful_workers"]) is not int:
+            raise ValueError("min_successful_workers must be an integer")
         raw_soft_timeout = value.get("soft_timeout_seconds")
         policy = cls(
-            join_policy=str(value["join_policy"]),
-            min_successful_workers=int(value["min_successful_workers"]),
-            idle_timeout_seconds=float(value["idle_timeout_seconds"]),
-            hard_timeout_seconds=float(value["hard_timeout_seconds"]),
+            join_policy=value["join_policy"],
+            min_successful_workers=value["min_successful_workers"],
+            idle_timeout_seconds=_strict_timeout(value["idle_timeout_seconds"], "idle_timeout_seconds"),
+            hard_timeout_seconds=_strict_timeout(value["hard_timeout_seconds"], "hard_timeout_seconds"),
             cancel_if_superseded=value["cancel_if_superseded"],
             cancel_stragglers_after_quorum=value["cancel_stragglers_after_quorum"],
-            fallback_policy=str(value["fallback_policy"]),
-            soft_timeout_seconds=(None if raw_soft_timeout is None else float(raw_soft_timeout)),
+            fallback_policy=value["fallback_policy"],
+            soft_timeout_seconds=(None if raw_soft_timeout is None else _strict_timeout(raw_soft_timeout, "soft_timeout_seconds")),
         )
         policy.validate()
         return policy
 
     def validate(self) -> None:
+        if type(self.join_policy) is not str:
+            raise ValueError("join_policy must be a string")
+        if type(self.fallback_policy) is not str:
+            raise ValueError("fallback_policy must be a string")
+        if type(self.min_successful_workers) is not int:
+            raise ValueError("min_successful_workers must be an integer")
+        for label, value in (
+            ("cancel_if_superseded", self.cancel_if_superseded),
+            ("cancel_stragglers_after_quorum", self.cancel_stragglers_after_quorum),
+        ):
+            if type(value) is not bool:
+                raise ValueError(f"{label} must be boolean")
+        for label, value in (
+            ("idle_timeout_seconds", self.idle_timeout_seconds),
+            ("hard_timeout_seconds", self.hard_timeout_seconds),
+        ):
+            if type(value) not in (int, float) or not math.isfinite(float(value)):
+                raise ValueError(f"{label} must be finite number")
+        if self.soft_timeout_seconds is not None and (
+            type(self.soft_timeout_seconds) not in (int, float)
+            or not math.isfinite(float(self.soft_timeout_seconds))
+        ):
+            raise ValueError("soft_timeout_seconds must be finite number")
         if self.join_policy not in JOIN_POLICIES:
             raise ValueError(f"invalid join policy: {self.join_policy}")
         if self.min_successful_workers < 0:
@@ -96,6 +140,72 @@ class LifecyclePolicy:
 
 
 @dataclass(frozen=True)
+class CheckpointRecord:
+    """One immutable checkpoint event in a Worker generation."""
+
+    sequence: int
+    generation: int
+    requested_at: float
+    received_at: float | None = None
+    harvested_at: float | None = None
+
+    def validate(self, *, started_at: float, now: float) -> None:
+        if type(self.sequence) is not int or self.sequence < 1:
+            raise ValueError("checkpoint sequence must be a positive integer")
+        if type(self.generation) is not int or self.generation < 0:
+            raise ValueError("checkpoint generation must be a non-negative integer")
+        times = {
+            "checkpoint requested_at": self.requested_at,
+            "checkpoint received_at": self.received_at,
+            "checkpoint harvested_at": self.harvested_at,
+        }
+        for label, value in times.items():
+            if value is None:
+                continue
+            if type(value) not in (int, float) or not math.isfinite(float(value)):
+                raise ValueError(f"{label} must be a finite number")
+            if value > EPOCH_MILLISECONDS_THRESHOLD:
+                raise ValueError(
+                    f"{label} must use seconds, not milliseconds; pass Unix seconds such as time.time()"
+                )
+            if value < started_at:
+                raise ValueError(f"{label} cannot precede started_at")
+            if value > now:
+                raise ValueError(f"{label} cannot be in the future")
+        if self.requested_at < started_at or self.requested_at > now:
+            raise ValueError("checkpoint requested_at must be between started_at and now")
+        if self.received_at is not None and self.received_at < self.requested_at:
+            raise ValueError("checkpoint received_at cannot precede requested_at")
+        if self.harvested_at is not None:
+            if self.received_at is None:
+                raise ValueError("checkpoint harvested_at requires received_at")
+            if self.harvested_at < self.received_at:
+                raise ValueError("checkpoint harvested_at cannot precede received_at")
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "CheckpointRecord":
+        if type(value) is not dict:
+            raise ValueError("checkpoint record must be an object")
+        required = ("sequence", "generation", "requested_at")
+        missing = [key for key in required if key not in value]
+        if missing:
+            raise ValueError(f"checkpoint record missing fields: {missing}")
+        for key in ("sequence", "generation"):
+            if type(value[key]) is not int:
+                raise ValueError(f"checkpoint {key} must be an integer")
+        for key in ("requested_at", "received_at", "harvested_at"):
+            if key in value and value[key] is not None:
+                _strict_timeout(value[key], f"checkpoint {key}")
+        return cls(
+            sequence=value["sequence"],
+            generation=value["generation"],
+            requested_at=_strict_timeout(value["requested_at"], "checkpoint requested_at"),
+            received_at=(None if value.get("received_at") is None else _strict_timeout(value["received_at"], "checkpoint received_at")),
+            harvested_at=(None if value.get("harvested_at") is None else _strict_timeout(value["harvested_at"], "checkpoint harvested_at")),
+        )
+
+
+@dataclass(frozen=True)
 class WorkerObservation:
     scope_id: str
     stage: str
@@ -113,6 +223,8 @@ class WorkerObservation:
     scope_superseded: bool = False
     cancel_confirmed: bool = False
     replacement_isolated: bool = False
+    generation: int = 0
+    checkpoint_sequence: tuple[CheckpointRecord, ...] | None = None
 
     def meaningful_progress_at(self) -> float:
         # Backward compatibility: callers that do not yet distinguish liveness
@@ -120,17 +232,36 @@ class WorkerObservation:
         return self.last_progress_at if self.last_meaningful_progress_at is None else self.last_meaningful_progress_at
 
     def checkpoint_status(self) -> str:
-        if self.checkpoint_harvested_at is not None:
+        records = self.checkpoint_records()
+        if records and records[-1].harvested_at is not None:
             return "harvested"
-        if self.checkpoint_received_at is not None:
+        if records and records[-1].received_at is not None:
             return "received"
-        if self.checkpoint_requested_at is not None:
+        if records:
             return "requested"
         return "not_requested"
+
+    def checkpoint_records(self) -> tuple[CheckpointRecord, ...]:
+        if self.checkpoint_sequence is not None:
+            return self.checkpoint_sequence
+        if self.checkpoint_requested_at is None and self.checkpoint_received_at is None and self.checkpoint_harvested_at is None:
+            return ()
+        return (CheckpointRecord(1, self.generation, self.checkpoint_requested_at, self.checkpoint_received_at, self.checkpoint_harvested_at),)
+
+    def latest_checkpoint(self) -> CheckpointRecord | None:
+        records = self.checkpoint_records()
+        return records[-1] if records else None
+
+    def latest_harvested_checkpoint(self) -> CheckpointRecord | None:
+        """Return the newest durable checkpoint baseline in this generation."""
+        harvested = [record for record in self.checkpoint_records() if record.harvested_at is not None]
+        return harvested[-1] if harvested else None
 
     def validate(self) -> None:
         if not self.scope_id:
             raise ValueError("scope_id is required")
+        if type(self.generation) is not int or self.generation < 0:
+            raise ValueError("generation must be a non-negative integer")
         if self.stage not in {"exploration", "implementation", "review"}:
             raise ValueError(f"invalid stage: {self.stage}")
         timestamps = {
@@ -145,6 +276,8 @@ class WorkerObservation:
             "checkpoint_harvested_at": self.checkpoint_harvested_at,
         }
         timestamps.update({key: value for key, value in optional_timestamps.items() if value is not None})
+        if any(type(value) not in (int, float) for value in timestamps.values()):
+            raise ValueError("timestamps must be numbers")
         if any(not math.isfinite(value) for value in timestamps.values()):
             raise ValueError("timestamps must be finite seconds")
         if any(value < 0 for value in timestamps.values()):
@@ -155,6 +288,8 @@ class WorkerObservation:
             )
         if self.last_progress_at < self.started_at:
             raise ValueError("last_progress_at cannot precede started_at")
+        if self.last_progress_at > self.now:
+            raise ValueError("last_progress_at cannot be in the future")
         if self.now < self.started_at:
             raise ValueError("now cannot precede started_at")
         meaningful_at = self.meaningful_progress_at()
@@ -168,22 +303,41 @@ class WorkerObservation:
                 raise ValueError(f"{label} cannot precede started_at")
             if value is not None and value > self.now:
                 raise ValueError(f"{label} cannot be in the future")
-        if self.checkpoint_received_at is not None and self.checkpoint_requested_at is None:
+        has_old_checkpoint = any(
+            value is not None
+            for value in (self.checkpoint_requested_at, self.checkpoint_received_at, self.checkpoint_harvested_at)
+        )
+        if self.checkpoint_sequence is not None and has_old_checkpoint:
+            raise ValueError("legacy checkpoint fields cannot be combined with checkpoint sequence")
+        if self.checkpoint_sequence is None and self.checkpoint_received_at is not None and self.checkpoint_requested_at is None:
             raise ValueError("checkpoint_received_at requires checkpoint_requested_at")
-        if self.checkpoint_harvested_at is not None and self.checkpoint_received_at is None:
+        if self.checkpoint_sequence is None and self.checkpoint_harvested_at is not None and self.checkpoint_received_at is None:
             raise ValueError("checkpoint_harvested_at requires checkpoint_received_at")
-        if (
+        if self.checkpoint_sequence is None and (
             self.checkpoint_requested_at is not None
             and self.checkpoint_received_at is not None
             and self.checkpoint_received_at < self.checkpoint_requested_at
         ):
             raise ValueError("checkpoint_received_at cannot precede checkpoint_requested_at")
-        if (
+        if self.checkpoint_sequence is None and (
             self.checkpoint_received_at is not None
             and self.checkpoint_harvested_at is not None
             and self.checkpoint_harvested_at < self.checkpoint_received_at
         ):
             raise ValueError("checkpoint_harvested_at cannot precede checkpoint_received_at")
+        records = self.checkpoint_records()
+        for index, record in enumerate(records, start=1):
+            if record.sequence != index:
+                raise ValueError("checkpoint sequences must be contiguous starting at 1")
+            if record.generation != self.generation:
+                raise ValueError("checkpoint generation must equal observation generation")
+            record.validate(started_at=self.started_at, now=self.now)
+            if index < len(records) and record.harvested_at is None:
+                raise ValueError("every checkpoint except the latest must be harvested")
+            if index > 1 and records[index - 2].harvested_at is None:
+                raise ValueError("a new checkpoint cannot start before the previous one is harvested")
+            if index > 1 and record.requested_at < records[index - 2].harvested_at:
+                raise ValueError("checkpoint requested_at cannot precede the previous harvested checkpoint")
         if self.checkpoint_status() not in CHECKPOINT_STATUSES:  # pragma: no cover
             raise AssertionError(f"invalid checkpoint status: {self.checkpoint_status()}")
         if self.terminal_success and self.terminal_failure:
@@ -208,6 +362,10 @@ class LifecycleDecision:
     checkpoint_reuse_mode: str | None
     wall_seconds: float
     fallback_policy: str | None
+    checkpoint_generation: int
+    checkpoint_sequence: int
+    next_checkpoint_sequence: int | None
+    harvested_checkpoint_sequence: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -239,7 +397,7 @@ def _replan_contract(
 ) -> tuple[str | None, str | None]:
     if fallback_policy != "replan":
         return None, None
-    if observation.checkpoint_status() != "harvested":
+    if observation.latest_harvested_checkpoint() is None:
         return "uncovered_scope", None
     scope = "checkpoint_remaining_delta"
     reuse = "harvested_snapshot_only" if observation.replacement_isolated else "retained_workspace"
@@ -262,6 +420,10 @@ def _decision(
 ) -> LifecycleDecision:
     idle, meaningful_idle, wall, quality = _progress_metrics(policy, observation)
     replan_scope, checkpoint_reuse_mode = _replan_contract(observation, fallback_policy)
+    latest_checkpoint = observation.latest_checkpoint()
+    latest_sequence = latest_checkpoint.sequence if latest_checkpoint is not None else 0
+    latest_harvested = observation.latest_harvested_checkpoint()
+    next_sequence = latest_sequence + 1 if action == "request_checkpoint" else None
     return LifecycleDecision(
         state=state,
         action=action,
@@ -277,6 +439,10 @@ def _decision(
         checkpoint_reuse_mode=checkpoint_reuse_mode,
         wall_seconds=wall,
         fallback_policy=fallback_policy,
+        checkpoint_generation=observation.generation,
+        checkpoint_sequence=latest_sequence,
+        next_checkpoint_sequence=next_sequence,
+        harvested_checkpoint_sequence=(latest_harvested.sequence if latest_harvested is not None else 0),
     )
 
 
@@ -328,7 +494,7 @@ def _fallback_decision(
         )
         if fence_required and observation.replacement_isolated and not terminal:
             reason += "; downstream writer is explicitly isolated and old output is fenced from integration"
-    if policy.fallback_policy == "replan" and observation.checkpoint_status() == "harvested":
+    if policy.fallback_policy == "replan" and observation.latest_harvested_checkpoint() is not None:
         reason += "; replan is restricted to the harvested checkpoint remaining_delta and completed work must be preserved"
     if cancel_required:
         reason += "; non-terminal Worker cancellation is required"
@@ -384,8 +550,20 @@ def _soft_budget_decision(policy: LifecyclePolicy, observation: WorkerObservatio
     elif checkpoint_status == "received":
         return _checkpoint_harvest_decision(policy, observation)
     else:
-        action = "continue"
-        suffix = "checkpoint has already been harvested; continue until completion or a real lifecycle boundary"
+        latest = observation.latest_checkpoint()
+        # A harvested checkpoint is a boundary.  New acceptance-relevant
+        # evidence after it may justify one new checkpoint, but repeated
+        # evaluations without a new delta must be idempotent.
+        if (
+            latest is not None
+            and latest.harvested_at is not None
+            and observation.meaningful_progress_at() > latest.harvested_at
+        ):
+            action = "request_checkpoint"
+            suffix = "new acceptance-relevant progress arrived after the latest harvest; request the next checkpoint"
+        else:
+            action = "continue"
+            suffix = "checkpoint has already been harvested; continue until completion or a real lifecycle boundary"
 
     return _decision(
         policy,
@@ -490,6 +668,16 @@ def _load_json_object(raw: str, label: str) -> dict[str, Any]:
     return value
 
 
+def _load_checkpoint_sequence(raw: str) -> tuple[CheckpointRecord, ...]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid checkpoint sequence JSON: {exc}") from exc
+    if type(value) is not list:
+        raise ValueError("checkpoint sequence must be a JSON array")
+    return tuple(CheckpointRecord.from_dict(item) for item in value)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="worker-lifecycle")
     parser.add_argument("--policy-json", required=True)
@@ -516,12 +704,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scope-superseded", action="store_true")
     parser.add_argument("--cancel-confirmed", action="store_true")
     parser.add_argument("--replacement-isolated", action="store_true")
+    parser.add_argument("--generation", type=int, default=0, help="non-negative Worker generation")
+    parser.add_argument(
+        "--checkpoint-sequence-json",
+        help="JSON array of immutable checkpoint records; cannot be combined with legacy checkpoint flags",
+    )
     return parser
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     ns = build_parser().parse_args(list(argv) if argv is not None else None)
     policy = LifecyclePolicy.from_dict(_load_json_object(ns.policy_json, "policy"))
+    checkpoint_sequence = None if ns.checkpoint_sequence_json is None else _load_checkpoint_sequence(ns.checkpoint_sequence_json)
+    if ns.checkpoint_sequence_json is not None and any(
+        value is not None
+        for value in (ns.checkpoint_requested_at, ns.checkpoint_received_at, ns.checkpoint_harvested_at)
+    ):
+        raise ValueError("legacy checkpoint flags cannot be combined with --checkpoint-sequence-json")
     observation = WorkerObservation(
         scope_id=ns.scope_id,
         stage=ns.stage,
@@ -539,6 +738,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         scope_superseded=ns.scope_superseded,
         cancel_confirmed=ns.cancel_confirmed,
         replacement_isolated=ns.replacement_isolated,
+        generation=ns.generation,
+        checkpoint_sequence=checkpoint_sequence,
     )
     print(json.dumps(evaluate_worker(policy, observation).to_dict(), ensure_ascii=False, sort_keys=True))
     return 0

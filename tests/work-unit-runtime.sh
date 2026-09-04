@@ -73,13 +73,13 @@ assert imp["max_worker_repair_attempts"]==1, imp
 print(json.dumps(imp, separators=(",", ":")))
 PY
 
-# Complex/cross-module work must be split into at least two units and join Parent between them.
+# Complex/cross-module work has bounded capacity for independently evidenced units and joins Parent between them.
 plan --routing delegate --complexity complex --scope cross-module > "$TMP/complex.json"
 python3 - "$TMP/complex.json" > "$TMP/complex-policy.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1])); imp=p["implementation_stage"]
 assert imp["work_unit_mode"]=="bounded", imp
-assert imp["minimum_work_units"]==2, imp
+assert imp["minimum_work_units"]==1, imp
 assert imp["maximum_work_units"]==2, imp
 assert imp["require_write_paths"] is True, imp
 assert imp["join_between_work_units"] is True, imp
@@ -97,17 +97,29 @@ print(json.dumps(p, separators=(",", ":")))
 PY
 )"
 
-# Repo-wide/heavy-loop work gets a stronger three-unit minimum without lowering the old hard ceiling.
+# Repo-wide/heavy-loop work gets bounded capacity up to three units without lowering the old hard ceiling.
 plan --routing delegate --complexity complex --scope repo-wide --iteration-intensity heavy-loop > "$TMP/repo-wide.json"
 python3 - "$TMP/repo-wide.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1])); imp=p["implementation_stage"]
 assert imp["work_unit_mode"]=="bounded", imp
-assert imp["minimum_work_units"]==3, imp
+assert imp["minimum_work_units"]==1, imp
 assert imp["maximum_work_units"]==3, imp
 assert imp["require_write_paths"] is True, imp
 assert imp["join_between_work_units"] is True, imp
 assert imp["hard_timeout_seconds"]==1800, imp
+PY
+python3 - "$TMP/repo-wide.json" > "$TMP/repo-wide-policy.json" <<'PY'
+import json, sys
+print(json.dumps(json.load(open(sys.argv[1]))["implementation_stage"], separators=(",", ":")))
+PY
+REPO_WIDE_POLICY="$(cat "$TMP/repo-wide-policy.json")"
+REPO_WIDE_ONE='{"units":[{"unit_id":"repo-all","scope_id":"repo-wide","acceptance_delta":"complete repository change","write_scope_id":"repo-live","validation":["run repository checks"],"generation":0,"write_paths":["src/repo.py"]}]}'
+validate_units "$REPO_WIDE_POLICY" "$REPO_WIDE_ONE" 1 4 > "$TMP/repo-wide-one.json"
+python3 - "$TMP/repo-wide-one.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["valid"] and d["unit_count"] == 1 and d["maximum_work_units"] == 3, d
 PY
 
 # Same writable scope is valid only as an explicit serial dependency chain.
@@ -119,6 +131,12 @@ p=json.load(open(sys.argv[1]))
 assert p["valid"] is True and p["unit_count"]==2, p
 assert p["work_unit_mode"]=="bounded" and p["join_between_work_units"] is True, p
 assert p["max_parallel_units"]==1, p
+PY
+LEGACY_MIN2='{"work_unit_mode":"bounded","minimum_work_units":2,"join_between_work_units":true}'
+validate_units "$LEGACY_MIN2" "$SERIAL_MANIFEST" 1 4 > "$TMP/legacy-min2.json"
+python3 - "$TMP/legacy-min2.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1])); assert d["valid"] and d["minimum_work_units"] == 2, d
 PY
 
 # Shared writable scope without an explicit dependency is rejected: never imply concurrent same-scope writers.
@@ -167,13 +185,13 @@ if validate_units "$LEGACY_COMPLEX_POLICY" "$PARALLEL_MANIFEST" 4 1 > /dev/null 
 fi
 grep -Fq "allows at most 1 concurrent implementation units" "$TMP/thread-width.err"
 
-# Bounded mode cannot silently collapse back to one large Worker transaction.
+# Bounded mode permits one unit when no natural independent split is evidenced.
 ONE_BIG='{"units":[{"unit_id":"impl-all","scope_id":"all","acceptance_delta":"do everything","write_scope_id":"all-live","validation":["test all"],"generation":0,"write_paths":["src/all.py"]}]}'
-if validate_units "$COMPLEX_POLICY" "$ONE_BIG" 1 4 > /dev/null 2> "$TMP/one.err"; then
-  echo "bounded implementation unexpectedly accepted one giant unit" >&2
-  exit 1
-fi
-grep -Fq "requires at least 2 work units" "$TMP/one.err"
+validate_units "$COMPLEX_POLICY" "$ONE_BIG" 1 4 > "$TMP/one.json"
+python3 - "$TMP/one.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1])); assert d["valid"] and d["unit_count"] == 1, d
+PY
 
 # The hardened bounded contract rejects type confusion, duplicate deltas, unsafe
 # paths, missing parallel isolation evidence, and manifests above the policy max.

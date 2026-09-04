@@ -938,6 +938,8 @@ def extract_transcript_insights(
                                 )
                                 if m:
                                     clean_prompt = m.group(1).strip()
+                            if "## My request:" in clean_prompt:
+                                clean_prompt = clean_prompt.split("## My request:", 1)[1].strip()
                             if not clean_prompt.startswith("<") or not goal:
                                 goal = clean_prompt
                         elif role == "assistant" and msg_text:

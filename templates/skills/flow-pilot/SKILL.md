@@ -231,7 +231,7 @@ ExecutionPlan
 
 `implementation_stage.max_worker_repair_attempts` bounds local Implementer validation/fix loops and is independent from top-level Parent `max_repair_cycles`.
 
-`implementation_stage.work_unit_mode=bounded` is binding. `minimum_work_units` is the minimum number of logical acceptance-bounded implementation transactions. `maximum_work_units`, when present, is a hard manifest count bound and must be at least the minimum. `join_between_work_units=true` means control must return to Parent after each completed unit before a dependent next unit begins. These fields do **not** authorize extra writable concurrency. `require_write_paths=true` opts a new bounded policy into generation and normalized repository-relative `write_paths` validation.
+`implementation_stage.work_unit_mode=bounded` is binding. `minimum_work_units` is the minimum number of logical acceptance-bounded implementation transactions and may be 1. Default to one unit; split only when every split has an independent acceptance delta, validation boundary, and ownership/dependency evidence. `maximum_work_units`, when present, is a hard manifest count bound and must be at least the minimum. `join_between_work_units=true` means control must return to Parent after each completed unit before a dependent next unit begins. These fields do **not** authorize extra writable concurrency. `require_write_paths=true` opts a new bounded policy into generation and normalized repository-relative `write_paths` validation.
 
 ### Task-level cumulative budget
 
@@ -302,7 +302,7 @@ Once compiled, execute the plan. Prohibited duplication includes:
 - inventing lifecycle timeout/retry/cancellation rules;
 - terminating a non-terminal Worker because `wait()` returned without a final result;
 - expanding local Worker repair attempts or Parent repair cycles beyond the plan;
-- collapsing `work_unit_mode=bounded` back into one giant implementation transaction;
+- collapsing a plan with multiple evidenced bounded units back into one giant implementation transaction;
 - converting bounded logical units into parallel writers unless the existing plan already proves distinct writable workstreams;
 - replacing `direct` with delegation because delegation seems useful.
 
@@ -365,6 +365,8 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
   [--checkpoint-requested-at <unix-seconds>] \
   [--checkpoint-received-at <unix-seconds>] \
   [--checkpoint-harvested-at <unix-seconds>] \
+  [--generation <non-negative-int>] \
+  [--checkpoint-sequence-json <json-array>] \
   --now <unix-seconds> \
   [--writable] [--in-flight] \
   [--terminal-success] [--terminal-failure] \
@@ -374,7 +376,9 @@ python3 ~/.codex/codex-flow/strategies/lifecycle_runtime.py \
 
 Use returned `state`, `action`, `cancel_required`, `replacement_allowed`, `fence_required`, `progress_quality`, `meaningful_idle_seconds`, `checkpoint_status`, `replan_scope`, `checkpoint_reuse_mode`, and `fallback_policy` exactly.
 
-Checkpoint state is monotonic:
+The legacy checkpoint flags remain supported and normalize to sequence 1. Do not mix them with `--checkpoint-sequence-json`; sequence records must be contiguous within the current generation, and only the latest may be unharvested. Replacement/replan starts generation+1 with sequence reset. Decisions also expose `checkpoint_generation`, latest `checkpoint_sequence` (0 when absent), `harvested_checkpoint_sequence` (0 when absent), and `next_checkpoint_sequence` only for `request_checkpoint`.
+
+Checkpoint state is monotonic within each sequence; globally `checkpoint_status` reports the latest sequence, so a new sequence transitions from the prior harvested state back to requested:
 
 ```text
 not_requested -> requested -> received -> harvested
@@ -387,7 +391,8 @@ Soft-budget actions:
 - `request_checkpoint`: ask the existing Worker for a non-terminal checkpoint; do not cancel or add a writer;
 - `await_checkpoint`: request is already outstanding; do not spam;
 - `harvest_checkpoint`: preserve returned payload before anything that could discard partial work;
-- `continue` with harvested checkpoint: existing Worker continues its assigned scope/unit until completion or a real lifecycle boundary.
+- `continue` with harvested checkpoint: existing Worker continues its assigned scope/unit until completion or a real lifecycle boundary;
+- after a harvest, request the next sequence only when new meaningful progress is visible and the soft budget is reached; with no new delta, continue without repeating the request.
 
 Implementation checkpoint payload must include:
 
