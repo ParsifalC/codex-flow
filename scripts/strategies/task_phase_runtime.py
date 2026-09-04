@@ -4,27 +4,34 @@
 The task ledger owns cumulative counters and the absolute task hard deadline.
 This helper adds one missing scheduling invariant: an immutable ExecutionPlan
 that already requires independent review must keep enough tail time for that
-required completion stage. Exploration/implementation admissions stop at the
-earlier of the task soft deadline and ``hard_deadline - review_stage.hard``;
-required completion may still start until the absolute task hard deadline.
+required completion stage.
 
-The helper does not schedule Workers. It returns deterministic admission
-signals and wraps implementation reservations so callers cannot bypass the
-reserved review tail by talking directly to the ledger for new implementation
-work.
+For a new task the helper derives an effective ledger policy from the immutable
+plan. Its soft timeout is clamped to the earlier of the strategy soft timeout
+and ``hard_timeout - review_stage.hard_timeout``. The raw ledger therefore
+keeps its own atomic reservation/idempotency semantics while still enforcing
+that required-completion reserve. Required completion may start after that soft
+boundary and remains permitted until the absolute task hard deadline.
+
+The helper does not schedule Workers. It initializes the ledger, reports
+phase-aware admission, and wraps implementation reservations.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
+from dataclasses import asdict
 from typing import Any
 
 try:  # Package import.
-    from .task_budget_runtime import LedgerError, ledger_status, reserve
+    from .base import TaskBudgetPolicy
+    from .task_budget_runtime import LedgerError, init_ledger, ledger_status, reserve
 except ImportError:  # Direct invocation from installed strategies directory.
-    from task_budget_runtime import LedgerError, ledger_status, reserve
+    from base import TaskBudgetPolicy
+    from task_budget_runtime import LedgerError, init_ledger, ledger_status, reserve
 
 
 PHASES = ("exploration", "implementation", "required_completion")
@@ -65,15 +72,49 @@ def _plan(value: Any) -> dict[str, Any]:
     return value
 
 
-def _review_reserve_seconds(plan: dict[str, Any]) -> float:
+def _review_reserve_seconds(plan: dict[str, Any]) -> int:
     reviewer_workers = _strict_int(plan.get("reviewer_workers"), "reviewer_workers")
     review_stage = plan.get("review_stage")
     if reviewer_workers <= 0 or review_stage is None:
-        return 0.0
-    hard = _strict_number(review_stage.get("hard_timeout_seconds"), "review_stage.hard_timeout_seconds")
+        return 0
+    hard = _strict_int(review_stage.get("hard_timeout_seconds"), "review_stage.hard_timeout_seconds")
     if hard <= 0:
         raise LedgerError("required review hard timeout must be positive")
     return hard
+
+
+def _effective_policy(plan: dict[str, Any]) -> TaskBudgetPolicy:
+    try:
+        policy = TaskBudgetPolicy.from_dict(plan["task_budget"])
+    except (TypeError, ValueError) as exc:
+        raise LedgerError(str(exc)) from None
+    review_reserve = _review_reserve_seconds(plan)
+    if review_reserve <= 0:
+        return policy
+    latest_general_work = policy.hard_timeout_seconds - review_reserve
+    if latest_general_work < 1:
+        raise LedgerError("task hard budget is too small to reserve the required review stage")
+    effective_soft = min(policy.soft_timeout_seconds, latest_general_work)
+    effective = TaskBudgetPolicy(
+        soft_timeout_seconds=effective_soft,
+        hard_timeout_seconds=policy.hard_timeout_seconds,
+        max_work_units=policy.max_work_units,
+        max_implementation_attempts=policy.max_implementation_attempts,
+        max_replans=policy.max_replans,
+        max_replacements=policy.max_replacements,
+    )
+    effective.validate()
+    return effective
+
+
+def _policy_fingerprint(policy: TaskBudgetPolicy) -> str:
+    encoded = json.dumps(
+        asdict(policy),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def phase_decision(
@@ -86,23 +127,29 @@ def phase_decision(
     if phase not in PHASES:
         raise LedgerError(f"invalid task phase: {phase}")
     plan = _plan(plan_value)
+    effective_policy = _effective_policy(plan)
     if type(ledger_value) is not dict:
         raise LedgerError("ledger status must be an object")
+    expected_fingerprint = _policy_fingerprint(effective_policy)
+    if ledger_value.get("policy_fingerprint") != expected_fingerprint:
+        raise LedgerError("task phase plan/policy mismatch; refusing to use a different ExecutionPlan")
+
     current_now = _strict_number(now, "now")
+    started_at = _strict_number(ledger_value.get("started_at"), "started_at")
     soft_deadline = _strict_number(ledger_value.get("soft_deadline"), "soft_deadline")
     hard_deadline = _strict_number(ledger_value.get("hard_deadline"), "hard_deadline")
     if hard_deadline <= soft_deadline:
         raise LedgerError("hard_deadline must be after soft_deadline")
+    if soft_deadline != started_at + effective_policy.soft_timeout_seconds:
+        raise LedgerError("task phase soft deadline does not match the immutable ExecutionPlan")
+    if hard_deadline != started_at + effective_policy.hard_timeout_seconds:
+        raise LedgerError("task phase hard deadline does not match the immutable ExecutionPlan")
     closed = ledger_value.get("closed")
     if type(closed) is not bool:
         raise LedgerError("ledger closed must be boolean")
 
     review_reserve = _review_reserve_seconds(plan)
-    completion_cutoff = hard_deadline - review_reserve
-    if review_reserve > 0 and completion_cutoff <= _strict_number(ledger_value.get("started_at"), "started_at"):
-        raise LedgerError("task hard budget is too small to reserve the required review stage")
-    general_work_deadline = min(soft_deadline, completion_cutoff) if review_reserve > 0 else soft_deadline
-
+    general_work_deadline = soft_deadline
     hard_open = (not closed) and current_now < hard_deadline
     permits_required_completion = hard_open
     permits_general_work = hard_open and current_now < general_work_deadline
@@ -139,6 +186,20 @@ def phase_decision(
     }
 
 
+def init(
+    state_file: str,
+    task_id: str,
+    plan: dict[str, Any],
+    now: Any,
+) -> dict[str, Any]:
+    """Initialize a new phase-aware ledger from the immutable plan."""
+    effective_policy = _effective_policy(_plan(plan))
+    result = init_ledger(state_file, task_id, effective_policy, now)
+    result.update(phase_decision(plan, result, "exploration", now))
+    result["effective_task_budget"] = asdict(effective_policy)
+    return result
+
+
 def status(
     state_file: str,
     task_id: str,
@@ -163,13 +224,9 @@ def reserve_implementation(
 ) -> dict[str, Any]:
     if kind not in IMPLEMENTATION_RESERVATION_KINDS:
         raise LedgerError(f"invalid implementation reservation kind: {kind}")
-    decision = status(state_file, task_id, plan, "implementation", now)
-    if not decision["permits_phase_start"]:
-        if decision["action"] == "stop":
-            raise LedgerError("task hard deadline reached; implementation reservation is not permitted")
-        raise LedgerError(
-            "required-completion reserve reached; new implementation/replan/replacement work is not permitted"
-        )
+    # The phase-aware init has already clamped the ledger soft deadline. Calling
+    # the raw atomic reserve preserves its deadline checks and, critically, its
+    # idempotent replay semantics after the deadline.
     result = reserve(
         state_file,
         task_id,
@@ -203,6 +260,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    init_cmd = commands.add_parser("init")
+    _common(init_cmd)
+
     status_cmd = commands.add_parser("status")
     _common(status_cmd)
     status_cmd.add_argument("--phase", choices=PHASES, required=True)
@@ -220,7 +280,9 @@ def main(argv: list[str] | None = None) -> int:
     ns = parser.parse_args(argv)
     try:
         plan = _plan(_json(ns.plan_json, "plan"))
-        if ns.command == "status":
+        if ns.command == "init":
+            result = init(ns.state_file, ns.task_id, plan, ns.now)
+        elif ns.command == "status":
             result = status(ns.state_file, ns.task_id, plan, ns.phase, ns.now)
         else:
             result = reserve_implementation(
