@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import Darwin
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var state: OverlayState!
@@ -135,6 +136,10 @@ func waitForPreviousInstanceToReleaseSocket(timeout: TimeInterval = 3.0) -> Bool
 let args = Array(CommandLine.arguments.dropFirst())
 
 if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "restart" {
+    // Detach from controlling terminal session and ignore hangup signals when running as daemon
+    _ = setsid()
+    signal(SIGHUP, SIG_IGN)
+
     // If an older instance is already running, cleanly terminate it and wait for
     // its IPC endpoint to be released before binding a replacement. A fixed sleep
     // can let the old shutdown race the new bind and delete the new socket.

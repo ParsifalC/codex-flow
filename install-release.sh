@@ -134,6 +134,7 @@ if [[ "$os" == "darwin" ]]; then
   pkill -f "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot" 2>/dev/null || true
   sleep 0.2
   nohup "$overlay_bin" start >/dev/null 2>&1 &
+  disown $! 2>/dev/null || true
   sleep 0.4
 
   if pgrep -f "FlowPilot.*start|codex-flow-overlay.*start|bin/FlowPilot" >/dev/null 2>&1; then

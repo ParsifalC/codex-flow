@@ -344,6 +344,17 @@ def get_overlay_bin() -> Path | None:
     return next((c for c in candidates if c.exists() and os.access(str(c), os.X_OK)), None)
 
 
+def launch_overlay_daemon(overlay_bin: Path) -> None:
+    kwargs = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if sys.platform != "win32":
+        kwargs["start_new_session"] = True
+    subprocess.Popen([str(overlay_bin), "start"], **kwargs)
+
+
 def run_overlay_build() -> bool:
     src = get_source_dir()
     build_script = src / "apps" / "macos-overlay" / "build.sh"
@@ -488,7 +499,7 @@ def handle_manage_overlay() -> None:
                         if run_overlay_build():
                             overlay_bin = get_overlay_bin()
                             if overlay_bin and overlay_bin.exists():
-                                subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                launch_overlay_daemon(overlay_bin)
                                 print(f"{style.GREEN}{T('Widget started. It appears near the top-right and expands after a 0.4s hover.', '浮窗已启动！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。')}{style.RESET}")
                             else:
                                 print(f"{style.RED}{T('Binary not found after build.', '编译成功但未找到可执行文件。')}{style.RESET}")
@@ -497,7 +508,7 @@ def handle_manage_overlay() -> None:
                     pause_prompt()
                 else:
                     try:
-                        subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        launch_overlay_daemon(overlay_bin)
                         print(f"{style.GREEN}{T('Widget started. It appears near the top-right and expands after a 0.4s hover.', '浮窗已启动！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。')}{style.RESET}")
                     except Exception as exc:
                         print(f"{style.RED}{T('Start failed', '启动失败')}: {exc}{style.RESET}")
@@ -514,7 +525,7 @@ def handle_manage_overlay() -> None:
                 overlay_bin = get_overlay_bin()
                 if overlay_bin and overlay_bin.exists():
                     try:
-                        subprocess.Popen([str(overlay_bin), "start"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        launch_overlay_daemon(overlay_bin)
                         print(f"\n{style.GREEN}✨ {T('Build succeeded and widget started! It appears near the top-right.', '✨ 编译完成并已成功启动浮窗！默认在屏幕右上角圆形悬浮，光标停留 0.4 秒展开。')}{style.RESET}")
                     except Exception as exc:
                         print(f"\n{style.RED}{T('Start failed', '启动失败')}: {exc}{style.RESET}")

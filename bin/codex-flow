@@ -186,6 +186,7 @@ case "$cmd" in
         : >"$start_log"
         nohup "$overlay_bin" start >>"$start_log" 2>&1 &
         start_pid=$!
+        disown "$start_pid" 2>/dev/null || true
         started=false
         for _ in {1..50}; do
           status_json="$("$overlay_bin" status --json 2>/dev/null || true)"
