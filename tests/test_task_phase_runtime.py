@@ -11,8 +11,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from strategy_runtime import Modifiers, TaskProfile, compile_plan  # noqa: E402
 from strategies import get  # noqa: E402
-from strategies.task_budget_runtime import LedgerError, init_ledger  # noqa: E402
-from strategies.task_phase_runtime import reserve_implementation, status  # noqa: E402
+from strategies.task_budget_runtime import LedgerError  # noqa: E402
+from strategies.task_phase_runtime import init, reserve_implementation, status  # noqa: E402
 
 
 def profile(**overrides) -> TaskProfile:
@@ -51,9 +51,12 @@ def assert_tail(strategy: str, expected_elapsed_cutoff: int, *, strict: bool = F
     start = 100.0
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / f"{strategy}.json")
-        init_ledger(state, strategy, execution_plan.task_budget, start)
+        initialized = init(state, strategy, execution_plan.to_dict(), start)
         plan_json = execution_plan.to_dict()
         cutoff = start + expected_elapsed_cutoff
+
+        assert initialized["effective_task_budget"]["soft_timeout_seconds"] == expected_elapsed_cutoff, initialized
+        assert initialized["soft_deadline"] == cutoff, initialized
 
         before = status(state, strategy, plan_json, "implementation", cutoff - 1)
         assert before["permits_phase_start"] is True, before
@@ -78,8 +81,9 @@ def assert_tail(strategy: str, expected_elapsed_cutoff: int, *, strict: bool = F
 
 
 def main() -> None:
-    # Quality plans require independent review by default. Their general-work
-    # admission closes early enough to preserve the review stage's full hard tail.
+    # Quality plans require independent review by default. Their ledger soft
+    # deadline is deterministically clamped to preserve the review stage's full
+    # hard tail.
     assert_tail("quality", 3000)
 
     # Strict review is an explicit required-completion stage even for strategies
@@ -93,20 +97,28 @@ def main() -> None:
     assert balanced.reviewer_workers == 0 and balanced.review_stage is None, balanced
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "balanced-parent.json")
-        init_ledger(state, "balanced-parent", balanced.task_budget, 100)
+        initialized = init(state, "balanced-parent", balanced.to_dict(), 100)
+        assert initialized["effective_task_budget"] == {
+            "soft_timeout_seconds": 2400,
+            "hard_timeout_seconds": 3000,
+            "max_work_units": 1,
+            "max_implementation_attempts": 3,
+            "max_replans": 2,
+            "max_replacements": 2,
+        }, initialized
         decision = status(state, "balanced-parent", balanced.to_dict(), "implementation", 100 + 2400)
         assert decision["required_completion_reserve_seconds"] == 0, decision
         assert decision["general_work_deadline"] == 100 + 2400, decision
         assert decision["action"] == "converge", decision
 
-    # The phase-aware reservation wrapper closes the race in policy semantics:
-    # the raw ledger soft deadline may be later, but new implementation work is
-    # rejected once the required-review tail begins.
+    # Phase-aware init moves the raw ledger soft deadline to the required-review
+    # boundary. The underlying atomic reserve therefore rejects *new* work there
+    # while preserving its deliberate idempotent replay behavior.
     quality = plan("quality")
     with tempfile.TemporaryDirectory() as tmp:
         state = str(Path(tmp) / "quality-reserve.json")
-        init_ledger(state, "quality-reserve", quality.task_budget, 100)
-        reserve_implementation(
+        init(state, "quality-reserve", quality.to_dict(), 100)
+        first = reserve_implementation(
             state,
             "quality-reserve",
             quality.to_dict(),
@@ -115,6 +127,20 @@ def main() -> None:
             "unit-0-generation-0",
             3099,
         )
+        assert first["reserved"] is True and first["idempotent"] is False, first
+
+        replay = reserve_implementation(
+            state,
+            "quality-reserve",
+            quality.to_dict(),
+            "implementation_attempt",
+            "attempt-before-tail",
+            "unit-0-generation-0",
+            3100,
+        )
+        assert replay["reserved"] is True and replay["idempotent"] is True, replay
+        assert replay["permits_phase_start"] is False, replay
+
         try:
             reserve_implementation(
                 state,
@@ -126,9 +152,24 @@ def main() -> None:
                 3100,
             )
         except LedgerError as exc:
-            assert "required-completion reserve reached" in str(exc), exc
+            assert "soft deadline reached" in str(exc), exc
         else:
-            raise AssertionError("implementation reservation unexpectedly entered required-review tail")
+            raise AssertionError("new implementation reservation unexpectedly entered required-review tail")
+
+    # The phase helper refuses a different plan against an existing ledger,
+    # preventing a caller from extending the admission window with another
+    # review topology or task budget after initialization.
+    quality = plan("quality")
+    with tempfile.TemporaryDirectory() as tmp:
+        state = str(Path(tmp) / "identity.json")
+        init(state, "identity", quality.to_dict(), 100)
+        other = plan("quality", task=profile(complexity="complex", scope="cross-module"))
+        try:
+            status(state, "identity", other.to_dict(), "implementation", 101)
+        except LedgerError as exc:
+            assert "plan/policy mismatch" in str(exc), exc
+        else:
+            raise AssertionError("different ExecutionPlan unexpectedly reused task phase ledger")
 
     # High technical risk may opt into multiple evidence-backed quality units,
     # but minimum_work_units remains one so this never forces a fake split.
