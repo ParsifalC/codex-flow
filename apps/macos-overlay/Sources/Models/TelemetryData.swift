@@ -609,6 +609,41 @@ public struct TaskRun: Codable, Identifiable {
         return summaryInfo?.conclusion ?? summary
     }
     
+    public var turnPreview: String {
+        if let goal = summaryInfo?.goal, !goal.isEmpty {
+            return TaskRun.cleanPromptText(goal)
+        }
+        if let sum = summary, !sum.isEmpty {
+            return sum
+        }
+        if let conclusion = summaryInfo?.conclusion, !conclusion.isEmpty {
+            return TaskRun.cleanPromptText(conclusion)
+        }
+        return thread?.preview ?? thread?.name ?? sessionTitle
+    }
+    
+    public static func cleanPromptText(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let reqRange = text.range(of: "## My request:", options: .caseInsensitive) {
+            text = String(text[reqRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let reqRange = text.range(of: "<USER_REQUEST>") {
+            if let endRange = text.range(of: "</USER_REQUEST>") {
+                text = String(text[reqRange.upperBound..<endRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                text = String(text[reqRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
+        if let regex = try? NSRegularExpression(pattern: "<image[^>]*>|<file[^>]*>", options: .caseInsensitive) {
+            let range = NSRange(text.startIndex..., in: text)
+            text = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        }
+        
+        let components = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        let result = components.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? raw : result
+    }
+    
     public var hasSkillsOrTools: Bool {
         return !(skillsUsed ?? []).isEmpty || !(toolsUsed ?? []).isEmpty
     }

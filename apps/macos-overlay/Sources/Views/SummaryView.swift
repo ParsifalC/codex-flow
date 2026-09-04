@@ -322,7 +322,7 @@ public struct SummaryView: View {
             }
 
             HoverRevealText(
-                run.thread?.preview ?? run.summary ?? run.sessionTitle,
+                run.turnPreview,
                 font: .system(size: 9.4),
                 foregroundColor: .white.opacity(0.63),
                 lineLimit: 1,
@@ -880,8 +880,8 @@ public struct SummaryView: View {
     private func copySummary(_ run: TaskRun) {
         let usage = run.aggregatedUsage
         let text = L(
-            "FlowPilot Task Summary\nProject: \(run.projectName)\nDuration: \(run.formattedDuration)\nTotal tokens: \(run.formattedTotalTokens)\nInput tokens: \(TaskRun.formatTokenCount(usage.effectivePromptTokens))\nOutput tokens: \(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorkers: \(run.allWorkers.count)\nSummary: \(run.summary ?? run.sessionTitle)",
-            "FlowPilot 任务摘要\n项目：\(run.projectName)\n耗时：\(run.formattedDuration)\n总 Token：\(run.formattedTotalTokens)\n输入 Token：\(TaskRun.formatTokenCount(usage.effectivePromptTokens))\n输出 Token：\(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorker：\(run.allWorkers.count)\n摘要：\(run.summary ?? run.sessionTitle)"
+            "FlowPilot Task Summary\nProject: \(run.projectName)\nDuration: \(run.formattedDuration)\nTotal tokens: \(run.formattedTotalTokens)\nInput tokens: \(TaskRun.formatTokenCount(usage.effectivePromptTokens))\nOutput tokens: \(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorkers: \(run.allWorkers.count)\nSummary: \(run.turnPreview)",
+            "FlowPilot 任务摘要\n项目：\(run.projectName)\n耗时：\(run.formattedDuration)\n总 Token：\(run.formattedTotalTokens)\n输入 Token：\(TaskRun.formatTokenCount(usage.effectivePromptTokens))\n输出 Token：\(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorker：\(run.allWorkers.count)\n摘要：\(run.turnPreview)"
         )
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

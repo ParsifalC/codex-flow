@@ -537,7 +537,8 @@ public struct HistoryRunRow: View {
     private var runSummary: some View {
         VStack(alignment: .leading, spacing: 2) {
             runMetadata
-            if let preview = run.thread?.preview ?? run.summary, !preview.isEmpty {
+            let preview = run.turnPreview
+            if !preview.isEmpty {
                 HoverRevealText(
                     preview,
                     font: .system(size: 8.2),
@@ -741,7 +742,7 @@ public struct HistoryTaskDetailOverlay: View {
             }
 
             HoverRevealText(
-                run.thread?.preview ?? run.sessionTitle,
+                run.turnPreview,
                 font: .system(size: 8.7),
                 foregroundColor: .white.opacity(0.62),
                 lineLimit: 2,
