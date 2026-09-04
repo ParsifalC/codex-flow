@@ -145,6 +145,7 @@ def main() -> int:
         (CODEX_HOME / "skills/flow-pilot/SKILL.md", "FlowPilot skill"),
         (STATE_DIR / "strategy_runtime.py", "strategy runtime helper"),
         (STATE_DIR / "strategies/__init__.py", "built-in strategy registry"),
+        (STATE_DIR / "strategies/task_budget_runtime.py", "task budget runtime helper"),
         (STATE_DIR / "defaults.toml", "release policy defaults"),
         (STATE_DIR / "updater.py", "OTA updater"),
         (STATE_DIR / "update_runtime_config.py", "runtime config reconciler"),

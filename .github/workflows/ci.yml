@@ -19,6 +19,7 @@ jobs:
           bash -n scripts/uninstall
           bash -n tests/smoke.sh
           bash -n tests/strategy-runtime.sh
+          bash -n tests/task-budget-runtime.sh
           bash -n tests/lifecycle-runtime.sh
           bash -n tests/account-snapshot.sh
           bash -n tests/telemetry.sh
@@ -29,6 +30,7 @@ jobs:
           bash -n tests/report.sh
           python3 -m py_compile scripts/strategy_runtime.py
           python3 -m py_compile scripts/strategies/lifecycle_runtime.py
+          python3 -m py_compile scripts/strategies/task_budget_runtime.py
           python3 -m py_compile scripts/check-recommendation.py
           python3 -m py_compile scripts/analyze-benchmark.py
           python3 -m py_compile scripts/run-benchmark.py
@@ -51,6 +53,8 @@ jobs:
           ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].each { |f| YAML.parse_file(f) }'
       - name: Strategy runtime test
         run: bash tests/strategy-runtime.sh
+      - name: Task budget runtime test
+        run: bash tests/task-budget-runtime.sh
       - name: Lifecycle runtime and restored regression test
         run: bash tests/lifecycle-runtime.sh
       - name: Recommendation policy test
@@ -167,6 +171,10 @@ jobs:
           $lifecycleHelper = Join-Path $env:CODEX_HOME 'codex-flow/strategies/lifecycle_runtime.py'
           if (-not (Test-Path $lifecycleHelper)) { throw 'lifecycle runtime helper missing' }
           & python3 -m py_compile $lifecycleHelper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $taskBudgetHelper = Join-Path $env:CODEX_HOME 'codex-flow/strategies/task_budget_runtime.py'
+          if (-not (Test-Path $taskBudgetHelper)) { throw 'task budget runtime helper missing' }
+          & python3 -m py_compile $taskBudgetHelper
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path (Join-Path $env:CODEX_HOME 'hooks.json'))) { throw 'telemetry hooks missing' }
 

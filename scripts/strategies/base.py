@@ -13,6 +13,7 @@ CapabilityFn = Callable[[Task, str], str]
 DemandFn = Callable[[Task], int]
 NotesFn = Callable[[Task], Tuple[str, ...]]
 LifecycleFn = Callable[[Task, str], "StagePolicy"]
+TaskBudgetFn = Callable[[Task], "TaskBudgetPolicy | None"]
 
 STAGES = ("exploration", "implementation", "review")
 JOIN_POLICIES = ("opportunistic", "quorum", "required")
@@ -58,6 +59,69 @@ class WorkerBudget:
             raise ValueError("max_total_workers must be positive")
         if self.speculation not in {"low", "medium", "high"}:
             raise ValueError(f"invalid speculation level: {self.speculation}")
+
+
+@dataclass(frozen=True)
+class TaskBudgetPolicy:
+    """Cumulative task budget carried across Worker attempts and replans.
+
+    This is deliberately separate from :class:`StagePolicy`: stage lifecycle
+    limits describe one Worker stage, while these counters are reservations in
+    a durable task ledger and therefore cannot be reset by recompiling a plan.
+    """
+
+    soft_timeout_seconds: int
+    hard_timeout_seconds: int
+    max_work_units: int
+    max_implementation_attempts: int
+    max_replans: int
+    max_replacements: int
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "TaskBudgetPolicy":
+        if type(value) is not dict:
+            raise ValueError("task budget policy must be an object")
+        required = (
+            "soft_timeout_seconds",
+            "hard_timeout_seconds",
+            "max_work_units",
+            "max_implementation_attempts",
+            "max_replans",
+            "max_replacements",
+        )
+        missing = [name for name in required if name not in value]
+        if missing:
+            raise ValueError(f"task budget policy missing fields: {missing}")
+        unknown = sorted(set(value).difference(required))
+        if unknown:
+            raise ValueError(f"task budget policy has unknown fields: {unknown}")
+        policy = cls(**{name: value[name] for name in required})
+        policy.validate()
+        return policy
+
+    def validate(self) -> None:
+        for name, value in (
+            ("soft_timeout_seconds", self.soft_timeout_seconds),
+            ("hard_timeout_seconds", self.hard_timeout_seconds),
+            ("max_work_units", self.max_work_units),
+            ("max_implementation_attempts", self.max_implementation_attempts),
+            ("max_replans", self.max_replans),
+            ("max_replacements", self.max_replacements),
+        ):
+            # bool is an int subclass, but accepting it here makes malformed
+            # JSON policy silently turn into a real budget.
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} cannot be negative")
+        if self.soft_timeout_seconds < 1:
+            raise ValueError("soft_timeout_seconds must be positive")
+        if self.hard_timeout_seconds <= self.soft_timeout_seconds:
+            raise ValueError("hard_timeout_seconds must be greater than soft_timeout_seconds")
+        if self.max_work_units < 1:
+            raise ValueError("max_work_units must be positive")
+        if self.max_implementation_attempts < 1:
+            raise ValueError("max_implementation_attempts must be positive")
 
 
 @dataclass(frozen=True)
@@ -184,6 +248,7 @@ class StrategySpec:
     lifecycle: LifecycleFn = standard_lifecycle
     allow_parallel_write: bool = False
     quota_sensitive: bool = False
+    task_budget: TaskBudgetFn | None = None
 
 
 def standard_effort(task: Task, role: str) -> str:

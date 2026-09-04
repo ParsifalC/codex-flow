@@ -362,6 +362,15 @@ first = validate_manifest(policy, manifest(base_unit, fingerprint_unit), impleme
 second = validate_manifest(policy, manifest(base_unit, fingerprint_unit), implementation_workers=1, max_concurrent_threads=4)
 assert first["unit_fingerprints"] == second["unit_fingerprints"], (first, second)
 assert len(first["unit_fingerprints"]["u1"]) == 64 and len(first["unit_fingerprints"]["u2"]) == 64, first
+assert len(first["logical_unit_fingerprints"]["u1"]) == 64, first
+
+# A replacement generation is a new implementation attempt but remains the
+# same logical work unit for cumulative task-budget counting.
+next_generation = copy.deepcopy(fingerprint_unit)
+next_generation["generation"] = 1
+third = validate_manifest(policy, manifest(base_unit, next_generation), implementation_workers=1, max_concurrent_threads=4)
+assert first["unit_fingerprints"]["u2"] != third["unit_fingerprints"]["u2"], (first, third)
+assert first["logical_unit_fingerprints"]["u2"] == third["logical_unit_fingerprints"]["u2"], (first, third)
 print("adversarial work-unit contract tests passed")
 PY
 

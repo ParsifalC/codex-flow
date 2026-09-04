@@ -1,6 +1,6 @@
 # FlowPilot Multi-Strategy Runtime
 
-FlowPilot is the semantic profiler and execution runtime for codex-flow. **Policy schema v4** separates the optimization objective from execution constraints, while **ExecutionPlan schema v8** carries the concrete WorkerBudget, task intent, per-role capability/reasoning policy, topology, and bounded lifecycle policy selected for one task.
+FlowPilot is the semantic profiler and execution runtime for codex-flow. **Policy schema v4** separates the optimization objective from execution constraints, while **ExecutionPlan schema v9** carries the concrete WorkerBudget, task intent, per-role capability/reasoning policy, topology, bounded lifecycle policy, and optional cumulative task budget selected for one task.
 
 ```text
 User Task
@@ -22,7 +22,7 @@ Strategy Runtime
    ├─ runtime / quota state
    └─ generic Plan Compiler
    ↓
-ExecutionPlan v8
+ExecutionPlan v9
    ↓
 ──────────────── hard boundary ────────────────
    ↓
@@ -67,7 +67,7 @@ The Skill must not keep another copy of strategy topology, Worker counts, capabi
 19. **Telemetry is observational.** Planning adds no LLM calls merely to estimate usage or quota.
 20. **Release defaults have one source of truth.** `policy/defaults.toml` drives installer and planner defaults.
 21. **Installer/update policy round-trips are lossless for supported fields.**
-22. **Bounded implementation is explicit and finite.** `minimum_work_units` and optional `maximum_work_units` constrain one manifest; they do not create worker slots or a task-wide cumulative budget.
+22. **Bounded implementation is explicit and finite.** `minimum_work_units` and optional `maximum_work_units` constrain one manifest; cumulative task reservations are enforced separately by the durable task-budget ledger.
 23. **Path evidence is preflight only.** `write_paths` provide lexical overlap checks, not an OS lock, durable scheduler enforcement, symlink resolution, or cross-process fencing.
 24. **Lineage is explicit.** Bounded units use `(scope_id, unit_id, generation)`; replacement/replan increments generation, checkpoint/continue does not, and Parent accepts only current-generation evidence.
 
@@ -82,10 +82,13 @@ scripts/strategies/
 ├── efficient.py
 ├── balanced.py
 ├── quality.py
-└── speed.py
+├── speed.py
+├── lifecycle_runtime.py
+├── work_unit_runtime.py
+└── task_budget_runtime.py
 ```
 
-`base.py` defines `StrategySpec` and `WorkerBudget`.
+`base.py` defines `StrategySpec`, `WorkerBudget`, and the optional `TaskBudgetPolicy` hook.
 
 ```text
 WorkerBudget
@@ -107,6 +110,7 @@ capability(task, role)       → worker | parent
 exploration_bonus(task)      → non-negative integer
 reviewer_bonus(task)         → non-negative integer
 notes(task)                  → tuple[str, ...]
+task_budget(task)            → TaskBudgetPolicy | None
 allow_parallel_write
 quota_sensitive
 ```
@@ -150,11 +154,17 @@ max_worker_repair_attempts | none
 
 For the `efficient` strategy, a routine single implementation stage sets `maximum_work_units=1`; complex, cross-module, and critical implementation work sets an exact maximum of 2; repo-wide or heavy-loop work sets an exact maximum of 3. A new bounded policy with `require_write_paths=true` requires every manifest unit to include a non-negative `generation` and non-empty normalized repo-relative POSIX `write_paths`. Older plans that omit the new fields retain legacy serial compatibility.
 
-`maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota, worker-count, or task-wide cumulative budget. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
+`maximum_work_units` is checked by the deterministic work-unit validator after the plan is compiled. It is a manifest bound, not a quota or worker-count. When a strategy emits a task budget, the compiler requires its `max_work_units` to equal the implementation StagePolicy maximum. The validator also rejects duplicate acceptance deltas, unsafe paths, path overlap without a direct/transitive dependency, and any parallel group with missing/overlapping paths or dependencies.
 
 `write_paths` checks are static lexical preflight only. They reject absolute/traversal/glob/backslash/NUL/Windows drive or UNC forms and detect equal or ancestor/descendant overlaps; they do not resolve symlinks, lock the OS, fence processes, persist checkpoints, or enforce a durable scheduler. The surrounding runtime must enforce writable fencing and persist/compare the current `(scope_id, unit_id, generation)` lineage.
 
-Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The lifecycle evaluator reports these decisions but provides no task-wide checkpoint/ledger store or automatic scheduler enforcement.
+Lifecycle soft timeout remains an advisory checkpoint/convergence budget. An unharvested received checkpoint is harvested before terminal success/failure, cancellation, idle, or hard-timeout fallback; a requested checkpoint without a payload does not defer hard/idle fallback. The lifecycle evaluator reports these decisions, while `scripts/strategies/task_budget_runtime.py` provides the separate cross-process task ledger; neither helper automatically schedules or cancels Workers.
+
+### Efficient cumulative task budget
+
+Only delegated `efficient` plans currently emit `task_budget`. It has a 1500-second soft deadline and 1800-second hard deadline. The reservation caps are: routine/local/module work units `1` and implementation attempts `2`; complex, cross-module, or critical work units `2` and attempts `3`; repo-wide or heavy-loop work units `3` and attempts `4`. `max_replans=1` and `max_replacements=1` apply to every efficient delegated task. Direct plans and legacy strategies emit `task_budget=null`.
+
+FlowPilot initializes the ledger immediately after initial compilation, checks `status` before every Worker spawn and after each join/wait, reserves logical work units/implementation attempts/replans/replacements, and calls `finish` when the task completes. Exploration/review Workers consume the wall-clock deadline but not implementation counters. Replanning reuses the original state path and cannot reset counters. Bounded `work_unit` reservations use the validator's stable logical fingerprint (generation excluded); `implementation_attempt` reservations use the generation-aware fingerprint. At soft deadline no new work may start; existing Workers checkpoint/converge. At hard deadline received checkpoints are harvested first, then active writers are fenced/cancelled and no replacement or Parent writer may start. The helper stores task/policy hashes and reservation hashes rather than raw prompt, path, or output data; it returns decisions but is not a scheduler.
 
 ## Built-in strategy budgets
 
@@ -259,7 +269,7 @@ worker-reviewer
   independent read-only review, regression hunting, acceptance validation
 ```
 
-The same role can be used differently by each strategy. ExecutionPlan v8 makes resource selection explicit per role rather than treating “Worker” as one task-wide capability bucket.
+The same role can be used differently by each strategy. ExecutionPlan v9 makes resource selection and optional task budget explicit per role rather than treating “Worker” as one task-wide capability bucket.
 
 ## Policy precedence
 
@@ -423,13 +433,13 @@ For quota-sensitive strategies (`efficient`, `balanced`), high/critical pressure
 
 `quality` is deliberately not quota-sensitive. Strong/absolute quality retains Parent-class capability for high-value Implementer/Reviewer roles under quota pressure; ordinary Explorer capability remains independently selected. Hard runtime and safety ceilings still apply.
 
-## ExecutionPlan v8
+## ExecutionPlan v9
 
 The deterministic planner emits:
 
 ```text
 ExecutionPlan
-  schema_version = 8
+  schema_version = 9
   strategy
   routing
   review_modifier
@@ -458,6 +468,14 @@ ExecutionPlan
     max_reviewers
     max_total_workers
     speculation
+
+  task_budget | none
+    soft_timeout_seconds
+    hard_timeout_seconds
+    max_work_units
+    max_implementation_attempts
+    max_replans
+    max_replacements
 
   exploration_workers
   implementation_workers

@@ -161,7 +161,7 @@ If planner/registry is unavailable, treat it as installation/runtime failure. Do
 
 ## 3. ExecutionPlan is the hard strategy/runtime boundary
 
-Current contract (schema v8):
+Current contract (schema v9):
 
 ```text
 ExecutionPlan
@@ -184,6 +184,13 @@ ExecutionPlan
   reviewer_model | none
   reviewer_reasoning | none
   worker_budget
+  task_budget | none
+    soft_timeout_seconds
+    hard_timeout_seconds
+    max_work_units
+    max_implementation_attempts
+    max_replans
+    max_replacements
   exploration_workers
   implementation_workers
   reviewer_workers
@@ -218,6 +225,29 @@ ExecutionPlan
 `implementation_stage.max_worker_repair_attempts` bounds local Implementer validation/fix loops and is independent from top-level Parent `max_repair_cycles`.
 
 `implementation_stage.work_unit_mode=bounded` is binding. `minimum_work_units` is the minimum number of logical acceptance-bounded implementation transactions. `maximum_work_units`, when present, is a hard manifest count bound and must be at least the minimum. `join_between_work_units=true` means control must return to Parent after each completed unit before a dependent next unit begins. These fields do **not** authorize extra writable concurrency. `require_write_paths=true` opts a new bounded policy into generation and normalized repository-relative `write_paths` validation.
+
+### Task-level cumulative budget
+
+`task_budget` is an optional strategy-owned cumulative contract for delegated work. It is separate from `StagePolicy`: stage fields describe one Worker stage, while task reservations live in a durable ledger and are never reset by a replan or a new process. Efficient uses these caps:
+
+```text
+                         max_work_units   max_implementation_attempts
+routine/local/module             1                         2
+complex, cross-module, critical  2                         3
+repo-wide or heavy-loop          3                         4
+max_replans = 1, max_replacements = 1
+soft_timeout_seconds = 1500, hard_timeout_seconds = 1800
+```
+
+The compiler emits `task_budget` only when the resolved route is `delegate`; direct plans and legacy strategies emit `null`. When both are present, `task_budget.max_work_units` must equal `implementation_stage.maximum_work_units`.
+
+Immediately after the first plan is compiled, initialize `task_budget_runtime.py` with the plan's budget, task id, and runtime-owned state path. Before any Worker spawn, query `status`; exploration/review Workers consume wall time but do not consume implementation counters. Before each logical work-unit start, implementation Worker attempt, replan, or replacement, reserve the corresponding kind (`work_unit`, `implementation_attempt`, `replan`, or `replacement`). After every join or wait, query `status`; at task completion, call `finish`. A replan reuses the original ledger/state path and remaining counters, never a fresh budget.
+
+For a bounded manifest, reserve `work_unit` with the validator's stable `logical_unit_fingerprints[unit_id]`, which excludes generation. Reserve `implementation_attempt` with the generation-aware `unit_fingerprints[unit_id]` and an identity derived from `(scope_id, unit_id, generation)`. A replacement therefore consumes a new implementation attempt/replacement reservation without double-counting the same logical work unit; changing acceptance/scope/path/validation under the same logical unit still fails closed.
+
+At the 1500-second soft deadline, do not open work or create reservations; ask existing Workers to checkpoint/converge and harvest their evidence. At the 1800-second hard deadline, first harvest any received checkpoint, then apply lifecycle fencing and cancel active writers. Do not start a replacement Worker or Parent writer after hard stop. An implementation handoff must carry the task-budget state path and current remaining seconds/counters.
+
+The task-budget helper is a ledger/decision boundary, not an automatic scheduler: it does not spawn, checkpoint, cancel, fence, or replace Workers. FlowPilot/runtime performs those actions from its result. The lifecycle helper likewise reports requirements; actual cancellation and scheduling remain runtime responsibilities.
 
 Once compiled, execute the plan. Prohibited duplication includes:
 
@@ -269,7 +299,7 @@ Meaningful-progress quality is observational and non-destructive. `activity_only
 
 `idle_timeout_seconds` is a renewable liveness lease. `soft_timeout_seconds` is an advisory checkpoint/convergence budget. `hard_timeout_seconds` is the absolute Worker wall-clock ceiling.
 
-The lifecycle helper is a deterministic evaluator, not a durable scheduler, task-wide ledger, or checkpoint store. It reports cancellation and fencing requirements from observed facts; the runtime must enforce them and persist any checkpoint/lineage state it needs.
+The lifecycle helper is a deterministic evaluator, not a durable scheduler or checkpoint store. The separate task-budget helper is the durable cross-process ledger for task-level reservations. Both helpers report decisions/requirements; the runtime must enforce cancellation, checkpoint harvest, writer fencing, and Worker scheduling.
 
 **A `wait()` timeout is never a Worker timeout.** Repeated Parent waits without terminal output do not by themselves justify stalled/failed/cancelled.
 
@@ -554,4 +584,4 @@ fanout = auto
 quality_intent = normal
 ```
 
-Persistent policy remains schema v4. ExecutionPlan remains schema v8 with optional StagePolicy convergence/repair/work-unit fields. Older plans without `soft_timeout_seconds`, meaningful-progress/checkpoint state, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run. In particular, absent work-unit fields resolve to the legacy single-unit implementation path; updates must not retroactively split or cancel already-running Workers.
+Persistent policy remains schema v4. ExecutionPlan schema v9 adds optional task-level cumulative budget alongside StagePolicy convergence/repair/work-unit fields. Older plans without `task_budget`, `soft_timeout_seconds`, meaningful-progress/checkpoint state, `max_worker_repair_attempts`, or work-unit fields retain historical behavior for that run. In particular, absent task-budget/work-unit fields resolve to the legacy path; updates must not retroactively split, cancel, or reset already-running Workers.

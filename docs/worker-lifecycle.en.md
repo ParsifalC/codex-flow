@@ -1,6 +1,6 @@
 # Worker Lifecycle Runtime
 
-ExecutionPlan v8 adds asynchronous Worker lifecycle semantics on top of the multi-strategy runtime. The goal is not simply to make Parent wait less; it is to maximize useful parallel Parent/Worker work while minimizing duplicated work, abandoned Worker work, and pointless waiting.
+ExecutionPlan v9 adds asynchronous Worker lifecycle semantics and an optional cumulative task budget on top of the multi-strategy runtime. The goal is not simply to make Parent wait less; it is to maximize useful parallel Parent/Worker work while minimizing duplicated work, abandoned Worker work, and pointless waiting.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ TaskProfile
     ↓
 StrategySpec
     ↓
-ExecutionPlan v8 / StagePolicy
+ExecutionPlan v9 / StagePolicy + optional TaskBudgetPolicy
     ↓
 FlowPilot scope observations
     ↓
@@ -61,7 +61,15 @@ The lineage of a bounded unit is `(scope_id, unit_id, generation)`. Checkpoint/c
 
 `write_paths` checks are static lexical preflight only: they reject absolute paths, `.`/`..` traversal, globs, backslashes, NULs, and Windows drive/UNC forms, and check dependency ordering for equal or ancestor/descendant overlap. They are not an OS lock, do not resolve symlinks, and do not provide durable scheduler enforcement.
 
-These unit/max/path/generation fields describe one ExecutionPlan bounded manifest. This evaluator provides no task-wide cumulative budget, durable checkpoint store, or cross-process ledger. The surrounding Scheduler/runtime must persist and enforce lineage, checkpoint harvest, writer fencing, and current-generation acceptance.
+These unit/max/path/generation fields describe one ExecutionPlan bounded manifest. The separate `scripts/strategies/task_budget_runtime.py` helper provides the v1 cross-process task ledger; it stores task/policy hashes, deadlines, counters, and reservation hashes, never raw prompt/path/output data. The lifecycle and budget helpers report deterministic decisions but do not schedule, spawn, checkpoint, cancel, or fence Workers; the surrounding FlowPilot/runtime enforces those actions.
+
+## Task-level cumulative budget
+
+Only delegated efficient plans currently emit `task_budget`. Its soft deadline is 1500 seconds and its hard deadline is 1800 seconds, measured from the first ledger initialization. Caps are: routine/local/module `max_work_units=1` and `max_implementation_attempts=2`; complex, cross-module, or critical `2` and `3`; repo-wide or heavy-loop `3` and `4`; `max_replans=1`; `max_replacements=1`. Direct plans and legacy strategies emit no budget.
+
+FlowPilot must initialize the ledger immediately after the initial compile, query `status` before every Worker spawn and after every join/wait, reserve every logical work-unit start, implementation attempt, replan, or replacement, and call `finish` at task completion. Exploration/review Workers consume wall time but not implementation counters. Replanning reuses the original state path and cannot reset counters. A bounded logical work-unit reservation uses the validator fingerprint that excludes generation, while an implementation-attempt reservation uses the generation-aware fingerprint. Reservations are idempotent only for the same kind and reservation-id/fingerprint pair; a changed acceptance/scope/path/validation fingerprint or exhausted cap fails closed.
+
+Before soft deadline, `status.action=continue` permits new work. At or after soft deadline it returns `converge`: no new reservation may start, and existing Workers must checkpoint/converge. At or after hard deadline it returns `stop` with `cancel_required=true`: first harvest any received checkpoint, then apply lifecycle fencing and cancel active writers. Do not start a replacement Worker or Parent writer after hard stop. The helper is a ledger/decision mechanism, not an automatic scheduler; actual spawning, cancellation, fencing, and checkpoint handling remain FlowPilot/runtime responsibilities. Include the ledger state path and remaining seconds/counters in Worker implementer handoffs.
 
 ## Worker states
 
@@ -188,7 +196,7 @@ Fallback always covers the missing delta:
 For a non-terminal stalled/hard-timed-out Worker, fallback may proceed where policy allows, while `cancel_required=true` simultaneously requires cleanup of the old Worker.
 
 Worker lifecycle failures do not consume `max_repair_cycles`; repair cycles are reserved for defects in implementation output.
-Checkpoint/continue does not create a new generation or consume a task-wide cumulative budget. Durable checkpoint storage, cross-process fencing, and scheduler reclamation remain responsibilities of the surrounding runtime.
+Checkpoint/continue does not create a new generation or a new task-budget reservation. Replan/replacement reservations continue in the original ledger; durable checkpoint storage, cancellation/fencing, and scheduler reclamation remain responsibilities of the surrounding runtime.
 
 ## Built-in strategy defaults
 

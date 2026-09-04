@@ -122,7 +122,7 @@ codex-flow strategy plan --complexity complex --uncertainty high > "$TMP/install
 python3 - "$TMP/installed-plan.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['schema_version']==8, p
+assert p['schema_version']==9, p
 assert p['quality_intent']=='normal', p
 assert p['strategy']=='efficient' and p['routing']=='delegate', p
 assert p['parent_reasoning']=='high', p
@@ -133,6 +133,8 @@ assert p['planned_worker_count']==3, p
 assert p['exploration_stage']['join_policy']=='quorum', p
 assert p['implementation_stage']['join_policy']=='required', p
 assert p['review_stage'] is None, p
+assert p['task_budget']['soft_timeout_seconds']==1500, p
+assert p['task_budget']['hard_timeout_seconds']==1800, p
 PY
 codex-flow usage list >/dev/null || true
 codex-flow usage stats >/dev/null || true
@@ -145,6 +147,7 @@ printf '%s\n' "$doctor_output"
 [[ "$doctor_output" == *"fanout modifier: auto"* ]]
 [[ "$doctor_output" == *"release policy defaults installed"* ]]
 [[ "$doctor_output" == *"FlowPilot lifecycle hooks installed"* ]]
+[[ "$doctor_output" == *"task budget runtime helper installed"* ]]
 [[ "$doctor_output" == *"thread-attributed telemetry may be unavailable"* ]]
 [[ "$doctor_output" == *"FlowPilot hook authorization: approval required"* ]]
 [[ "$doctor_output" == *"Installed with action required"* ]]

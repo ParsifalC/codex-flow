@@ -184,7 +184,7 @@ plan --complexity small --risk low > "$TMP/small.json"
 python3 - "$TMP/small.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p['schema_version']==8, p
+assert p['schema_version']==9, p
 assert p['strategy']=='efficient' and p['routing']=='direct', p
 assert p['quality_intent']=='normal', p
 for prefix in ('explorer','implementer','reviewer'):
@@ -555,7 +555,7 @@ PY
 
 # Skill must treat lifecycle as an authoritative plan boundary, not a prose heuristic.
 grep -Fq 'FlowPilot profiles. `strategy_runtime.py` + the strategy registry decide. FlowPilot executes the returned plan.' "$ROOT/templates/skills/flow-pilot/SKILL.md"
-grep -Fq 'Current contract (schema v8)' "$ROOT/templates/skills/flow-pilot/SKILL.md"
+grep -Fq 'Current contract (schema v9)' "$ROOT/templates/skills/flow-pilot/SKILL.md"
 grep -Fq 'A `wait()` timeout is never a Worker timeout.' "$ROOT/templates/skills/flow-pilot/SKILL.md"
 grep -Fq 'cancel_if_superseded' "$ROOT/templates/skills/flow-pilot/SKILL.md"
 grep -Fq 'Fallback always operates on the missing delta' "$ROOT/templates/skills/flow-pilot/SKILL.md"

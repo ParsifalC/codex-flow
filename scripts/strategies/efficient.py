@@ -1,7 +1,15 @@
 """Quota-efficient strategy."""
 from __future__ import annotations
 
-from .base import StagePolicy, StrategySpec, WorkerBudget, never, small_low_risk_is_direct, standard_effort
+from .base import (
+    StagePolicy,
+    StrategySpec,
+    TaskBudgetPolicy,
+    WorkerBudget,
+    never,
+    small_low_risk_is_direct,
+    standard_effort,
+)
 
 
 def adaptive_route(task) -> str:
@@ -48,6 +56,31 @@ def implementation_minimum_work_units(task) -> int:
     return 1
 
 
+def task_budget(task) -> TaskBudgetPolicy:
+    """Return the efficient strategy's cumulative task-level reservation caps."""
+    if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
+        max_work_units = 3
+        max_attempts = 4
+    elif (
+        task.complexity in {"complex", "critical"}
+        or task.scope == "cross-module"
+        or task.risk == "critical"
+    ):
+        max_work_units = 2
+        max_attempts = 3
+    else:
+        max_work_units = 1
+        max_attempts = 2
+    return TaskBudgetPolicy(
+        soft_timeout_seconds=1500,
+        hard_timeout_seconds=1800,
+        max_work_units=max_work_units,
+        max_implementation_attempts=max_attempts,
+        max_replans=1,
+        max_replacements=1,
+    )
+
+
 def lifecycle(task, stage: str) -> StagePolicy:
     if stage == "exploration":
         return StagePolicy("quorum", 1, 120, 900, True, True, "parent_delta")
@@ -83,4 +116,5 @@ STRATEGY = StrategySpec(
     independent_review=never,
     lifecycle=lifecycle,
     quota_sensitive=True,
+    task_budget=task_budget,
 )

@@ -20,7 +20,7 @@ from typing import Any, Iterable
 from strategies import all_specs as all_strategy_specs
 from strategies import get as get_strategy
 from strategies import names as strategy_names
-from strategies.base import StagePolicy, WorkerBudget
+from strategies.base import StagePolicy, TaskBudgetPolicy, WorkerBudget
 
 try:
     from telemetry_core.app_server import quota_windows as app_server_quota_windows
@@ -205,6 +205,7 @@ class ExecutionPlan:
     reviewer_model: str | None
     reviewer_reasoning: str | None
     worker_budget: WorkerBudget
+    task_budget: TaskBudgetPolicy | None
     exploration_workers: int
     implementation_workers: int
     reviewer_workers: int
@@ -805,9 +806,28 @@ def compile_plan(
     implementation_stage = _bounded_stage_policy(spec, task, "implementation", implementation_workers, modifiers)
     review_stage = _bounded_stage_policy(spec, task, "review", reviewer_workers, modifiers)
 
+    # Task budgets are strategy-owned and only meaningful for delegated work.
+    # Keep the compiler generic: a strategy may opt into the hook, while legacy
+    # strategies and direct plans continue to emit no task ledger contract.
+    task_budget: TaskBudgetPolicy | None = None
+    if delegated and spec.task_budget is not None:
+        task_budget = spec.task_budget(task)
+        if task_budget is not None:
+            if not isinstance(task_budget, TaskBudgetPolicy):
+                raise ValueError("strategy task_budget hook must return TaskBudgetPolicy or None")
+            task_budget.validate()
+            if (
+                implementation_stage is not None
+                and implementation_stage.maximum_work_units is not None
+                and implementation_stage.maximum_work_units != task_budget.max_work_units
+            ):
+                raise ValueError(
+                    "task budget max_work_units must match implementation_stage maximum_work_units"
+                )
+
     planned_worker_count = exploration_workers + implementation_workers + reviewer_workers
     return ExecutionPlan(
-        schema_version=8,
+        schema_version=9,
         strategy=strategy,
         routing=route,
         review_modifier=modifiers.review,
@@ -826,6 +846,7 @@ def compile_plan(
         reviewer_model=reviewer_model,
         reviewer_reasoning=reviewer_reasoning,
         worker_budget=budget,
+        task_budget=task_budget,
         exploration_workers=exploration_workers,
         implementation_workers=implementation_workers,
         reviewer_workers=reviewer_workers,

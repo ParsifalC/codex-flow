@@ -1,6 +1,6 @@
 # Worker Lifecycle Runtime
 
-本文定义 FlowPilot ExecutionPlan v8 的异步 Worker 生命周期语义。目标不是简单让 Parent 少等待，而是最大化 Parent 与 Worker 的有效并行工作，同时减少重复执行、被丢弃的 Worker 工作和无价值等待。
+本文定义 FlowPilot ExecutionPlan v9 的异步 Worker 生命周期和可选 task-level 累计预算语义。目标不是简单让 Parent 少等待，而是最大化 Parent 与 Worker 的有效并行工作，同时减少重复执行、被丢弃的 Worker 工作和无价值等待。
 
 ## 架构
 
@@ -9,7 +9,7 @@ TaskProfile
     ↓
 StrategySpec
     ↓
-ExecutionPlan v8 / StagePolicy
+ExecutionPlan v9 / StagePolicy + 可选 TaskBudgetPolicy
     ↓
 FlowPilot scope observations
     ↓
@@ -61,7 +61,15 @@ require_write_paths
 
 `write_paths` 检查只是静态 lexical preflight：拒绝绝对路径、`.`/`..` traversal、glob、反斜杠、NUL、Windows drive/UNC，并检查同一路径或祖先/后代重叠的依赖顺序。它不是 OS lock，不解析 symlink，也不提供 durable scheduler enforcement。
 
-这些 unit/max/path/generation 字段只描述一次 ExecutionPlan 的 bounded manifest；本 evaluator 不提供 task-wide 累计预算、durable checkpoint store 或跨进程 ledger。Scheduler/runtime 必须自行持久化并执行 lineage、checkpoint harvest、writer fence 和当前 generation 接受规则。
+这些 unit/max/path/generation 字段只描述一次 ExecutionPlan 的 bounded manifest。独立的 `scripts/strategies/task_budget_runtime.py` 提供 v1 跨进程 task ledger；它只保存 task/policy hash、deadline、计数和 reservation hash，不保存原始 prompt/path/output。lifecycle 和 budget helper 都只返回确定性决策，不会自动 schedule、spawn、checkpoint、cancel 或 fence Worker；实际动作由外围 FlowPilot/runtime 执行。
+
+## Task-level 累计预算
+
+目前只有 delegated efficient plan 输出 `task_budget`。从首次 init ledger 起计时，soft deadline 为 1500 秒，hard deadline 为 1800 秒。上限为：routine/local/module 的 `max_work_units=1`、`max_implementation_attempts=2`；complex、cross-module 或 critical 为 `2`、`3`；repo-wide 或 heavy-loop 为 `3`、`4`；`max_replans=1`、`max_replacements=1`。direct plan 和 legacy strategy 输出 null。
+
+FlowPilot 初次 compile 后必须立即 init ledger；每次 Worker spawn 前和每次 join/wait 后先 status；每次 logical work-unit、implementation attempt、replan 或 replacement 前 reserve；任务完成时 finish。exploration/review Worker 消耗 wall time，但不消耗 implementation counters。replan 复用原 state path 和剩余计数，不能通过新 plan 重置预算。bounded logical work-unit 使用排除 generation 的稳定 fingerprint，implementation attempt 使用包含 generation 的 fingerprint。只有同 kind、reservation-id、fingerprint 的重复请求幂等；同一 unit 的 acceptance/scope/path/validation 改变或上限耗尽时 fail closed。
+
+soft deadline 前 `status.action=continue` 才允许新工作；达到 soft 后为 `converge`，不得新开工作/创建 reservation，现有 Worker 必须 checkpoint/converge。达到 hard 后为 `stop` 且 `cancel_required=true`：先 harvest 已收到的 checkpoint，再按 lifecycle fence 并 cancel active writer；hard stop 后不得启动 replacement Worker 或 Parent writer。helper 是 ledger/decision，不是自动调度器，实际 spawn/cancel/fence/checkpoint 仍由 FlowPilot/runtime 执行。Worker implementer handoff 必须携带 ledger state path 与当前 remaining seconds/counters。
 
 ## Worker 状态
 
@@ -189,7 +197,7 @@ Fallback 永远只处理 missing delta：
 
 Worker lifecycle failure 不消耗 `max_repair_cycles`；repair cycle 只用于实现产物本身的缺陷修复。
 
-Checkpoint/continue 不会创建新的 generation，也不消耗 task-wide 累计预算；checkpoint payload 的 durable 存储、跨进程 fencing 和 scheduler 回收由外围 runtime 负责。
+Checkpoint/continue 不会创建新的 generation，也不会创建新的 task-budget reservation；replan/replacement 继续使用原 ledger，checkpoint payload 的 durable 存储、跨进程 fencing 和 scheduler 回收由外围 runtime 负责。
 
 ## Built-in strategy defaults
 
