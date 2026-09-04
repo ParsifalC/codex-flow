@@ -107,7 +107,7 @@ def main() -> None:
     budget_expected={
         "efficient":{"routine":(1500,1800,1,2,1,1,2,150),"complex":(1500,1800,2,3,1,1,2,150),"demanding":(1500,1800,3,4,1,1,2,150)},
         "balanced":{"routine":(2400,3000,1,3,2,2,2,180),"complex":(2700,3300,2,4,2,2,2,180),"demanding":(3000,3600,3,5,2,2,2,180)},
-        "quality":{"routine":(4800,6000,1,4,3,3,2,300),"complex":(5400,6600,3,6,3,3,2,300),"demanding":(6000,7200,4,7,3,3,4,300)},
+        "quality":{"routine":(4800,6000,1,4,3,3,2,300),"complex":(5400,6600,3,6,3,3,4,300),"demanding":(6000,7200,4,7,3,3,4,300)},
         "speed":{"routine":(1200,1800,1,2,1,1,2,120),"complex":(1200,1800,3,4,1,1,2,120),"demanding":(1200,1800,4,5,1,1,2,120)},
     }
     profiles={"routine":routine,"complex":complex_cross,"demanding":demanding}
