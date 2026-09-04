@@ -382,20 +382,23 @@ parallel_group: optional
 
 Partition by acceptance boundary, module/file ownership, dependency order, or validation boundary. Do not manufacture meaningless splits solely to satisfy a number; each unit must represent independently describable progress that can be harvested and resumed. A typical same-scope split may be “core implementation” -> “dependent integration/regression completion”.
 
-Validate the manifest deterministically before spawn:
+Validate the manifest deterministically before spawn. Copy `implementation_workers` and `max_concurrent_threads` verbatim from the same immutable ExecutionPlan; never raise either value locally:
 
 ```bash
 python3 ~/.codex/codex-flow/strategies/work_unit_runtime.py \
   --policy-json '<implementation_stage JSON>' \
-  --manifest-json '<{"units":[...]}>'
+  --manifest-json '<{"units":[...]}>' \
+  --implementation-workers <ExecutionPlan implementation_workers> \
+  --max-concurrent-threads <ExecutionPlan max_concurrent_threads>
 ```
 
-Use the helper result as the gate. If validation fails, fix the manifest; do not bypass the work-unit contract.
+Use the helper result as the gate. If validation fails, fix the manifest; do not bypass the work-unit contract. The helper caps a parallel wave at `min(implementation_workers, max_concurrent_threads)` and rejects direct or transitive dependency-linked units in the same wave.
 
 Safety rules enforced by the manifest/runtime contract:
 
 - same `write_scope_id` units are sequential and each later unit must depend on the previous same-scope unit;
-- `parallel_group` may contain only isolated distinct `write_scope_id`s with no dependency edge inside that group;
+- `parallel_group` may contain only isolated distinct `write_scope_id`s with no direct or transitive dependency path inside that group;
+- a parallel group cannot exceed the already-resolved implementation/thread concurrency from ExecutionPlan;
 - bounded mode cannot collapse to fewer than `minimum_work_units`;
 - work-unit partitioning never creates new `writable_workstreams`; existing ExecutionPlan isolation is still authoritative.
 
