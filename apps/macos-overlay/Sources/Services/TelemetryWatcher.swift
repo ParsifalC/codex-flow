@@ -70,6 +70,11 @@ public class TelemetryWatcher {
                 )
                 
                 source.setEventHandler { [weak self] in
+                    let data = source.data
+                    if data.contains(.delete) || data.contains(.rename) {
+                        self?.fileSource?.cancel()
+                        self?.fileSource = nil
+                    }
                     self?.handleFileOrDirChanged()
                 }
                 

@@ -690,7 +690,8 @@ public struct HistoryTaskDetailOverlay: View {
     @ViewBuilder
     private var quotaSection: some View {
         if !run.effectiveQuotaWindows.isEmpty {
-            QuotaWindowsView(windows: run.effectiveQuotaWindows)
+            let isPending = run.isRunning && (run.quotaAfter ?? []).isEmpty
+            QuotaWindowsView(windows: run.effectiveQuotaWindows, isRunning: isPending)
         }
     }
 

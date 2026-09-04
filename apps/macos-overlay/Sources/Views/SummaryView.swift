@@ -238,7 +238,8 @@ public struct SummaryView: View {
             metricsGrid(run)
 
             if !run.effectiveQuotaWindows.isEmpty {
-                QuotaWindowsView(windows: run.effectiveQuotaWindows)
+                let isPending = run.isRunning && (run.quotaAfter ?? []).isEmpty
+                QuotaWindowsView(windows: run.effectiveQuotaWindows, isRunning: isPending)
             }
 
             taskNarrativeCard(run)
@@ -955,22 +956,42 @@ public struct InspectorMetricView: View {
 
 public struct QuotaWindowsView: View {
     public let windows: [QuotaWindow]
+    public let isRunning: Bool
 
-    public init(windows: [QuotaWindow]) {
+    public init(windows: [QuotaWindow], isRunning: Bool = false) {
         self.windows = windows
+        self.isRunning = isRunning
     }
 
     private var ordered: [QuotaWindow] {
         windows.sorted { ($0.windowDurationMins ?? Int.max) < ($1.windowDurationMins ?? Int.max) }
     }
 
+    private var cardTitle: String {
+        isRunning
+            ? L("Quota remaining at task start", "任务起始额度剩余")
+            : L("Quota remaining at task completion", "任务结束额度剩余")
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label(L("Quota remaining at task completion", "任务结束额度剩余"), systemImage: "gauge.with.needle.fill")
+                Label(cardTitle, systemImage: "gauge.with.needle.fill")
                     .font(.system(size: 8.8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
+
                 Spacer()
+
+                if isRunning {
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(Color.cyan)
+                            .frame(width: 4, height: 4)
+                        Text(L("Running · Settles upon completion", "运行中 · 结束后结算消耗"))
+                            .font(.system(size: 7.2, weight: .medium))
+                            .foregroundColor(.cyan.opacity(0.85))
+                    }
+                }
             }
 
             ForEach(ordered) { quotaRow($0) }
