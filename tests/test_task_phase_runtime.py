@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from strategy_runtime import Modifiers, TaskProfile, compile_plan  # noqa: E402
 from strategies import get  # noqa: E402
-from strategies.task_budget_runtime import LedgerError  # noqa: E402
+from strategies.task_budget_runtime import LedgerError, init_ledger  # noqa: E402
 from strategies.task_phase_runtime import init, reserve_implementation, status  # noqa: E402
 
 
@@ -59,6 +59,7 @@ def assert_tail(strategy: str, expected_elapsed_cutoff: int, *, strict: bool = F
 
         assert initialized["effective_task_budget"]["soft_timeout_seconds"] == expected_elapsed_cutoff, initialized
         assert initialized["soft_deadline"] == cutoff, initialized
+        assert initialized["legacy_unclamped"] is False, initialized
 
         before = status(state, strategy, plan_json, "implementation", cutoff - 1)
         assert before["permits_phase_start"] is True, before
@@ -171,6 +172,22 @@ def main() -> None:
             assert "plan/policy mismatch" in str(exc), exc
         else:
             raise AssertionError("different budget plan unexpectedly reused task phase ledger")
+
+    # A task already initialized by the pre-phase runtime keeps its historical
+    # original soft deadline. Calling phase-aware init after upgrade adopts that
+    # ledger without shortening it or inventing a review-tail reservation.
+    quality = plan("quality")
+    with tempfile.TemporaryDirectory() as tmp:
+        state = str(Path(tmp) / "legacy.json")
+        init_ledger(state, "legacy", quality.task_budget, 100)
+        adopted = init(state, "legacy", quality.to_dict(), 101)
+        assert adopted["initialized"] is False and adopted["idempotent"] is True, adopted
+        assert adopted["legacy_unclamped"] is True, adopted
+        assert adopted["soft_deadline"] == 4900, adopted
+        assert adopted["required_completion_reserve_seconds"] == 0, adopted
+        legacy_status = status(state, "legacy", quality.to_dict(), "implementation", 3100)
+        assert legacy_status["legacy_unclamped"] is True, legacy_status
+        assert legacy_status["permits_phase_start"] is True, legacy_status
 
     # Exercise the real argparse path: --now arrives as text in every shell.
     phase_cli = ROOT / "scripts/strategies/task_phase_runtime.py"
