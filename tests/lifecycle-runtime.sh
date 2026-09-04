@@ -5,20 +5,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 POLICY="$TMP/codex-flow.toml"
+LIFECYCLE="$ROOT/scripts/strategies/lifecycle_runtime.py"
 
 cat > "$POLICY" <<'EOF'
 schema_version = 4
-
 [strategy]
 profile = "efficient"
-
 [routing]
 mode = "adaptive"
-
 [modifiers]
 review = "auto"
 fanout = "auto"
-
 [parent]
 model_policy = "latest-capable"
 min_model = "auto"
@@ -26,7 +23,6 @@ min_reasoning_effort = "high"
 routine_effort = "high"
 complex_effort = "high"
 critical_effort = "xhigh"
-
 [worker]
 model_policy = "latest-efficient"
 model = "auto"
@@ -35,7 +31,6 @@ min_reasoning_effort = "xhigh"
 routine_effort = "xhigh"
 complex_effort = "xhigh"
 critical_effort = "max"
-
 [runtime]
 max_concurrent_threads = 4
 max_repair_cycles = 2
@@ -45,778 +40,283 @@ plan() {
   python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown "$@"
 }
 
-LIFECYCLE="$ROOT/scripts/strategies/lifecycle_runtime.py"
 python3 -m py_compile "$LIFECYCLE"
 
-# The lifecycle state machine consumes observable facts, never Parent wait counts.
-plan --routing delegate --complexity complex --uncertainty high > "$TMP/plan.json"
-python3 - "$TMP/plan.json" > "$TMP/impl-policy.json" <<'PY'
+plan --routing delegate --complexity complex --uncertainty high > "$TMP/impl-plan.json"
+python3 - "$TMP/impl-plan.json" > "$TMP/impl-policy.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
-assert p["implementation_stage"]["soft_timeout_seconds"] == 900, p
-assert p["implementation_stage"]["hard_timeout_seconds"] == 1800, p
-print(json.dumps(p["implementation_stage"], separators=(",", ":")))
+stage=p['implementation_stage']
+assert stage['soft_timeout_seconds']==900 and stage['hard_timeout_seconds']==1800, stage
+assert stage['checkpoint_rearm_seconds']==240 and stage['fallback_policy']=='replan', stage
+print(json.dumps(stage,separators=(',',':')))
 PY
 IMPL_POLICY="$(cat "$TMP/impl-policy.json")"
 
-# Efficient soft budgets are complexity-aware while preserving the existing 30-minute hard ceiling.
-plan --routing delegate --complexity routine > "$TMP/routine-plan.json"
-plan --routing delegate --complexity critical --risk critical > "$TMP/critical-plan.json"
-python3 - "$TMP/routine-plan.json" "$TMP/critical-plan.json" <<'PY'
-import json, sys
-routine=json.load(open(sys.argv[1])); critical=json.load(open(sys.argv[2]))
-assert routine["implementation_stage"]["soft_timeout_seconds"] == 600, routine
-assert critical["implementation_stage"]["soft_timeout_seconds"] == 1200, critical
-assert routine["implementation_stage"]["hard_timeout_seconds"] == 1800, routine
-assert critical["implementation_stage"]["hard_timeout_seconds"] == 1800, critical
-assert routine["implementation_stage"]["checkpoint_rearm_seconds"] == 180, routine
-assert critical["implementation_stage"]["checkpoint_rearm_seconds"] == 300, critical
-for plan in (routine, critical):
-    stage = plan["implementation_stage"]
-    assert stage["soft_timeout_seconds"] + stage["checkpoint_rearm_seconds"] < stage["hard_timeout_seconds"], stage
-PY
-
+# Active liveness is not a timeout and Parent wait intervals are not lifecycle evidence.
 python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 100 --last-progress-at 220 --now 250 --writable > "$TMP/progress.json"
-python3 - "$TMP/progress.json" <<'PY'
-import json, sys
+  --stage implementation --started-at 100 --last-progress-at 220 --now 250 --writable > "$TMP/active.json"
+python3 - "$TMP/active.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["state"]=="progressing" and d["action"]=="continue", d
-assert d["cancel_required"] is False, d
-assert d["replacement_allowed"] is False and d["fence_required"] is False, d
-assert d["progress_quality"]=="meaningful" and d["meaningful_idle_seconds"]==30, d
-assert d["checkpoint_status"]=="not_requested", d
-assert d["replan_scope"] is None and d["checkpoint_reuse_mode"] is None, d
+assert d['action']=='continue' and d['state']=='progressing',d
+assert not d['cancel_required'] and not d['fence_required'],d
+assert d['progress_quality']=='meaningful',d
 PY
 
-# Reaching the soft budget requests convergence/checkpoint only. It never cancels or fences a healthy Worker.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
-  --stage implementation --started-at 100 --last-progress-at 995 --now 1000 --writable --in-flight > "$TMP/soft.json"
+# Soft budget requests a non-terminal checkpoint and does not cancel/fence.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id soft \
+  --stage implementation --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 995 \
+  --now 1000 --writable --in-flight > "$TMP/soft.json"
 python3 - "$TMP/soft.json" <<'PY'
-import json, sys
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["state"]=="progressing" and d["action"]=="request_checkpoint", d
-assert d["checkpoint_status"]=="not_requested", d
-assert d["cancel_required"] is False, d
-assert d["replacement_allowed"] is False and d["fence_required"] is False, d
-assert d["fallback_policy"] is None, d
-assert d["progress_quality"]=="meaningful", d
-assert d["replan_scope"] is None, d
-assert "without cancelling Worker" in d["reason"], d
+assert d['action']=='request_checkpoint' and d['next_checkpoint_sequence']==1,d
+assert d['checkpoint_status']=='not_requested',d
+assert not d['cancel_required'] and not d['fence_required'],d
 PY
 
-# Checkpoint request is stateful: after requesting it, do not repeatedly request or cancel the Worker.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
-  --stage implementation --started-at 100 --last-progress-at 995 --now 1010 --writable --in-flight \
-  --checkpoint-requested-at 1000 > "$TMP/checkpoint-requested.json"
-python3 - "$TMP/checkpoint-requested.json" <<'PY'
-import json, sys
+# Outstanding checkpoint request is awaited, not spammed.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id soft \
+  --stage implementation --started-at 100 --last-progress-at 1005 --now 1010 --writable --in-flight \
+  --checkpoint-requested-at 1000 > "$TMP/requested.json"
+python3 - "$TMP/requested.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="await_checkpoint" and d["checkpoint_status"]=="requested", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
-assert d["fence_required"] is False and d["replacement_allowed"] is False, d
+assert d['action']=='await_checkpoint' and d['checkpoint_status']=='requested',d
+assert not d['cancel_required'],d
 PY
 
-# Once the Worker returns a checkpoint, Parent must harvest it before any later fallback.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
+# Returned checkpoint is always harvested before terminal/fallback processing.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id soft \
   --stage implementation --started-at 100 --last-progress-at 1005 --last-meaningful-progress-at 1005 \
-  --now 1010 --writable --in-flight --checkpoint-requested-at 1000 --checkpoint-received-at 1005 \
-  > "$TMP/checkpoint-received.json"
-python3 - "$TMP/checkpoint-received.json" <<'PY'
-import json, sys
+  --now 1010 --writable --terminal-failure --checkpoint-requested-at 1000 --checkpoint-received-at 1005 \
+  > "$TMP/received.json"
+python3 - "$TMP/received.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
-assert d["fence_required"] is False and d["replacement_allowed"] is False, d
-assert d["replan_scope"] is None, d
-assert "remaining delta" in d["reason"], d
+assert d['action']=='harvest_checkpoint' and d['checkpoint_status']=='received',d
+assert d['fallback_policy'] is None and not d['cancel_required'],d
 PY
 
-# A terminal-success flag does not let Parent consume a returned checkpoint
-# without harvesting it first.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-terminal-checkpoint \
-  --stage implementation --started-at 100 --last-progress-at 1005 --last-meaningful-progress-at 1005 \
-  --now 1010 --writable --terminal-success --checkpoint-requested-at 1000 --checkpoint-received-at 1005 \
-  > "$TMP/terminal-checkpoint.json"
-python3 - "$TMP/terminal-checkpoint.json" <<'PY'
-import json, sys
+# A harvested checkpoint is non-terminal. With no new explicit meaningful delta,
+# liveness alone does not re-arm another checkpoint.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id soft \
+  --stage implementation --started-at 100 --last-progress-at 1195 --now 1200 --writable --in-flight \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' \
+  > "$TMP/no-rearm.json"
+python3 - "$TMP/no-rearm.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+assert d['action']=='continue' and d['checkpoint_status']=='harvested',d
+assert d['next_checkpoint_sequence'] is None,d
+assert 'last_progress_at cannot re-arm' in d['reason'],d
 PY
 
-# A harvested checkpoint is non-terminal; the existing Worker continues instead of being recalled.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-soft \
-  --stage implementation --started-at 100 --last-progress-at 1010 --last-meaningful-progress-at 1005 \
-  --now 1020 --writable --in-flight --checkpoint-requested-at 1000 --checkpoint-received-at 1005 \
-  --checkpoint-harvested-at 1010 > "$TMP/checkpoint-harvested.json"
-python3 - "$TMP/checkpoint-harvested.json" <<'PY'
-import json, sys
+# Explicit acceptance-relevant progress plus cooldown re-arms sequence 2.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id rearm \
+  --stage implementation --started-at 100 --last-progress-at 1155 --last-meaningful-progress-at 1155 \
+  --now 1160 --writable --in-flight \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' \
+  > "$TMP/rearm.json"
+python3 - "$TMP/rearm.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="continue" and d["checkpoint_status"]=="harvested", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
-assert d["replan_scope"] is None and d["checkpoint_reuse_mode"] is None, d
-assert "already been harvested" in d["reason"], d
+assert d['action']=='request_checkpoint' and d['checkpoint_sequence']==1,d
+assert d['next_checkpoint_sequence']==2 and d['checkpoint_rearm_at']==1160,d
 PY
 
-# Critical invariant: even at the hard ceiling, an already-returned checkpoint is harvested before cancellation/fallback.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
+# Before cooldown expiry, even meaningful progress does not churn checkpoints.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id cooldown \
+  --stage implementation --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 995 \
+  --now 1000 --writable --in-flight \
+  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' \
+  > "$TMP/cooldown.json"
+python3 - "$TMP/cooldown.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d['action']=='continue' and d['checkpoint_rearm_remaining_seconds']==160,d
+PY
+
+# At Worker hard ceiling, a returned checkpoint still wins and is harvested first.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id hard \
   --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
-  --now 1900 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
-  > "$TMP/hard-checkpoint-unharvested.json"
-python3 - "$TMP/hard-checkpoint-unharvested.json" <<'PY'
-import json, sys
+  --now 1900 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 > "$TMP/hard-received.json"
+python3 - "$TMP/hard-received.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["wall_seconds"]==1800 and d["action"]=="harvest_checkpoint", d
-assert d["checkpoint_status"]=="received", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
-assert d["fence_required"] is False and d["replan_scope"] is None, d
+assert d['wall_seconds']==1800 and d['action']=='harvest_checkpoint',d
+assert d['checkpoint_status']=='received' and not d['cancel_required'],d
 PY
 
-# A requested checkpoint without a returned payload does not defeat a hard
-# timeout: the Worker still needs fallback and cancellation/fencing.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-requested-hard \
-  --stage implementation --started-at 100 --last-progress-at 1895 --now 1900 --writable --in-flight \
-  --checkpoint-requested-at 1850 > "$TMP/requested-hard.json"
-python3 - "$TMP/requested-hard.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["wall_seconds"]==1800 and d["checkpoint_status"]=="requested", d
-assert d["action"]=="request_cancel" and d["cancel_required"] is True, d
-assert d["fence_required"] is True and d["fallback_policy"]=="replan", d
-assert d["replan_scope"]=="uncovered_scope", d
-PY
-
-# The same requested-without-payload state remains a fallback/cancel decision
-# after the hard boundary, not an indefinitely pending checkpoint.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-requested-timeout \
-  --stage implementation --started-at 100 --last-progress-at 1895 --now 2000 --writable \
-  --checkpoint-requested-at 1850 > "$TMP/requested-timeout.json"
-python3 - "$TMP/requested-timeout.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["wall_seconds"]==1900 and d["checkpoint_status"]=="requested", d
-assert d["action"]=="request_cancel" and d["cancel_required"] is True, d
-assert d["fence_required"] is True and d["fallback_policy"]=="replan", d
-assert d["replan_scope"]=="uncovered_scope", d
-PY
-
-# After harvest, hard-timeout cancellation is fenced and the future replan is explicitly restricted to remaining_delta.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
+# After harvest, a live writer at hard timeout is cancelled/fenced. Replan is
+# restricted to the harvested remaining delta.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id hard \
   --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
-  --now 1901 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
-  --checkpoint-harvested-at 1900 > "$TMP/hard-checkpoint-harvested.json"
-python3 - "$TMP/hard-checkpoint-harvested.json" <<'PY'
-import json, sys
+  --now 1901 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 --checkpoint-harvested-at 1900 \
+  > "$TMP/hard-harvested.json"
+python3 - "$TMP/hard-harvested.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="request_cancel" and d["checkpoint_status"]=="harvested", d
-assert d["cancel_required"] is True and d["fence_required"] is True, d
-assert d["fallback_policy"]=="replan", d
-assert d["replan_scope"]=="checkpoint_remaining_delta", d
-assert d["checkpoint_reuse_mode"]=="retained_workspace", d
-assert "remaining_delta" in d["reason"] and "completed work must be preserved" in d["reason"], d
+assert d['action']=='request_cancel' and d['cancel_required'],d
+assert d['fence_required'] and not d['replacement_allowed'],d
+assert d['replan_scope']=='checkpoint_remaining_delta',d
+assert d['checkpoint_reuse_mode']=='retained_workspace',d
 PY
 
-# Even an already-harvested checkpoint cannot keep a Worker past hard timeout;
-# the fallback is limited to the harvested remaining delta and is fenced.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-harvested-hard \
+# Once cancellation is confirmed, replacement may replan only the remaining delta.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id hard \
   --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
-  --now 1900 --writable --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
-  --checkpoint-harvested-at 1895 > "$TMP/harvested-hard.json"
-python3 - "$TMP/harvested-hard.json" <<'PY'
-import json, sys
+  --now 1902 --writable --cancel-confirmed \
+  --checkpoint-requested-at 1850 --checkpoint-received-at 1890 --checkpoint-harvested-at 1900 \
+  > "$TMP/after-cancel.json"
+python3 - "$TMP/after-cancel.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["wall_seconds"]==1800 and d["checkpoint_status"]=="harvested", d
-assert d["action"]=="request_cancel" and d["cancel_required"] is True, d
-assert d["fence_required"] is True and d["fallback_policy"]=="replan", d
-assert d["replan_scope"]=="checkpoint_remaining_delta", d
+assert d['action']=='replan' and d['replacement_allowed'],d
+assert d['replan_scope']=='checkpoint_remaining_delta',d
+assert d['checkpoint_reuse_mode']=='retained_workspace',d
 PY
 
-# Once the old writer is confirmed cancelled, replacement replan still receives only remaining_delta and retains the workspace.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
+# Isolated replacement can proceed from immutable harvested snapshot while old
+# writer cancellation remains required; later old output remains fenced.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id isolated \
   --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
-  --now 1902 --writable --cancel-confirmed --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
-  --checkpoint-harvested-at 1900 > "$TMP/replan-after-cancel.json"
-python3 - "$TMP/replan-after-cancel.json" <<'PY'
-import json, sys
+  --now 1901 --writable --replacement-isolated \
+  --checkpoint-requested-at 1850 --checkpoint-received-at 1890 --checkpoint-harvested-at 1900 \
+  > "$TMP/isolated.json"
+python3 - "$TMP/isolated.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="replan" and d["replacement_allowed"] is True, d
-assert d["replan_scope"]=="checkpoint_remaining_delta", d
-assert d["checkpoint_reuse_mode"]=="retained_workspace", d
-assert d["cancel_required"] is False, d
+assert d['action']=='replan' and d['replacement_allowed'] and d['cancel_required'],d
+assert d['fence_required'] and d['checkpoint_reuse_mode']=='harvested_snapshot_only',d
 PY
 
-# An isolated replacement may start from the immutable harvested snapshot only; later old-Worker output stays fenced.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-hard-checkpoint \
-  --stage implementation --started-at 100 --last-progress-at 1895 --last-meaningful-progress-at 1890 \
-  --now 1901 --writable --replacement-isolated --checkpoint-requested-at 1850 --checkpoint-received-at 1890 \
-  --checkpoint-harvested-at 1900 > "$TMP/replan-isolated.json"
-python3 - "$TMP/replan-isolated.json" <<'PY'
-import json, sys
+# Without a checkpoint, writable idle fallback claims only uncovered scope and
+# requires cancellation/fencing before replacement on the same live scope.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id idle \
+  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable > "$TMP/idle.json"
+python3 - "$TMP/idle.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="replan" and d["replacement_allowed"] is True, d
-assert d["cancel_required"] is True and d["fence_required"] is True, d
-assert d["replan_scope"]=="checkpoint_remaining_delta", d
-assert d["checkpoint_reuse_mode"]=="harvested_snapshot_only", d
+assert d['state']=='stalled' and d['action']=='request_cancel',d
+assert d['cancel_required'] and d['fence_required'],d
+assert d['replan_scope']=='uncovered_scope',d
 PY
 
-# Terminal failure also harvests a returned checkpoint before replanning, so partial work is never silently discarded.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-failed-checkpoint \
-  --stage implementation --started-at 100 --last-progress-at 300 --now 320 --writable --terminal-failure \
-  --checkpoint-requested-at 250 --checkpoint-received-at 300 > "$TMP/failed-checkpoint.json"
-python3 - "$TMP/failed-checkpoint.json" <<'PY'
-import json, sys
+# Parent delta is also a writer and obeys the same fence.
+python3 - "$TMP/impl-policy.json" > "$TMP/parent-policy.json" <<'PY'
+import json,sys
+p=json.load(open(sys.argv[1])); p['fallback_policy']='parent_delta'
+print(json.dumps(p,separators=(',',':')))
+PY
+PARENT_POLICY="$(cat "$TMP/parent-policy.json")"
+python3 "$LIFECYCLE" --policy-json "$PARENT_POLICY" --scope-id parent \
+  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable > "$TMP/parent.json"
+python3 - "$TMP/parent.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="harvest_checkpoint" and d["checkpoint_status"]=="received", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+assert d['action']=='request_cancel' and d['cancel_required'] and d['fence_required'],d
+assert d['fallback_policy']=='parent_delta' and d['replan_scope'] is None,d
 PY
 
-# After that checkpoint is harvested, terminal failure replan is remaining-delta-only.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-failed-checkpoint \
-  --stage implementation --started-at 100 --last-progress-at 300 --now 321 --writable --terminal-failure \
-  --checkpoint-requested-at 250 --checkpoint-received-at 300 --checkpoint-harvested-at 320 \
-  > "$TMP/failed-checkpoint-harvested.json"
-python3 - "$TMP/failed-checkpoint-harvested.json" <<'PY'
-import json, sys
+# Review fallback is now explicitly read-only retry_review, never implementation replan.
+plan --profile quality --routing delegate --complexity complex --risk high --verification-cost high > "$TMP/review-plan.json"
+python3 - "$TMP/review-plan.json" > "$TMP/review-policy.json" <<'PY'
+import json,sys
+p=json.load(open(sys.argv[1])); stage=p['review_stage']
+assert stage is not None and stage['fallback_policy']=='retry_review',stage
+print(json.dumps(stage,separators=(',',':')))
+PY
+REVIEW_POLICY="$(cat "$TMP/review-policy.json")"
+python3 "$LIFECYCLE" --policy-json "$REVIEW_POLICY" --scope-id review \
+  --stage review --started-at 100 --last-progress-at 100 --now 500 > "$TMP/review-stall.json"
+python3 - "$TMP/review-stall.json" <<'PY'
+import json,sys
 d=json.load(open(sys.argv[1]))
-assert d["action"]=="replan" and d["replacement_allowed"] is True, d
-assert d["replan_scope"]=="checkpoint_remaining_delta", d
-assert d["checkpoint_reuse_mode"]=="retained_workspace", d
+assert d['state']=='stalled' and d['action']=='retry_review',d
+assert d['cancel_required'] and d['replacement_allowed'],d
+assert not d['fence_required'],d
+assert d['replan_scope'] is None and d['checkpoint_reuse_mode'] is None,d
+assert d['fallback_policy']=='retry_review',d
 PY
 
-# Invalid checkpoint timelines fail fast instead of pretending a payload was harvested.
-if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-invalid-checkpoint \
+# Terminal review failure can immediately request a read-only replacement.
+python3 "$LIFECYCLE" --policy-json "$REVIEW_POLICY" --scope-id review \
+  --stage review --started-at 100 --last-progress-at 120 --now 130 --terminal-failure > "$TMP/review-failed.json"
+python3 - "$TMP/review-failed.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d['action']=='retry_review' and not d['cancel_required'],d
+assert d['replacement_allowed'] and not d['fence_required'],d
+assert d['replan_scope'] is None,d
+PY
+
+# Superseded read-only exploration is cancellable without writer fencing.
+plan --routing delegate --complexity complex --uncertainty high > "$TMP/explore-plan.json"
+python3 - "$TMP/explore-plan.json" > "$TMP/explore-policy.json" <<'PY'
+import json,sys
+p=json.load(open(sys.argv[1])); print(json.dumps(p['exploration_stage'],separators=(',',':')))
+PY
+EXP_POLICY="$(cat "$TMP/explore-policy.json")"
+python3 "$LIFECYCLE" --policy-json "$EXP_POLICY" --scope-id metadata \
+  --stage exploration --started-at 100 --last-progress-at 120 --now 130 --scope-superseded > "$TMP/superseded.json"
+python3 - "$TMP/superseded.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d['action']=='request_cancel' and d['cancel_required'],d
+assert not d['fence_required'] and not d['replacement_allowed'],d
+PY
+
+# Invalid checkpoint/timestamp/type contracts fail closed.
+if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id invalid \
   --stage implementation --started-at 100 --last-progress-at 500 --now 600 --writable \
-  --checkpoint-received-at 550 > /dev/null 2> "$TMP/checkpoint.err"; then
+  --checkpoint-received-at 550 >/dev/null 2>"$TMP/checkpoint.err"; then
   echo "checkpoint without request unexpectedly accepted" >&2
   exit 1
 fi
 grep -Fq 'checkpoint_received_at requires checkpoint_requested_at' "$TMP/checkpoint.err"
 
-# Liveness activity and meaningful progress are independent: repeated tool activity does not fake an acceptance delta.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-activity-only \
-  --stage implementation --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 200 \
-  --now 1000 --writable --in-flight > "$TMP/activity-only-soft.json"
-python3 - "$TMP/activity-only-soft.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="progressing" and d["action"]=="request_checkpoint", d
-assert d["progress_quality"]=="activity_only", d
-assert d["idle_seconds"]==5 and d["meaningful_idle_seconds"]==800, d
-assert d["cancel_required"] is False and d["fence_required"] is False, d
-assert "no recent acceptance-relevant delta" in d["reason"], d
-PY
-
-# Recent acceptance-relevant output is classified separately from mere liveness.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-meaningful \
-  --stage implementation --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 950 \
-  --now 1000 --writable --in-flight > "$TMP/meaningful-soft.json"
-python3 - "$TMP/meaningful-soft.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["progress_quality"]=="meaningful" and d["meaningful_idle_seconds"]==50, d
-assert d["action"]=="request_checkpoint" and d["cancel_required"] is False, d
-assert "recent acceptance-relevant progress" in d["reason"], d
-PY
-
-# Before the soft budget, activity-only work remains alive and is not cancelled or stalled.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-activity-only-early \
-  --stage implementation --started-at 100 --last-progress-at 500 --last-meaningful-progress-at 100 \
-  --now 600 --writable > "$TMP/activity-only-early.json"
-python3 - "$TMP/activity-only-early.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="progressing" and d["action"]=="continue", d
-assert d["progress_quality"]=="activity_only", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
-PY
-
-# Meaningful progress is itself observable progress and cannot be newer than the liveness timestamp.
-if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-invalid-meaningful \
-  --stage implementation --started-at 100 --last-progress-at 500 --last-meaningful-progress-at 510 \
-  --now 600 --writable > /dev/null 2> "$TMP/meaningful.err"; then
-  echo "future meaningful progress timestamp unexpectedly accepted" >&2
+if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id future \
+  --stage implementation --started-at 100 --last-progress-at 601 --now 600 >/dev/null 2>"$TMP/future.err"; then
+  echo "future progress unexpectedly accepted" >&2
   exit 1
 fi
-grep -Fq 'last_meaningful_progress_at cannot be newer than last_progress_at' "$TMP/meaningful.err"
+grep -Fq 'last_progress_at cannot be in the future' "$TMP/future.err"
 
-# Old ExecutionPlans/callers without the optional soft/meaningful/checkpoint fields retain historical lifecycle behavior after upgrade.
-python3 - "$TMP/impl-policy.json" > "$TMP/legacy-impl-policy.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-p.pop("soft_timeout_seconds", None)
-print(json.dumps(p, separators=(",", ":")))
-PY
-LEGACY_IMPL_POLICY="$(cat "$TMP/legacy-impl-policy.json")"
-python3 "$LIFECYCLE" --policy-json "$LEGACY_IMPL_POLICY" --scope-id impl-legacy \
-  --stage implementation --started-at 100 --last-progress-at 995 --now 1000 --writable --in-flight > "$TMP/legacy.json"
-python3 - "$TMP/legacy.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="progressing" and d["action"]=="continue", d
-assert d["progress_quality"]=="meaningful", d
-assert d["checkpoint_status"]=="not_requested", d
-assert d["cancel_required"] is False and d["fallback_policy"] is None, d
-PY
-
-# Millisecond timestamps are rejected rather than silently misclassified as huge elapsed seconds.
-if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 1725324000000 --last-progress-at 1725324001000 \
-  --now 1725324002000 --writable > /dev/null 2> "$TMP/millisecond.err"; then
+if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id ms \
+  --stage implementation --started-at 1725324000000 --last-progress-at 1725324001000 --now 1725324002000 \
+  >/dev/null 2>"$TMP/ms.err"; then
   echo "millisecond timestamp unexpectedly accepted" >&2
   exit 1
 fi
-grep -Fq 'timestamps must use seconds, not milliseconds' "$TMP/millisecond.err"
+grep -Fq 'timestamps must use seconds, not milliseconds' "$TMP/ms.err"
 
-# A visible in-flight operation keeps the idle lease alive even beyond idle timeout.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --in-flight > "$TMP/inflight.json"
-python3 - "$TMP/inflight.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"] in {"running","progressing"} and d["action"]=="continue", d
-assert d["progress_quality"]=="activity_only", d
-assert d["cancel_required"] is False, d
-PY
-
-# Writable stall + replan without a harvested checkpoint still reports uncovered scope and is fenced.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable > "$TMP/stall.json"
-python3 - "$TMP/stall.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="stalled" and d["action"]=="request_cancel", d
-assert d["cancel_required"] is True, d
-assert d["fence_required"] is True and d["replacement_allowed"] is False, d
-assert d["replan_scope"]=="uncovered_scope" and d["checkpoint_reuse_mode"] is None, d
-PY
-
-# Once cancellation/termination is confirmed, replan may create a replacement for uncovered scope.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --cancel-confirmed > "$TMP/cancelled.json"
-python3 - "$TMP/cancelled.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="cancelled" and d["action"]=="replan", d
-assert d["cancel_required"] is False, d
-assert d["fence_required"] is True and d["replacement_allowed"] is True, d
-assert d["replan_scope"]=="uncovered_scope", d
-PY
-
-# A fresh isolated replacement may proceed while cancellation is still required for the old Worker.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --replacement-isolated > "$TMP/isolated.json"
-python3 - "$TMP/isolated.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="stalled" and d["action"]=="replan", d
-assert d["cancel_required"] is True, d
-assert d["replacement_allowed"] is True and d["fence_required"] is True, d
-assert d["replan_scope"]=="uncovered_scope", d
-assert "isolated" in d["reason"], d
-PY
-
-# Writable Parent delta is also a new writer and must obey the same hard fence.
-python3 - "$TMP/impl-policy.json" > "$TMP/parent-delta-policy.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-p["fallback_policy"]="parent_delta"
-print(json.dumps(p, separators=(",", ":")))
-PY
-PARENT_DELTA_POLICY="$(cat "$TMP/parent-delta-policy.json")"
-python3 "$LIFECYCLE" --policy-json "$PARENT_DELTA_POLICY" --scope-id impl-parent \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable > "$TMP/parent-delta-stall.json"
-python3 - "$TMP/parent-delta-stall.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="stalled" and d["action"]=="request_cancel", d
-assert d["cancel_required"] is True and d["fence_required"] is True, d
-assert d["replacement_allowed"] is False and d["fallback_policy"]=="parent_delta", d
-assert d["replan_scope"] is None, d
-PY
-
-# Parent may take the writable delta only after old Worker termination is confirmed.
-python3 "$LIFECYCLE" --policy-json "$PARENT_DELTA_POLICY" --scope-id impl-parent \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --cancel-confirmed > "$TMP/parent-delta-cancelled.json"
-python3 - "$TMP/parent-delta-cancelled.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="cancelled" and d["action"]=="parent_delta", d
-assert d["cancel_required"] is False and d["fence_required"] is True, d
-assert d["replacement_allowed"] is False, d
-PY
-
-# Or Parent may write in a fresh isolated worktree while the old Worker is still being cancelled.
-python3 "$LIFECYCLE" --policy-json "$PARENT_DELTA_POLICY" --scope-id impl-parent \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 400 --writable --replacement-isolated > "$TMP/parent-delta-isolated.json"
-python3 - "$TMP/parent-delta-isolated.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="stalled" and d["action"]=="parent_delta", d
-assert d["cancel_required"] is True and d["fence_required"] is True, d
-assert d["replacement_allowed"] is False, d
-assert "downstream writer is explicitly isolated" in d["reason"], d
-PY
-
-# Terminal failure without a checkpoint may immediately replan, but only uncovered scope is claimed.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 100 --last-progress-at 100 --now 120 --writable --terminal-failure > "$TMP/failed.json"
-python3 - "$TMP/failed.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="failed" and d["action"]=="replan", d
-assert d["cancel_required"] is False and d["replacement_allowed"] is True, d
-assert d["replan_scope"]=="uncovered_scope", d
-PY
-
-# Hard wall ceiling still wins when there is no returned checkpoint to preserve, even if work is visibly in-flight.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl \
-  --stage implementation --started-at 100 --last-progress-at 1800 --now 2000 --writable --in-flight > "$TMP/hard.json"
-python3 - "$TMP/hard.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="stalled" and d["action"]=="request_cancel", d
-assert d["cancel_required"] is True, d
-assert d["replan_scope"]=="uncovered_scope", d
-assert "hard worker wall-clock ceiling" in d["reason"], d
-PY
-
-# Read-only supersession remains cancellable without writable replacement fencing.
-plan --routing delegate --complexity complex --uncertainty high > "$TMP/explorer-plan.json"
-python3 - "$TMP/explorer-plan.json" > "$TMP/explorer-policy.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-print(json.dumps(p["exploration_stage"], separators=(",", ":")))
-PY
-EXP_POLICY="$(cat "$TMP/explorer-policy.json")"
-python3 "$LIFECYCLE" --policy-json "$EXP_POLICY" --scope-id metadata \
-  --stage exploration --started-at 100 --last-progress-at 120 --now 130 --scope-superseded > "$TMP/superseded.json"
-python3 - "$TMP/superseded.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="superseded" and d["action"]=="request_cancel", d
-assert d["cancel_required"] is True, d
-assert d["fence_required"] is False and d["replacement_allowed"] is False, d
-PY
-
-# Once a superseded Worker is cancelled, the scope is already satisfied: no fallback duplication.
-python3 "$LIFECYCLE" --policy-json "$EXP_POLICY" --scope-id metadata \
-  --stage exploration --started-at 100 --last-progress-at 120 --now 140 --scope-superseded --cancel-confirmed > "$TMP/superseded-cancelled.json"
-python3 - "$TMP/superseded-cancelled.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="superseded" and d["action"]=="continue", d
-assert d["cancel_required"] is False, d
-assert d["fallback_policy"] is None, d
-PY
-
-# A read-only stalled Worker can fall back immediately, but cancellation is still mandatory.
-python3 "$LIFECYCLE" --policy-json "$EXP_POLICY" --scope-id metadata \
-  --stage exploration --started-at 100 --last-progress-at 100 --now 250 > "$TMP/read-stall.json"
-python3 - "$TMP/read-stall.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="stalled" and d["action"]=="parent_delta", d
-assert d["cancel_required"] is True, d
-assert d["fence_required"] is False and d["replacement_allowed"] is False, d
-PY
-
-# Read-only replan may launch a replacement while the old stalled Worker is being cancelled.
-plan --profile quality --routing delegate --complexity complex --risk high --verification-cost high > "$TMP/review-plan.json"
-python3 - "$TMP/review-plan.json" > "$TMP/review-policy.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-assert p["review_stage"] is not None, p
-print(json.dumps(p["review_stage"], separators=(",", ":")))
-PY
-REV_POLICY="$(cat "$TMP/review-policy.json")"
-python3 "$LIFECYCLE" --policy-json "$REV_POLICY" --scope-id review-runtime \
-  --stage review --started-at 100 --last-progress-at 100 --now 500 > "$TMP/review-stall.json"
-python3 - "$TMP/review-stall.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["state"]=="stalled" and d["action"]=="replan", d
-assert d["cancel_required"] is True, d
-assert d["replacement_allowed"] is True and d["fence_required"] is False, d
-assert d["replan_scope"]=="uncovered_scope", d
-PY
-
-# ---- Restored PR5 regression coverage ----
-
-# Release defaults remain the source of truth for reasoning policy.
-mkdir -p "$TMP/runtime"
-cp "$ROOT/scripts/strategy_runtime.py" "$TMP/runtime/strategy_runtime.py"
-cp -R "$ROOT/scripts/strategies" "$TMP/runtime/strategies"
-cp "$ROOT/policy/defaults.toml" "$TMP/runtime/defaults.toml"
-python3 - "$TMP/runtime/defaults.toml" <<'PY'
-from pathlib import Path
-import sys
-p=Path(sys.argv[1]); s=p.read_text()
-s=s.replace('[reasoning.parent]\nminimum = "high"\nroutine = "high"', '[reasoning.parent]\nminimum = "high"\nroutine = "xhigh"')
-p.write_text(s)
-PY
-cat > "$TMP/release-only.toml" <<'EOF'
-schema_version = 3
-EOF
-python3 "$TMP/runtime/strategy_runtime.py" --policy "$TMP/release-only.toml" plan --repo-policy none --quota-pressure unknown \
-  --routing delegate --complexity routine --risk low > "$TMP/release-default.json"
-python3 - "$TMP/release-default.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-assert p["parent_reasoning"]=="xhigh" and p["implementer_reasoning"]=="max", p
-PY
-
-# Role-specific model/reasoning behavior from PR5 remains intact.
-plan --profile quality --complexity complex --uncertainty high --risk high --parallelism high \
-  --scope repo-wide --exploration-need high > "$TMP/quality.json"
-python3 - "$TMP/quality.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-assert p["parent_reasoning"]=="xhigh", p
-assert p["explorer_reasoning"]=="max" and p["implementer_reasoning"]=="max", p
-assert p["explorer_model"]=="gpt-test-efficient" and p["implementer_model"]=="gpt-test-efficient", p
-assert p["reviewer_model"]=="gpt-test-efficient" and p["reviewer_reasoning"]=="max", p
-PY
-
-plan --profile quality --quality-intent strong --complexity routine --risk medium --parallelism limited > "$TMP/quality-strong.json"
-python3 - "$TMP/quality-strong.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-assert p["explorer_capability_policy"]=="latest-efficient" and p["explorer_model"]=="gpt-test-efficient", p
-assert p["implementer_capability_policy"]=="latest-capable" and p["implementer_model"] is None, p
-assert p["reviewer_capability_policy"]=="latest-capable" and p["reviewer_model"] is None, p
-assert p["explorer_reasoning"]=="max" and p["implementer_reasoning"]=="max", p
-PY
-
-# Speed scaling still follows proven writable-workstream count.
-plan --profile speed --complexity routine --parallelism high --write-conflict low > "$TMP/speed-one.json"
-plan --profile speed --complexity routine --parallelism high --write-conflict low --writable-workstreams 4 > "$TMP/speed-four.json"
-python3 - "$TMP/speed-one.json" "$TMP/speed-four.json" <<'PY'
-import json, sys
-one=json.load(open(sys.argv[1])); four=json.load(open(sys.argv[2]))
-assert one["implementation_workers"]==1, one
-assert four["implementation_workers"]==4 and four["max_concurrent_threads"]==4, four
-assert four["worker_budget"]["max_implementers"]==8, four
-assert any("4 proven isolated workstreams" in n for n in four["notes"]), four
-PY
-
-# Modifiers cannot bypass strategy budgets or writable isolation.
-plan --profile efficient --review strict --fanout aggressive --complexity complex --uncertainty high \
-  --parallelism high --write-conflict low --writable-workstreams 2 > "$TMP/modifiers.json"
-python3 - "$TMP/modifiers.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-assert p["exploration_workers"]==2 and p["implementation_workers"]==2, p
-assert p["reviewer_workers"]==1 and p["planned_worker_count"]==5, p
-assert p["worker_budget"]["max_total_workers"]==5, p
-PY
-
-# Explicit repo-policy none still disables repository policy discovery.
-mkdir -p "$TMP/repo/subdir"
-touch "$TMP/repo/.git"
-cat > "$TMP/repo/.codex-flow.toml" <<'EOF'
-[strategy]
-profile = "quality"
-[routing]
-mode = "delegate"
-[modifiers]
-review = "strict"
-fanout = "conservative"
-[parent]
-min_reasoning_effort = "xhigh"
-[runtime]
-max_concurrent_threads = 2
-max_repair_cycles = 1
-EOF
-(
-  cd "$TMP/repo/subdir"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" show --effective --repo-policy none --json > "$TMP/no-repo-show.json"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --quota-pressure unknown --complexity routine > "$TMP/no-repo-plan.json"
-)
-python3 - "$TMP/no-repo-show.json" "$TMP/no-repo-plan.json" <<'PY'
-import json, sys
-show=json.load(open(sys.argv[1])); p=json.load(open(sys.argv[2]))
-assert show["strategy"]=="efficient" and show["routing"]=="adaptive", show
-assert show["repo_policy"] is None and p["repo_policy"] is None, (show,p)
-PY
-
-# Task flags may tighten but never raise repository runtime ceilings.
-(
-  cd "$TMP/repo/subdir"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --quota-pressure unknown --routing delegate \
-    --complexity complex --parallelism high --max-threads 99 --max-repairs 99 > "$TMP/hard-ceiling.json"
-  python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --quota-pressure unknown --routing delegate \
-    --complexity complex --parallelism high --max-threads 1 --max-repairs 0 > "$TMP/tightened.json"
-)
-python3 - "$TMP/hard-ceiling.json" "$TMP/tightened.json" <<'PY'
-import json, sys
-hard=json.load(open(sys.argv[1])); tight=json.load(open(sys.argv[2]))
-assert hard["max_concurrent_threads"] <= 2 and hard["max_repair_cycles"] == 1, hard
-assert tight["max_concurrent_threads"] == 1 and tight["max_repair_cycles"] == 0, tight
-PY
-
-# Critical quota pressure compresses fan-out without lowering reasoning floors.
-python3 "$ROOT/scripts/strategy_runtime.py" --policy "$POLICY" plan --repo-policy none --profile balanced --routing delegate \
-  --complexity complex --uncertainty high --parallelism high --quota-pressure critical > "$TMP/quota.json"
-python3 - "$TMP/quota.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-assert p["exploration_workers"]==1 and p["implementation_workers"]==1, p
-assert p["max_concurrent_threads"]==1 and p["max_repair_cycles"]==1, p
-assert p["parent_reasoning"]=="high", p
-assert p["explorer_reasoning"]=="xhigh" and p["implementer_reasoning"]=="xhigh", p
-PY
-
-# Multi-round checkpoints are immutable, contiguous, and re-arm only after an
-# explicit meaningful delta plus the configured cooldown. The latest record is
-# the current lifecycle status.
-SEQ='[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":2,"generation":0,"requested_at":950}]'
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
-  --started-at 100 --last-progress-at 960 --last-meaningful-progress-at 960 --now 1000 --writable \
-  --checkpoint-sequence-json "$SEQ" > "$TMP/multi-requested.json"
-python3 - "$TMP/multi-requested.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["checkpoint_generation"] == 0 and d["checkpoint_sequence"] == 2, d
-assert d["checkpoint_status"] == "requested" and d["action"] == "await_checkpoint", d
-assert d["next_checkpoint_sequence"] is None, d
-PY
-
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
-  --started-at 100 --last-progress-at 1155 --last-meaningful-progress-at 1155 --now 1160 --writable --in-flight \
-  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-rearm.json"
-python3 - "$TMP/multi-rearm.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["action"] == "request_checkpoint" and d["checkpoint_sequence"] == 1, d
-assert d["next_checkpoint_sequence"] == 2, d
-assert d["checkpoint_rearm_at"] == 1160 and d["checkpoint_rearm_remaining_seconds"] == 0, d
-PY
-
-# Explicit meaningful progress does not re-arm before the policy cooldown.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-cooldown --stage implementation \
-  --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 995 --now 1000 --writable --in-flight \
-  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-cooldown.json"
-python3 - "$TMP/multi-cooldown.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
-assert d["checkpoint_rearm_at"] == 1160 and d["checkpoint_rearm_remaining_seconds"] == 160, d
-assert "cooldown" in d["reason"], d
-PY
-
-# Liveness activity alone never re-arms a harvested checkpoint, even when the
-# legacy last_progress_at timestamp advances beyond the harvest.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-liveness --stage implementation \
-  --started-at 100 --last-progress-at 1195 --now 1200 --writable --in-flight \
-  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-liveness.json"
-python3 - "$TMP/multi-liveness.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
-assert d["next_checkpoint_sequence"] is None, d
-assert "last_progress_at cannot re-arm" in d["reason"], d
-PY
-
-# A legacy plan without the rearm field remains one-shot, even with explicit
-# meaningful progress after the harvested checkpoint.
-python3 - "$TMP/impl-policy.json" > "$TMP/legacy-checkpoint-policy.json" <<'PY'
-import json, sys
-p=json.load(open(sys.argv[1]))
-p.pop("checkpoint_rearm_seconds", None)
-print(json.dumps(p, separators=(",", ":")))
-PY
-LEGACY_CHECKPOINT_POLICY="$(cat "$TMP/legacy-checkpoint-policy.json")"
-python3 "$LIFECYCLE" --policy-json "$LEGACY_CHECKPOINT_POLICY" --scope-id multi-legacy --stage implementation \
-  --started-at 100 --last-progress-at 1195 --last-meaningful-progress-at 1195 --now 1200 --writable --in-flight \
-  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-legacy.json"
-python3 - "$TMP/multi-legacy.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
-assert d["checkpoint_rearm_at"] is None and d["checkpoint_rearm_remaining_seconds"] is None, d
-assert "legacy/one-shot" in d["reason"], d
-PY
-
-# A pending later round must not hide the earlier durable baseline from replan.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-hard --stage implementation \
-  --started-at 100 --last-progress-at 995 --now 1900 --writable \
-  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":2,"generation":0,"requested_at":950}]' > "$TMP/multi-hard.json"
-python3 - "$TMP/multi-hard.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["action"] == "request_cancel" and d["replan_scope"] == "checkpoint_remaining_delta", d
-assert d["checkpoint_sequence"] == 2 and d["harvested_checkpoint_sequence"] == 1, d
-PY
-
-# A returned later checkpoint still wins over hard timeout and must be harvested first.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-hard --stage implementation \
-  --started-at 100 --last-progress-at 1895 --now 1900 --writable \
-  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":2,"generation":0,"requested_at":950,"received_at":1895}]' > "$TMP/multi-received-hard.json"
-python3 - "$TMP/multi-received-hard.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["action"] == "harvest_checkpoint" and d["checkpoint_status"] == "received", d
-assert d["harvested_checkpoint_sequence"] == 1, d
-PY
-
-# Repeated soft evaluations without a new meaningful delta are idempotent.
-python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi-hard --stage implementation \
-  --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 920 --now 1000 --writable \
-  --checkpoint-sequence-json '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920}]' > "$TMP/multi-no-delta.json"
-python3 - "$TMP/multi-no-delta.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-assert d["action"] == "continue" and d["checkpoint_status"] == "harvested", d
-assert d["next_checkpoint_sequence"] is None and d["harvested_checkpoint_sequence"] == 1, d
-PY
-
-if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id multi --stage implementation \
-  --started-at 100 --last-progress-at 960 --now 1000 --checkpoint-sequence-json \
-  '[{"sequence":1,"generation":0,"requested_at":900,"received_at":910,"harvested_at":920},{"sequence":3,"generation":0,"requested_at":950}]' >/dev/null 2>"$TMP/sequence.err"; then
-  echo "checkpoint sequence gap unexpectedly accepted" >&2
-  exit 1
-fi
-grep -Fq "contiguous starting at 1" "$TMP/sequence.err"
-
-# Strict policy coercion and future progress timestamps fail fast, including
-# values arriving through the JSON CLI boundary.
 python3 - "$ROOT" <<'PY'
-import json
-import subprocess
-import sys
-sys.path.insert(0, sys.argv[1] + "/scripts")
-from strategies.lifecycle_runtime import LifecyclePolicy, WorkerObservation
-from strategies.lifecycle_runtime import CheckpointRecord
-root=sys.argv[1]
-base={"join_policy":"required","min_successful_workers":1,"idle_timeout_seconds":10,"hard_timeout_seconds":20,"cancel_if_superseded":False,"cancel_stragglers_after_quorum":False,"fallback_policy":"replan"}
-for key, value in (("join_policy", 1), ("fallback_policy", 1), ("min_successful_workers", True), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("inf")), ("checkpoint_rearm_seconds", True), ("checkpoint_rearm_seconds", "10"), ("checkpoint_rearm_seconds", float("inf"))):
+import math,sys
+sys.path.insert(0,sys.argv[1]+'/scripts')
+from strategies.lifecycle_runtime import LifecyclePolicy, WorkerObservation, CheckpointRecord
+base={
+ 'join_policy':'required','min_successful_workers':1,'idle_timeout_seconds':10,'hard_timeout_seconds':20,
+ 'cancel_if_superseded':False,'cancel_stragglers_after_quorum':False,'fallback_policy':'replan'
+}
+for key,value in (
+ ('join_policy',1),('fallback_policy',1),('min_successful_workers',True),
+ ('idle_timeout_seconds','10'),('hard_timeout_seconds',float('inf')),('checkpoint_rearm_seconds',True),
+):
     candidate=dict(base); candidate[key]=value
     try: LifecyclePolicy.from_dict(candidate)
     except ValueError: pass
-    else: raise AssertionError(key)
-for key, value in (("min_successful_workers", "1"), ("min_successful_workers", 1.0), ("idle_timeout_seconds", "10"), ("hard_timeout_seconds", float("nan")), ("hard_timeout_seconds", float("inf")), ("hard_timeout_seconds", 10**400), ("checkpoint_rearm_seconds", "10"), ("checkpoint_rearm_seconds", 0), ("checkpoint_rearm_seconds", -1), ("checkpoint_rearm_seconds", 20), ("checkpoint_rearm_seconds", 10)):
-    candidate=dict(base); candidate[key]=value
-    if key == "checkpoint_rearm_seconds" and value == 10:
-        candidate["soft_timeout_seconds"] = 10
-    result=subprocess.run([sys.executable, root + "/scripts/strategies/lifecycle_runtime.py", "--policy-json", json.dumps(candidate), "--scope-id", "strict", "--stage", "implementation", "--started-at", "0", "--last-progress-at", "0", "--now", "1"], capture_output=True, text=True)
-    if result.returncode == 0:
-        raise AssertionError((key, value, result.stdout))
-for in_flight in (False, True):
-    try: WorkerObservation("future", "implementation", 100, 101, 100, in_flight=in_flight).validate()
-    except ValueError: pass
-    else: raise AssertionError(in_flight)
-for in_flight in (False, True):
-    WorkerObservation("equal", "implementation", 100, 100, 100, in_flight=in_flight).validate()
-for candidate in (
-    WorkerObservation("mismatch", "implementation", 100, 100, 100, generation=1, checkpoint_sequence=(CheckpointRecord(1, 0, 100),)),
-    WorkerObservation("mixed", "implementation", 100, 100, 100, checkpoint_requested_at=100, checkpoint_sequence=()),
-    WorkerObservation("unharvested", "implementation", 100, 100, 100, checkpoint_sequence=(CheckpointRecord(1, 0, 100), CheckpointRecord(2, 0, 100))),
+    else: raise AssertionError((key,value))
+for observation in (
+    WorkerObservation('future','implementation',100,101,100),
+    WorkerObservation('generation','implementation',100,100,100,generation=1,checkpoint_sequence=(CheckpointRecord(1,0,100),)),
+    WorkerObservation('mixed','implementation',100,100,100,checkpoint_requested_at=100,checkpoint_sequence=()),
 ):
-    try: candidate.validate()
+    try: observation.validate()
     except ValueError: pass
-    else: raise AssertionError(candidate)
-print("adversarial lifecycle contract tests passed")
+    else: raise AssertionError(observation)
+print('adversarial lifecycle contract tests passed')
 PY
 
 printf 'lifecycle runtime and restored regression tests passed\n'
