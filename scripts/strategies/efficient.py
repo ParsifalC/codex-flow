@@ -35,7 +35,6 @@ def worker_budget(task) -> WorkerBudget:
 
 
 def implementation_soft_timeout(task) -> int:
-    """Advisory convergence budget; the hard implementation ceiling stays unchanged."""
     if task.complexity == "critical" or task.risk == "critical":
         return 1200
     if task.complexity == "complex" or task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
@@ -44,17 +43,11 @@ def implementation_soft_timeout(task) -> int:
 
 
 def implementation_checkpoint_rearm_seconds(task) -> int:
-    """Require a minimum cooldown before a harvested checkpoint can re-arm.
-
-    Keep the second checkpoint comfortably ahead of the 1800-second efficient
-    implementation ceiling while scaling the cooldown with task complexity.
-    """
     if task.complexity == "critical" or task.risk == "critical":
         return 300
     if (
         task.complexity == "complex"
-        or task.scope == "repo-wide"
-        or task.scope == "cross-module"
+        or task.scope in {"cross-module", "repo-wide"}
         or task.iteration_intensity == "heavy-loop"
     ):
         return 240
@@ -62,7 +55,6 @@ def implementation_checkpoint_rearm_seconds(task) -> int:
 
 
 def implementation_repair_attempts(task) -> int:
-    """Bound local test-fix loops without conflating them with lifecycle fallback."""
     if (
         task.complexity in {"complex", "critical"}
         or task.risk == "critical"
@@ -73,13 +65,11 @@ def implementation_repair_attempts(task) -> int:
     return 1
 
 
-def implementation_minimum_work_units(task) -> int:
-    """Default to one unit; evidence may still opt the stage into bounded mode."""
+def implementation_minimum_work_units(_task) -> int:
     return 1
 
 
 def implementation_maximum_work_units(task) -> int:
-    """Bound logical units while never under-provisioning proven writer topology."""
     if task.scope == "repo-wide" or task.iteration_intensity == "heavy-loop":
         semantic_maximum = 3
     elif task.complexity in {"complex", "critical"} or task.scope == "cross-module" or task.risk == "critical":
@@ -91,7 +81,6 @@ def implementation_maximum_work_units(task) -> int:
 
 
 def task_budget(task) -> TaskBudgetPolicy:
-    """Return cumulative caps consistent with the final writable topology envelope."""
     max_work_units = implementation_maximum_work_units(task)
     return TaskBudgetPolicy(
         soft_timeout_seconds=1500,
@@ -100,17 +89,12 @@ def task_budget(task) -> TaskBudgetPolicy:
         max_implementation_attempts=max_work_units + 1,
         max_replans=1,
         max_replacements=1,
+        max_review_attempts=2,
+        parent_finalization_seconds=150,
     )
 
 
-def reasoning_rollout(
-    task,
-    _role: str,
-    policy,
-    parent_reasoning: str,
-    legacy_worker_reasoning: str,
-) -> ReasoningRolloutDecision:
-    """Compare current efficient Worker effort with the rollout proposal."""
+def reasoning_rollout(task, _role: str, policy, parent_reasoning: str, legacy_worker_reasoning: str) -> ReasoningRolloutDecision:
     policy.validate()
     if task.complexity == "critical" or task.risk == "critical":
         class_target = policy.critical
@@ -139,13 +123,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
         maximum_work_units = implementation_maximum_work_units(task)
         bounded_mode = maximum_work_units > 1
         return StagePolicy(
-            "required",
-            1,
-            180,
-            1800,
-            False,
-            False,
-            "replan",
+            "required", 1, 180, 1800, False, False, "replan",
             soft_timeout_seconds=implementation_soft_timeout(task),
             checkpoint_rearm_seconds=implementation_checkpoint_rearm_seconds(task),
             max_worker_repair_attempts=implementation_repair_attempts(task),
@@ -156,7 +134,7 @@ def lifecycle(task, stage: str) -> StagePolicy:
             require_write_paths=bounded_mode,
         )
     if stage == "review":
-        return StagePolicy("quorum", 1, 150, 1200, True, True, "parent_delta")
+        return StagePolicy("quorum", 1, 150, 1200, True, True, "retry_review")
     raise ValueError(f"invalid lifecycle stage: {stage}")
 
 
