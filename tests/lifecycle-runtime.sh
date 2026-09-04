@@ -79,6 +79,7 @@ d=json.load(open(sys.argv[1]))
 assert d["state"]=="progressing" and d["action"]=="continue", d
 assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
+assert d["progress_quality"]=="meaningful" and d["meaningful_idle_seconds"]==30, d
 PY
 
 # Reaching the soft budget requests convergence/checkpoint only. It never cancels or fences a healthy Worker.
@@ -91,10 +92,58 @@ assert d["state"]=="progressing" and d["action"]=="request_checkpoint", d
 assert d["cancel_required"] is False, d
 assert d["replacement_allowed"] is False and d["fence_required"] is False, d
 assert d["fallback_policy"] is None, d
+assert d["progress_quality"]=="meaningful", d
 assert "without cancelling Worker" in d["reason"], d
 PY
 
-# Old ExecutionPlans without the optional soft field retain the historical lifecycle behavior after upgrade.
+# Liveness activity and meaningful progress are independent: repeated tool activity does not fake an acceptance delta.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-activity-only \
+  --stage implementation --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 200 \
+  --now 1000 --writable --in-flight > "$TMP/activity-only-soft.json"
+python3 - "$TMP/activity-only-soft.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="progressing" and d["action"]=="request_checkpoint", d
+assert d["progress_quality"]=="activity_only", d
+assert d["idle_seconds"]==5 and d["meaningful_idle_seconds"]==800, d
+assert d["cancel_required"] is False and d["fence_required"] is False, d
+assert "no recent acceptance-relevant delta" in d["reason"], d
+PY
+
+# Recent acceptance-relevant output is classified separately from mere liveness.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-meaningful \
+  --stage implementation --started-at 100 --last-progress-at 995 --last-meaningful-progress-at 950 \
+  --now 1000 --writable --in-flight > "$TMP/meaningful-soft.json"
+python3 - "$TMP/meaningful-soft.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["progress_quality"]=="meaningful" and d["meaningful_idle_seconds"]==50, d
+assert d["action"]=="request_checkpoint" and d["cancel_required"] is False, d
+assert "recent acceptance-relevant progress" in d["reason"], d
+PY
+
+# Before the soft budget, activity-only work remains alive and is not cancelled or stalled.
+python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-activity-only-early \
+  --stage implementation --started-at 100 --last-progress-at 500 --last-meaningful-progress-at 100 \
+  --now 600 --writable > "$TMP/activity-only-early.json"
+python3 - "$TMP/activity-only-early.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["state"]=="progressing" and d["action"]=="continue", d
+assert d["progress_quality"]=="activity_only", d
+assert d["cancel_required"] is False and d["fallback_policy"] is None, d
+PY
+
+# Meaningful progress is itself observable progress and cannot be newer than the liveness timestamp.
+if python3 "$LIFECYCLE" --policy-json "$IMPL_POLICY" --scope-id impl-invalid-meaningful \
+  --stage implementation --started-at 100 --last-progress-at 500 --last-meaningful-progress-at 510 \
+  --now 600 --writable > /dev/null 2> "$TMP/meaningful.err"; then
+  echo "future meaningful progress timestamp unexpectedly accepted" >&2
+  exit 1
+fi
+grep -Fq 'last_meaningful_progress_at cannot be newer than last_progress_at' "$TMP/meaningful.err"
+
+# Old ExecutionPlans/callers without the optional soft/meaningful fields retain historical lifecycle behavior after upgrade.
 python3 - "$TMP/impl-policy.json" > "$TMP/legacy-impl-policy.json" <<'PY'
 import json, sys
 p=json.load(open(sys.argv[1]))
@@ -108,6 +157,7 @@ python3 - "$TMP/legacy.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"]=="progressing" and d["action"]=="continue", d
+assert d["progress_quality"]=="meaningful", d
 assert d["cancel_required"] is False and d["fallback_policy"] is None, d
 PY
 
@@ -127,6 +177,7 @@ python3 - "$TMP/inflight.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
 assert d["state"] in {"running","progressing"} and d["action"]=="continue", d
+assert d["progress_quality"]=="activity_only", d
 assert d["cancel_required"] is False, d
 PY
 
