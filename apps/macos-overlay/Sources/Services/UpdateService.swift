@@ -60,6 +60,7 @@ public final class FlowPilotUpdateService: ObservableObject {
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var isBackgroundCheckRunning = false
     private var lastBackgroundCheckRequestedAt: Date?
+    private var flowPilotRestartProcess: Process?
 
     private init() {
         refreshFromDisk()
@@ -202,12 +203,40 @@ public final class FlowPilotUpdateService: ObservableObject {
             let process = Process()
             process.executableURL = executable
             process.arguments = ["restart"]
+            var environment = ProcessInfo.processInfo.environment
+            // This child is an explicit handoff, not a RunAtLoad repair. Do
+            // not let a launchd-start marker inherited from the old app make
+            // the replacement exit as an expected no-op.
+            environment.removeValue(forKey: FlowPilotInstanceLock.launchAgentEnvironmentKey)
+            process.environment = environment
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { [weak self] terminatedProcess in
+                let terminatedProcessID = ObjectIdentifier(terminatedProcess)
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          let restartProcess = self.flowPilotRestartProcess,
+                          ObjectIdentifier(restartProcess) == terminatedProcessID else {
+                        return
+                    }
+                    self.flowPilotRestartProcess = nil
+                    self.isRestartingFlowPilot = false
+                    self.actionMessage = nil
+                    self.actionError = L(
+                        "FlowPilot restart did not complete: the updated process exited before the handoff finished. Try again.",
+                        "FlowPilot 重启未完成：更新后的进程在交接完成前退出了。请重试。"
+                    )
+                }
+            }
+            // Keep the Process object alive so a fast failure can restore the
+            // button state while this (old) app is still running.
+            flowPilotRestartProcess = process
             try process.run()
             actionMessage = L("Restarting FlowPilot with the updated binary…", "正在使用更新后的程序重启 FlowPilot…")
         } catch {
+            flowPilotRestartProcess?.terminationHandler = nil
+            flowPilotRestartProcess = nil
             isRestartingFlowPilot = false
             actionError = error.localizedDescription
         }

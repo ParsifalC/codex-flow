@@ -131,7 +131,10 @@ jobs:
           [[ "$(status_pid)" == "$OWNER_PID" ]]
           [[ -f "$LOCK" ]]
 
-          "$BIN" start >"$LOG2" 2>&1 &
+          # An explicit restart is an active handoff even when the caller has
+          # inherited the launchd marker.  It must replace the current owner,
+          # unlike the ordinary launchd `start` above.
+          CODEX_FLOW_LAUNCHD_START=1 "$BIN" restart >"$LOG2" 2>&1 &
           START2_PID=$!
           if ! wait_for_pid "$START2_PID"; then
             echo "Replacement FlowPilot instance failed to take IPC ownership" >&2

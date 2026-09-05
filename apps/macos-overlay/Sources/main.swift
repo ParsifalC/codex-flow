@@ -132,7 +132,7 @@ func writeStandardError(_ message: String) {
     FileHandle.standardError.write(data)
 }
 
-func acquireFlowPilotInstanceLock() -> FlowPilotInstanceLock? {
+func acquireFlowPilotInstanceLock(isExplicitRestart: Bool) -> FlowPilotInstanceLock? {
     let lock: FlowPilotInstanceLock
     do {
         lock = try FlowPilotInstanceLock()
@@ -156,11 +156,14 @@ func acquireFlowPilotInstanceLock() -> FlowPilotInstanceLock? {
     while true {
         let statusCheck = IPCService.sendCommand("status")
         if statusCheck.success {
-            if isLaunchAgentStart {
+            if isLaunchAgentStart && !isExplicitRestart {
                 // RunAtLoad must never preempt a live manual/restart owner,
                 // including an older build that predates the instance lock.
                 return nil
             }
+            // An explicit restart is an active handoff even when its caller
+            // inherited the launchd marker.  Ask the current IPC owner to
+            // terminate, then keep polling until its durable lock is released.
             _ = IPCService.sendCommand("quit")
         } else if ownsLock {
             return lock
@@ -173,7 +176,7 @@ func acquireFlowPilotInstanceLock() -> FlowPilotInstanceLock? {
             } catch let error as FlowPilotInstanceLock.LockError {
                 switch error {
                 case .timedOut:
-                    if isLaunchAgentStart {
+                    if isLaunchAgentStart && !isExplicitRestart {
                         // A loaded LaunchAgent may race a manual start before
                         // that owner has created IPC.  Treat contention as a
                         // successful no-op because KeepAlive is disabled.
@@ -214,11 +217,12 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
     _ = setsid()
     signal(SIGHUP, SIG_IGN)
 
-    guard let instanceLock = acquireFlowPilotInstanceLock() else {
+    let isExplicitRestart = args.first == "restart"
+    guard let instanceLock = acquireFlowPilotInstanceLock(isExplicitRestart: isExplicitRestart) else {
         // A LaunchAgent-created start is an expected no-op when another
-        // process owns the singleton lock.  Manual starts report failure after
-        // the bounded handoff wait above.
-        exit(FlowPilotInstanceLock.isLaunchAgentStart ? 0 : 1)
+        // process owns the singleton lock.  Explicit restarts must report a
+        // failed handoff instead, even if they inherited the launchd marker.
+        exit(FlowPilotInstanceLock.isLaunchAgentStart && !isExplicitRestart ? 0 : 1)
     }
 
     let app = NSApplication.shared
