@@ -46,6 +46,12 @@ jobs:
           CLI="$GITHUB_WORKSPACE/bin/codex-flow"
           LOG1="$RUNNER_TEMP/flowpilot-smoke-1.log"
           LOG2="$RUNNER_TEMP/flowpilot-smoke-2.log"
+          LOG_LAUNCHD="$RUNNER_TEMP/flowpilot-smoke-launchd.log"
+          LOG_CONCURRENT1="$RUNNER_TEMP/flowpilot-smoke-concurrent-1.log"
+          LOG_CONCURRENT2="$RUNNER_TEMP/flowpilot-smoke-concurrent-2.log"
+          LOCK="$CODEX_HOME/codex-flow/overlay.lock"
+          AUTOSTART_LABEL="com.parsifalc.codex-flow.flowpilot"
+          AUTOSTART_PLIST="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
 
           status_pid() {
             local json
@@ -64,7 +70,45 @@ jobs:
             return 1
           }
 
-          "$BIN" autostart status --json
+          wait_for_single_owner() {
+            local first="$1"
+            local second="$2"
+            local owner
+            for _ in {1..100}; do
+              owner="$(status_pid)"
+              if [[ "$owner" == "$first" ]] && kill -0 "$first" 2>/dev/null && ! kill -0 "$second" 2>/dev/null; then
+                printf '%s\n' "$first"
+                return 0
+              fi
+              if [[ "$owner" == "$second" ]] && kill -0 "$second" 2>/dev/null && ! kill -0 "$first" 2>/dev/null; then
+                printf '%s\n' "$second"
+                return 0
+              fi
+              sleep 0.1
+            done
+            return 1
+          }
+
+          # Enabling login launch must still register, load, and start the app.
+          AUTOSTART_JSON="$("$BIN" autostart enable --json)"
+          printf '%s\n' "$AUTOSTART_JSON" | grep -q '"enabled":true'
+          [[ -f "$AUTOSTART_PLIST" ]]
+          [[ "$(plutil -extract EnvironmentVariables.CODEX_FLOW_LAUNCHD_START raw -o - "$AUTOSTART_PLIST")" == "1" ]]
+          for _ in {1..50}; do
+            LOGIN_PID="$(status_pid)"
+            [[ -n "$LOGIN_PID" ]] && break
+            sleep 0.1
+          done
+          [[ -n "${LOGIN_PID:-}" ]]
+          "$BIN" autostart disable --json | grep -q '"enabled":false'
+          [[ ! -e "$AUTOSTART_PLIST" ]]
+          "$BIN" stop >/dev/null 2>&1 || true
+          launchctl bootout "gui/$(id -u)/$AUTOSTART_LABEL" >/dev/null 2>&1 || true
+          for _ in {1..30}; do
+            kill -0 "$LOGIN_PID" 2>/dev/null || break
+            sleep 0.1
+          done
+          ! kill -0 "$LOGIN_PID" 2>/dev/null
 
           "$BIN" start >"$LOG1" 2>&1 &
           START1_PID=$!
@@ -74,6 +118,18 @@ jobs:
             kill "$START1_PID" 2>/dev/null || true
             exit 1
           fi
+          [[ -f "$LOCK" ]]
+          [[ "$(stat -f '%Lp' "$LOCK")" == "600" ]]
+
+          # A RunAtLoad launch is allowed to be a no-op when a manual owner is
+          # already alive.  It must not request that owner to quit or replace
+          # its IPC endpoint.
+          OWNER_PID="$(status_pid)"
+          CODEX_FLOW_LAUNCHD_START=1 "$BIN" start >"$LOG_LAUNCHD" 2>&1 &
+          LAUNCHD_START_PID=$!
+          wait "$LAUNCHD_START_PID"
+          [[ "$(status_pid)" == "$OWNER_PID" ]]
+          [[ -f "$LOCK" ]]
 
           "$BIN" start >"$LOG2" 2>&1 &
           START2_PID=$!
@@ -111,6 +167,30 @@ jobs:
             kill "$START2_PID" 2>/dev/null || true
             exit 1
           fi
+          # flock ownership is released on stop, but the durable lock inode
+          # remains for the next start.
+          [[ -f "$LOCK" ]]
+
+          # Two clean concurrent manual starts must converge to one live IPC
+          # owner rather than leaving a socketless AppKit process behind.
+          "$BIN" start >"$LOG_CONCURRENT1" 2>&1 &
+          CONCURRENT_PID1=$!
+          "$BIN" start >"$LOG_CONCURRENT2" 2>&1 &
+          CONCURRENT_PID2=$!
+          if ! CONCURRENT_OWNER="$(wait_for_single_owner "$CONCURRENT_PID1" "$CONCURRENT_PID2")"; then
+            echo "Concurrent FlowPilot starts did not converge to one owner" >&2
+            cat "$LOG_CONCURRENT1" "$LOG_CONCURRENT2" >&2 || true
+            kill "$CONCURRENT_PID1" "$CONCURRENT_PID2" 2>/dev/null || true
+            exit 1
+          fi
+          CODEX_FLOW_LAUNCHD_START=1 "$BIN" start >/dev/null 2>&1
+          [[ "$(status_pid)" == "$CONCURRENT_OWNER" ]]
+          "$BIN" stop >/dev/null 2>&1 || true
+          for _ in {1..30}; do
+            kill -0 "$CONCURRENT_OWNER" 2>/dev/null || break
+            sleep 0.1
+          done
+          ! kill -0 "$CONCURRENT_OWNER" 2>/dev/null
 
           bash "$CLI" overlay start
           WRAPPER_PID1="$(status_pid)"

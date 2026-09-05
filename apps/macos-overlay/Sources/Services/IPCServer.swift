@@ -18,6 +18,7 @@ public class IPCService {
         private var serverSocket: Int32 = -1
         private let path: String
         private var boundSocketFileNumber: UInt64?
+        public private(set) var isRunning = false
 
         public init(state: OverlayState, socketPath: String = IPCService.socketPath) {
             self.state = state
@@ -26,6 +27,7 @@ public class IPCService {
         }
 
         public func start() {
+            guard serverSource == nil, serverSocket < 0 else { return }
             unlink(path)
 
             serverSocket = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -61,7 +63,17 @@ public class IPCService {
             // unlink it during shutdown.
             boundSocketFileNumber = socketFileNumber(at: path)
 
-            listen(serverSocket, 5)
+            guard listen(serverSocket, 5) == 0 else {
+                let expected = boundSocketFileNumber
+                close(serverSocket)
+                serverSocket = -1
+                if let expected,
+                   self.socketFileNumber(at: path) == expected {
+                    unlink(path)
+                }
+                boundSocketFileNumber = nil
+                return
+            }
 
             let source = DispatchSource.makeReadSource(fileDescriptor: serverSocket, queue: .main)
             source.setEventHandler { [weak self] in
@@ -69,6 +81,7 @@ public class IPCService {
             }
             source.setCancelHandler { [weak self] in
                 guard let self else { return }
+                self.isRunning = false
                 if self.serverSocket >= 0 {
                     close(self.serverSocket)
                     self.serverSocket = -1
@@ -80,6 +93,7 @@ public class IPCService {
             }
             source.resume()
             self.serverSource = source
+            self.isRunning = true
         }
 
         private func socketFileNumber(at path: String) -> UInt64? {
@@ -215,6 +229,10 @@ public class IPCService {
         public func stop() {
             serverSource?.cancel()
             serverSource = nil
+            // The dispatch source owns final socket teardown.  Mark the
+            // service stopped immediately so AppDelegate can release the
+            // singleton lock only after this cancellation has been issued.
+            isRunning = false
         }
     }
 

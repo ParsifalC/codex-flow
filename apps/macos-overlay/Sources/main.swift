@@ -3,26 +3,45 @@ import SwiftUI
 import Darwin
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    let instanceLock: FlowPilotInstanceLock
     var state: OverlayState!
     var windowController: OverlayWindowController!
     var watcher: TelemetryWatcher!
     var ipcServer: IPCService.Server!
 
+    init(instanceLock: FlowPilotInstanceLock) {
+        self.instanceLock = instanceLock
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-
-        // Reconcile user-configured autostart registration if previously enabled.
-        FlowPilotAutostartService.reconcileIfNeeded()
 
         state = OverlayState()
         windowController = OverlayWindowController(state: state)
         watcher = TelemetryWatcher(state: state)
         ipcServer = IPCService.Server(state: state)
+
+        // The singleton lock is acquired before NSApplication starts.  If the
+        // IPC endpoint cannot be established, terminate through the normal
+        // lifecycle so `applicationWillTerminate` releases the lock too.
+        guard ipcServer.isRunning else {
+            writeStandardError(L(
+                "FlowPilot could not start its IPC server.\n",
+                "FlowPilot 无法启动 IPC 服务。\n"
+            ))
+            NSApp.terminate(nil)
+            return
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         watcher?.stopWatching()
         ipcServer?.stop()
+        // Release only after IPC shutdown has been requested.  Keeping the
+        // lock through socket teardown prevents a replacement from racing
+        // this process's cancellation handler.
+        instanceLock.release()
     }
 }
 
@@ -113,23 +132,79 @@ func writeStandardError(_ message: String) {
     FileHandle.standardError.write(data)
 }
 
-func waitForPreviousInstanceToReleaseSocket(timeout: TimeInterval = 3.0) -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
-    while FileManager.default.fileExists(atPath: IPCService.socketPath) {
-        let probe = IPCService.sendCommand("status")
-        if !probe.success || !probe.response.contains("\"running\": true") {
-            // A process can exit before its dispatch-source cancel handler gets
-            // enough runtime to unlink the filesystem socket. At this point no
-            // server answers the endpoint, so removing the stale node is safe.
-            try? FileManager.default.removeItem(atPath: IPCService.socketPath)
-            return !FileManager.default.fileExists(atPath: IPCService.socketPath)
-        }
-        if Date() >= deadline {
-            return false
-        }
-        usleep(20_000)
+func acquireFlowPilotInstanceLock() -> FlowPilotInstanceLock? {
+    let lock: FlowPilotInstanceLock
+    do {
+        lock = try FlowPilotInstanceLock()
+    } catch {
+        writeStandardError(L(
+            "FlowPilot could not open its instance lock: \(error.localizedDescription)\n",
+            "FlowPilot 无法打开实例锁：\(error.localizedDescription)\n"
+        ))
+        return nil
     }
-    return true
+
+    let isLaunchAgentStart = FlowPilotInstanceLock.isLaunchAgentStart
+    let timeoutNanos = UInt64(FlowPilotInstanceLock.manualHandoffTimeout * 1_000_000_000)
+    let now = DispatchTime.now().uptimeNanoseconds
+    let deadline = UInt64.max - now < timeoutNanos ? UInt64.max : now + timeoutNanos
+    var ownsLock = false
+
+    // A starter may race either a current lock-aware build or a legacy build
+    // that owns only the IPC socket.  Do not proceed until this process owns
+    // the durable lock and no previous IPC owner is still answering.
+    while true {
+        let statusCheck = IPCService.sendCommand("status")
+        if statusCheck.success {
+            if isLaunchAgentStart {
+                // RunAtLoad must never preempt a live manual/restart owner,
+                // including an older build that predates the instance lock.
+                return nil
+            }
+            _ = IPCService.sendCommand("quit")
+        } else if ownsLock {
+            return lock
+        }
+
+        if !ownsLock {
+            do {
+                try lock.acquire(timeout: 0)
+                ownsLock = true
+            } catch let error as FlowPilotInstanceLock.LockError {
+                switch error {
+                case .timedOut:
+                    if isLaunchAgentStart {
+                        // A loaded LaunchAgent may race a manual start before
+                        // that owner has created IPC.  Treat contention as a
+                        // successful no-op because KeepAlive is disabled.
+                        return nil
+                    }
+                default:
+                    writeStandardError(L(
+                        "FlowPilot could not acquire its instance lock: \(error.localizedDescription)\n",
+                        "FlowPilot 无法获取实例锁：\(error.localizedDescription)\n"
+                    ))
+                    return nil
+                }
+            } catch {
+                writeStandardError(L(
+                    "FlowPilot could not acquire its instance lock: \(error.localizedDescription)\n",
+                    "FlowPilot 无法获取实例锁：\(error.localizedDescription)\n"
+                ))
+                return nil
+            }
+        }
+
+        if DispatchTime.now().uptimeNanoseconds >= deadline {
+            writeStandardError(L(
+                "FlowPilot restart timed out waiting for the previous instance to exit.\n",
+                "FlowPilot 重启等待旧实例退出超时。\n"
+            ))
+            return nil
+        }
+
+        usleep(10_000)
+    }
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -139,23 +214,15 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
     _ = setsid()
     signal(SIGHUP, SIG_IGN)
 
-    // If an older instance is already running, cleanly terminate it and wait for
-    // its IPC endpoint to be released before binding a replacement. A fixed sleep
-    // can let the old shutdown race the new bind and delete the new socket.
-    let statusCheck = IPCService.sendCommand("status")
-    if statusCheck.success {
-        _ = IPCService.sendCommand("quit")
-        if !waitForPreviousInstanceToReleaseSocket() {
-            writeStandardError(L(
-                "FlowPilot restart timed out waiting for the previous IPC socket to close.\n",
-                "FlowPilot 重启等待旧 IPC socket 关闭超时。\n"
-            ))
-            exit(1)
-        }
+    guard let instanceLock = acquireFlowPilotInstanceLock() else {
+        // A LaunchAgent-created start is an expected no-op when another
+        // process owns the singleton lock.  Manual starts report failure after
+        // the bounded handoff wait above.
+        exit(FlowPilotInstanceLock.isLaunchAgentStart ? 0 : 1)
     }
 
     let app = NSApplication.shared
-    let delegate = AppDelegate()
+    let delegate = AppDelegate(instanceLock: instanceLock)
     app.delegate = delegate
     app.run()
 } else {

@@ -26,35 +26,21 @@ public enum FlowPilotAutostartService {
     private static let userDefaultsKey = "FlowPilot.Autostart.Enabled"
 
     public static func status() -> FlowPilotAutostartStatus {
+        // Status is intentionally read-only.  Re-registering a missing plist
+        // here can bootstrap a RunAtLoad LaunchAgent while the app is merely
+        // constructing its UI, which races the singleton owner.
         let pref = configuredPreference()
         let exists = FileManager.default.fileExists(atPath: plistURL.path)
-        let isEnabled: Bool
-        if let pref {
-            isEnabled = pref
-            // If user explicitly configured autostart to true, auto-heal missing registration
-            if pref && !exists {
-                try? writeRegistration()
-            }
-        } else {
-            // Unconfigured new install: preserve legacy LaunchAgent if it was already on disk
-            isEnabled = exists
-        }
-
-        let currentExists = FileManager.default.fileExists(atPath: plistURL.path)
+        // A stored preference alone is not an active login registration.  A
+        // missing plist is reported as disabled so toggling the control back
+        // on explicitly recreates and bootstraps the LaunchAgent.
+        let isEnabled = (pref ?? exists) && exists
         return FlowPilotAutostartStatus(
             enabled: isEnabled,
-            plistExists: currentExists,
+            plistExists: exists,
             launchdLoaded: launchdIsLoaded(),
             executablePath: resolvedExecutable().path
         )
-    }
-
-    /// Reconciles autostart registration if previously configured by user.
-    public static func reconcileIfNeeded() {
-        guard let pref = configuredPreference() else { return }
-        if pref {
-            try? writeRegistration()
-        }
     }
 
     @discardableResult
@@ -121,6 +107,9 @@ public enum FlowPilotAutostartService {
         ].joined(separator: ":")
 
         var launchEnvironment: [String: String] = ["PATH": path]
+        // A RunAtLoad launch is best-effort reconciliation.  The app must not
+        // preempt a manual/restart owner when launchd notices the plist.
+        launchEnvironment[FlowPilotInstanceLock.launchAgentEnvironmentKey] = "1"
         if let configuredCodexHome = environment["CODEX_HOME"], !configuredCodexHome.isEmpty {
             launchEnvironment["CODEX_HOME"] = configuredCodexHome
         }
