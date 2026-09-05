@@ -3,6 +3,10 @@ import Foundation
 public class TelemetryQueryEngine {
     public static let shared = TelemetryQueryEngine()
     
+    // History/stats refreshes can arrive concurrently from IPC-triggered UI
+    // updates.  Keep the entire scan under one lock so cachedRuns is never
+    // read while another refresh is mutating its Dictionary storage.
+    private let cacheLock = NSLock()
     private var cachedRuns: [String: (mtime: Date, run: TaskRun)] = [:]
     private var runsDirURL: URL
     private var lastFileURL: URL
@@ -25,6 +29,9 @@ public class TelemetryQueryEngine {
     // MARK: - Core File Reading & Cache
     
     public func loadAllRuns() -> [TaskRun] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
         guard FileManager.default.fileExists(atPath: runsDirURL.path) else {
             return []
         }

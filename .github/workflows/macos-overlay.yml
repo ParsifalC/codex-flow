@@ -33,6 +33,14 @@ jobs:
             apps/macos-overlay/Tests/TelemetryQuotaSelectionTests.swift \
             -o "$RUNNER_TEMP/telemetry-quota-tests"
           "$RUNNER_TEMP/telemetry-quota-tests"
+      - name: Test telemetry query engine concurrent reads
+        run: |
+          swiftc \
+            apps/macos-overlay/Sources/Models/TelemetryData.swift \
+            apps/macos-overlay/Sources/Services/TelemetryQueryEngine.swift \
+            apps/macos-overlay/Tests/TelemetryQueryEngineConcurrencyTests.swift \
+            -o "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
+          "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
       - name: Smoke test overlay lifecycle
