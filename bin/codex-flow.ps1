@@ -156,7 +156,7 @@ switch ($cmd) {
         $telemetryEnabled = Get-PolicyValue telemetry enabled
         $env:CODEX_FLOW_TELEMETRY_ENABLED = if ($telemetryEnabled) { $telemetryEnabled } else { 'true' }
         $telemetryNotifications = Get-PolicyValue telemetry notifications
-        $env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS = if ($telemetryNotifications) { $telemetryNotifications } else { 'true' }
+        $env:CODEX_FLOW_TELEMETRY_NOTIFICATIONS = if ($telemetryNotifications) { $telemetryNotifications } else { 'false' }
         $telemetryRetentionDays = Get-PolicyValue telemetry retention_days
         $env:CODEX_FLOW_TELEMETRY_RETENTION_DAYS = if ($telemetryRetentionDays) { $telemetryRetentionDays } else { '30' }
 

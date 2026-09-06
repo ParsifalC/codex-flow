@@ -273,7 +273,7 @@ def main() -> int:
         else:
             fail(T(f"invalid UI language: {configured}", f"无效界面语言：{configured}"))
 
-        notifications = policy_value("telemetry", "notifications", "true")
+        notifications = policy_value("telemetry", "notifications", "false")
         retention = policy_value("telemetry", "retention_days", "30")
         if notifications == "true":
             ok(T("system notifications: enabled (macOS)", "系统通知：已启用（macOS）"))

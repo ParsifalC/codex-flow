@@ -108,7 +108,7 @@ def telemetry_notifications_enabled() -> bool:
             return False
         if normalized in {"1", "true", "yes", "on"}:
             return True
-    return policy_bool("telemetry", "notifications", True)
+    return policy_bool("telemetry", "notifications", False)
 
 
 def telemetry_retention_days() -> int:

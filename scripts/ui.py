@@ -109,7 +109,7 @@ def status(lang: str) -> int:
             )
         )
         t_enabled = policy_value("telemetry", "enabled", "true")
-        t_notify = policy_value("telemetry", "notifications", "true")
+        t_notify = policy_value("telemetry", "notifications", "false")
         retention = policy_value("telemetry", "retention_days", "30")
         configured = configured_language(POLICY)
         effective = resolve_language(POLICY)

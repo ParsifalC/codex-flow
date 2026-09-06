@@ -135,7 +135,7 @@ case "$cmd" in
     max_threads="$(read_policy_value runtime max_concurrent_threads "$POLICY")"
     repair_cycles="$(read_policy_value runtime max_repair_cycles "$POLICY")"
     telemetry_enabled="$(read_policy_value telemetry enabled "$POLICY")"; [[ -n "$telemetry_enabled" ]] || telemetry_enabled=true
-    telemetry_notifications="$(read_policy_value telemetry notifications "$POLICY")"; [[ -n "$telemetry_notifications" ]] || telemetry_notifications=true
+    telemetry_notifications="$(read_policy_value telemetry notifications "$POLICY")"; [[ -n "$telemetry_notifications" ]] || telemetry_notifications=false
     telemetry_retention_days="$(read_policy_value telemetry retention_days "$POLICY")"; [[ -n "$telemetry_retention_days" ]] || telemetry_retention_days=30
 
     before="$(cat "$src/VERSION" 2>/dev/null || echo unknown)"

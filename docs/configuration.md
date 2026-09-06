@@ -74,7 +74,7 @@ max_repair_cycles = 2
 [telemetry]
 enabled = true
 summary = true
-notifications = true
+notifications = false
 retention_days = 30
 source = "hooks+app-server"
 ```
@@ -532,7 +532,7 @@ planned_worker_count
 | `CODEX_FLOW_MAX_THREADS` | `4` | 每阶段 Worker thread ceiling |
 | `CODEX_FLOW_MAX_REPAIR_CYCLES` | `2` | Repair ceiling |
 | `CODEX_FLOW_TELEMETRY_ENABLED` | `true` | Telemetry 开关 |
-| `CODEX_FLOW_TELEMETRY_NOTIFICATIONS` | `true` | 系统通知开关 |
+| `CODEX_FLOW_TELEMETRY_NOTIFICATIONS` | `false` | 系统通知开关 |
 | `CODEX_FLOW_TELEMETRY_RETENTION_DAYS` | `30` | 遥测保留天数 |
 | `CODEX_FLOW_LANGUAGE` | `auto` | UI 语言覆盖 |
 | `CODEX_FLOW_BIN_DIR` | `~/.local/bin` | CLI 安装目录 |

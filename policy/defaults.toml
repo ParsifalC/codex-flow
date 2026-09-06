@@ -57,7 +57,7 @@ max_repair_cycles = 2
 [telemetry]
 enabled = true
 summary = true
-notifications = true
+notifications = false
 retention_days = 30
 source = "hooks+app-server"
 

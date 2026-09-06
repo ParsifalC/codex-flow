@@ -105,7 +105,7 @@ grep -Fq 'mode = "shadow"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'model = "auto"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'resolved_model = "gpt-5.6-luna"' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'enabled = true' "$CODEX_HOME/codex-flow.toml"
-grep -Fq 'notifications = true' "$CODEX_HOME/codex-flow.toml"
+grep -Fq 'notifications = false' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'retention_days = 30' "$CODEX_HOME/codex-flow.toml"
 grep -Fq '`direct` — do not spawn or delegate to subagents for this task.' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq '`delegate` — use subagent delegation for execution when the runtime supports it' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
@@ -216,7 +216,7 @@ replacements = {
     'min_reasoning_effort = "xhigh"\nreasoning_policy = "adaptive"\nroutine_effort = "xhigh"\ncomplex_effort = "xhigh"\ncritical_effort = "max"': 'min_reasoning_effort = "xhigh"\nreasoning_policy = "adaptive"\nroutine_effort = "max"\ncomplex_effort = "max"\ncritical_effort = "max"',
     'max_concurrent_threads = 4': 'max_concurrent_threads = 3',
     'max_repair_cycles = 2': 'max_repair_cycles = 1',
-    'notifications = true': 'notifications = false',
+    'notifications = false': 'notifications = true',
     'retention_days = 30': 'retention_days = 17',
 }
 for old,new in replacements.items():
@@ -240,7 +240,7 @@ grep -Fq 'minimum = "xhigh"' "$CODEX_HOME/codex-flow.toml"
 [[ "$(grep -cF 'complex_effort = "max"' "$CODEX_HOME/codex-flow.toml")" == 2 ]]
 grep -Fq 'max_concurrent_threads = 3' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'max_repair_cycles = 1' "$CODEX_HOME/codex-flow.toml"
-grep -Fq 'notifications = false' "$CODEX_HOME/codex-flow.toml"
+grep -Fq 'notifications = true' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'retention_days = 17' "$CODEX_HOME/codex-flow.toml"
 [[ "$(grep -cF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.bashrc")" == 1 ]]
 [[ "$(grep -cF '# >>> codex-flow >>>' "$CODEX_FLOW_SHELL_CONFIG_DIR/.profile")" == 1 ]]
