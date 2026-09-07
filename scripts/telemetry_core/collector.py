@@ -13,6 +13,7 @@ from typing import Any
 from .app_server import (
     AppServer,
     apply_participant_metadata,
+    find_session_transcript,
     merge_thread_metadata,
     merge_usage,
     quota_delta,
@@ -542,14 +543,30 @@ def collect_hook(event: dict[str, Any]) -> None:
                 return
             run = load_run(event, key)
             path = run_path_for_key(key)
-            run.update(
-                {
-                    "started_at_ms": now_ms(),
-                    "cwd": event.get("cwd"),
-                    "prompt_seen": True,
-                    "transcript_path": event.get("transcript_path"),
-                }
-            )
+            transcript_path = event.get("transcript_path")
+            if not transcript_path:
+                transcript_path = find_session_transcript(event.get("session_id"))
+
+            is_system = False
+            cwd = event.get("cwd")
+            if cwd == "/":
+                is_system = True
+            prompt_text = str(event.get("user_prompt") or event.get("prompt") or "")
+            if (
+                "safety and compliance standards for Codex ambient" in prompt_text
+                or "hyperpersonalized suggestions" in prompt_text
+            ):
+                is_system = True
+
+            run_updates: dict[str, Any] = {
+                "started_at_ms": now_ms(),
+                "cwd": cwd,
+                "prompt_seen": True,
+                "transcript_path": transcript_path,
+            }
+            if is_system:
+                run_updates["is_system_task"] = True
+            run.update(run_updates)
             if event.get("model") is not None:
                 run.setdefault("parent", {})["model"] = event.get("model")
             with AppServer() as server:
@@ -567,6 +584,18 @@ def collect_hook(event: dict[str, Any]) -> None:
                     if server.available
                     else None,
                 )
+            if not run.get("transcript_path"):
+                thread_path = (
+                    run.get("thread", {}).get("path")
+                    if isinstance(run.get("thread"), dict)
+                    else None
+                )
+                if thread_path and Path(thread_path).is_file():
+                    run["transcript_path"] = thread_path
+                else:
+                    resolved = find_session_transcript(event.get("session_id"))
+                    if resolved:
+                        run["transcript_path"] = resolved
             apply_participant_metadata(
                 run.setdefault("parent", {}),
                 event=event,
@@ -678,8 +707,24 @@ def collect_hook(event: dict[str, Any]) -> None:
             service_delta = usage_delta(
                 run["parent"].get("usage_before"), parent_after
             )
+            transcript_path = run.get("transcript_path") or event.get("transcript_path")
+            if not transcript_path or not Path(transcript_path).is_file():
+                thread_path = (
+                    run.get("thread", {}).get("path")
+                    if isinstance(run.get("thread"), dict)
+                    else None
+                )
+                if thread_path and Path(thread_path).is_file():
+                    transcript_path = thread_path
+                else:
+                    resolved = find_session_transcript(event.get("session_id"))
+                    if resolved:
+                        transcript_path = resolved
+            if transcript_path:
+                run["transcript_path"] = transcript_path
+
             transcript_usage = transcript_turn_usage(
-                run.get("transcript_path") or event.get("transcript_path"),
+                transcript_path,
                 event.get("turn_id"),
             )
             run["parent"]["usage_delta"] = merge_usage(
@@ -688,7 +733,7 @@ def collect_hook(event: dict[str, Any]) -> None:
             apply_participant_metadata(
                 run["parent"],
                 event=event,
-                transcript_path=run.get("transcript_path") or event.get("transcript_path"),
+                transcript_path=run.get("transcript_path"),
                 turn_id=event.get("turn_id"),
                 usage=run["parent"].get("usage_delta"),
             )

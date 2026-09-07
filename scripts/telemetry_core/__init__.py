@@ -7,6 +7,7 @@ from .app_server import (
     apply_participant_metadata,
     enrich_run_metadata,
     extract_transcript_insights,
+    find_session_transcript,
     merge_thread_metadata,
     merge_usage,
     quota_delta,

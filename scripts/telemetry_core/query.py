@@ -39,10 +39,18 @@ def list_runs(
         )
         today_cutoff = int(today_midnight * 1000)
 
+    current_time_ms = now_ms()
     for path in iter_run_files():
         run = read_json_object(path)
         if run is None:
             continue
+        if run.get("merged_into"):
+            continue
+        if run.get("finished_at_ms") is None:
+            started = numeric_ms(run.get("started_at_ms"))
+            if started and (current_time_ms - started) > 300_000:
+                if not run.get("status") or run.get("status") == "running":
+                    run["status"] = "aborted"
         ts = numeric_ms(run.get("finished_at_ms")) or numeric_ms(
             run.get("started_at_ms")
         )

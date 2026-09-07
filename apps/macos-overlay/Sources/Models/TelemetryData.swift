@@ -432,6 +432,8 @@ public struct TaskRun: Codable, Identifiable {
     public var logs: [TaskLogEntry]?
     public var summaryInfo: TaskSummaryInfo?
     public var transcriptPath: String?
+    public var mergedInto: String?
+    public var isSystemTask: Bool?
     
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -453,6 +455,8 @@ public struct TaskRun: Codable, Identifiable {
         case logs
         case summaryInfo = "summary_info"
         case transcriptPath = "transcript_path"
+        case mergedInto = "merged_into"
+        case isSystemTask = "is_system_task"
     }
     
     public init(from decoder: Decoder) throws {
@@ -486,6 +490,8 @@ public struct TaskRun: Codable, Identifiable {
         logs = try container.decodeIfPresent([TaskLogEntry].self, forKey: .logs)
         summaryInfo = try container.decodeIfPresent(TaskSummaryInfo.self, forKey: .summaryInfo)
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
+        mergedInto = try container.decodeIfPresent(String.self, forKey: .mergedInto)
+        isSystemTask = try container.decodeIfPresent(Bool.self, forKey: .isSystemTask)
         
         if let dict = try? container.decode([String: ParticipantInfo].self, forKey: .workers) {
             var updatedDict: [String: ParticipantInfo] = [:]
@@ -535,6 +541,8 @@ public struct TaskRun: Codable, Identifiable {
         try container.encodeIfPresent(logs, forKey: .logs)
         try container.encodeIfPresent(summaryInfo, forKey: .summaryInfo)
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
+        try container.encodeIfPresent(mergedInto, forKey: .mergedInto)
+        try container.encodeIfPresent(isSystemTask, forKey: .isSystemTask)
     }
     
     public init(
@@ -557,7 +565,9 @@ public struct TaskRun: Codable, Identifiable {
         logs: [TaskLogEntry]? = nil,
         summaryInfo: TaskSummaryInfo? = nil,
         transcriptPath: String? = nil,
-        fileStem: String? = nil
+        fileStem: String? = nil,
+        mergedInto: String? = nil,
+        isSystemTask: Bool? = nil
     ) {
         self.sessionId = sessionId
         self.turnId = turnId
@@ -579,6 +589,8 @@ public struct TaskRun: Codable, Identifiable {
         self.summaryInfo = summaryInfo
         self.transcriptPath = transcriptPath
         self.fileStem = fileStem
+        self.mergedInto = mergedInto
+        self.isSystemTask = isSystemTask
     }
     
     // MARK: - Computed Properties
@@ -656,7 +668,22 @@ public struct TaskRun: Codable, Identifiable {
         return !(logs ?? []).isEmpty
     }
     
+    public var isAborted: Bool {
+        if let st = status?.lowercased() {
+            return st == "aborted" || st == "interrupted" || st == "cancelled"
+        }
+        if finishedAtMs == nil, let s = startedAtMs {
+            return (Date().timeIntervalSince1970 * 1000 - s) > 300_000
+        }
+        return false
+    }
+    
+    public var isInternalTask: Bool {
+        return isSystemTask == true || cwd == "/"
+    }
+    
     public var isRunning: Bool {
+        if isAborted { return false }
         if let st = status?.lowercased() {
             return st == "running" || st == "in_progress" || st == "active"
         }
@@ -664,6 +691,7 @@ public struct TaskRun: Codable, Identifiable {
     }
     
     public var isSuccess: Bool {
+        if isAborted { return false }
         if let st = status?.lowercased() {
             return st == "success" || st == "completed" || st == "finished"
         }
@@ -671,8 +699,9 @@ public struct TaskRun: Codable, Identifiable {
     }
     
     public var isError: Bool {
+        if isAborted { return false }
         if let st = status?.lowercased() {
-            return st == "error" || st == "failed" || st == "cancelled"
+            return st == "error" || st == "failed"
         }
         return false
     }
@@ -1045,6 +1074,20 @@ public struct ChatSession: Identifiable {
         return runs.count
     }
     
+    public var isAborted: Bool {
+        guard !runs.isEmpty else { return false }
+        if totalTokens == 0 && runs.contains(where: { $0.isAborted }) {
+            return true
+        }
+        return runs.allSatisfy { $0.isAborted }
+    }
+    
+    public var isInternalTask: Bool {
+        if cwd == "/" { return true }
+        guard !runs.isEmpty else { return false }
+        return runs.allSatisfy { $0.isInternalTask }
+    }
+    
     public var isRunning: Bool {
         return runs.contains { $0.isRunning }
     }
@@ -1054,7 +1097,7 @@ public struct ChatSession: Identifiable {
     }
     
     public var isSuccess: Bool {
-        return !isRunning && !isError && !runs.isEmpty
+        return !isRunning && !isError && !isAborted && !runs.isEmpty
     }
     
     public var totalDurationSeconds: Double {

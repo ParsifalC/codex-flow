@@ -52,6 +52,9 @@ public class TelemetryQueryEngine {
             let mtime = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
             
             if let cached = cachedRuns[stem], cached.mtime == mtime {
+                if let merged = cached.run.mergedInto, !merged.isEmpty {
+                    continue
+                }
                 result.append(cached.run)
                 continue
             }
@@ -63,6 +66,9 @@ public class TelemetryQueryEngine {
             
             run.fileStem = stem
             cachedRuns[stem] = (mtime, run)
+            if let merged = run.mergedInto, !merged.isEmpty {
+                continue
+            }
             result.append(run)
         }
         
@@ -80,7 +86,11 @@ public class TelemetryQueryEngine {
         if FileManager.default.fileExists(atPath: lastFileURL.path),
            let data = try? Data(contentsOf: lastFileURL),
            let run = try? JSONDecoder().decode(TaskRun.self, from: data) {
-            return run
+            if let merged = run.mergedInto, !merged.isEmpty {
+                // Ignore merged run and fall back to loadAllRuns()
+            } else {
+                return run
+            }
         }
         let runs = loadAllRuns()
         return runs.first

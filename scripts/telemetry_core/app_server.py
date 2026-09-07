@@ -685,6 +685,28 @@ def transcript_turn_metadata(path_value: Any, turn_id: Any) -> dict[str, Any] | 
     return result or None
 
 
+def find_session_transcript(session_id: Any) -> str | None:
+    """Locate a session transcript file from ~/.codex/sessions by session_id."""
+    if not session_id:
+        return None
+    sid = str(session_id).strip()
+    if not sid:
+        return None
+    home = Path.home()
+    codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex")).expanduser()
+    sessions_dir = codex_home / "sessions"
+    if not sessions_dir.is_dir():
+        return None
+    try:
+        matches = list(sessions_dir.glob(f"**/*{sid}*.jsonl"))
+        if matches:
+            matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            return str(matches[0])
+    except (OSError, UnicodeError):
+        pass
+    return None
+
+
 def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | None:
     if not isinstance(path_value, str) or not path_value or not turn_id:
         return None
@@ -698,6 +720,8 @@ def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | Non
     before: dict[str, Any] | None = None
     after: dict[str, Any] | None = None
     target_seen = False
+    turn_step_usages: list[dict[str, Any]] = []
+
     try:
         with path.open("r", encoding="utf-8") as stream:
             for line in stream:
@@ -720,13 +744,22 @@ def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | Non
                     continue
                 if kind == "token_count":
                     info = payload.get("info")
-                    usage = normalize_transcript_usage(
-                        info.get("total_token_usage") if isinstance(info, dict) else None
-                    )
+                    if isinstance(info, dict):
+                        usage = normalize_transcript_usage(
+                            info.get("total_token_usage")
+                        )
+                        last_usage = normalize_transcript_usage(
+                            info.get("last_token_usage")
+                        )
+                    else:
+                        usage = None
+                        last_usage = None
                     if usage is not None:
                         latest_total = usage
                         if current_turn == target_turn:
                             after = usage
+                    if current_turn == target_turn and last_usage is not None:
+                        turn_step_usages.append(last_usage)
                     continue
                 if kind in {"task_complete", "turn_aborted"}:
                     completed_turn = (
@@ -737,15 +770,55 @@ def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | Non
     except (OSError, UnicodeError):
         return None
 
-    if not target_seen or after is None:
+    if not target_seen:
         return None
+
+    # Priority 1: Aggregate step-level last_token_usage within the turn.
+    # This is 100% accurate and immune to context compactions or global resets.
+    if turn_step_usages:
+        aggregated: dict[str, Any] = {}
+        numeric_keys = (
+            "input_tokens",
+            "cached_input_tokens",
+            "net_new_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+            "cache_write_input_tokens",
+            "total_tokens",
+            "estimated_credits_micros",
+            "estimated_usd_micros",
+        )
+        for key in numeric_keys:
+            val = sum(
+                step[key]
+                for step in turn_step_usages
+                if isinstance(step.get(key), (int, float))
+            )
+            if val > 0:
+                aggregated[key] = int(val)
+        if aggregated.get("total_tokens", 0) > 0:
+            aggregated["groups"] = []
+            aggregated["source"] = "transcript"
+            return aggregated
+
+    if after is None:
+        return None
+
+    # Priority 2: Fallback to cumulative delta with compaction reset detection.
     if before is None:
         result = dict(after)
         result["groups"] = []
     else:
-        result = usage_delta(before, after)
-        if result is None:
-            return None
+        after_total = after.get("total_tokens") or 0
+        before_total = before.get("total_tokens") or 0
+        if after_total < before_total:
+            # Context window reset / compaction occurred; after is the turn usage
+            result = dict(after)
+            result["groups"] = []
+        else:
+            result = usage_delta(before, after)
+            if result is None:
+                return None
     result["source"] = "transcript"
     return result
 

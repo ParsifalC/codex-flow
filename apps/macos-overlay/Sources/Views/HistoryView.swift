@@ -365,6 +365,16 @@ public struct HistoryChatRow: View {
                 popoverWidth: 300
             )
 
+            if chat.isInternalTask {
+                Text(L("System", "系统"))
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1)
+                    .background(Color.white.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+
             if let branch = chat.gitBranch, !branch.isEmpty {
                 HoverRevealText(
                     "(\(branch))",
@@ -397,16 +407,26 @@ public struct HistoryChatRow: View {
             Spacer()
             quotaDelta
 
-            Text(chat.formattedTotalTokens)
-                .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
-                .help(chat.workerTotalTokens > 0
-                    ? String(format: L("Total: %@ (Parent: %@, Worker: %@)", "总计 %@（父级：%@，Worker：%@）"),
-                        chat.formattedTotalTokens,
-                        TaskRun.formatTokenCount(chat.parentTotalTokens),
-                        chat.formattedWorkerTokens)
-                    : String(format: L("Total tokens: %@", "总 Token：%@"), chat.formattedTotalTokens)
-                )
+            if chat.isAborted && chat.totalTokens == 0 {
+                Text(L("Interrupted", "已中断"))
+                    .font(.system(size: 7.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.45))
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            } else {
+                Text(chat.formattedTotalTokens)
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+                    .help(chat.workerTotalTokens > 0
+                        ? String(format: L("Total: %@ (Parent: %@, Worker: %@)", "总计 %@（父级：%@，Worker：%@）"),
+                            chat.formattedTotalTokens,
+                            TaskRun.formatTokenCount(chat.parentTotalTokens),
+                            chat.formattedWorkerTokens)
+                        : String(format: L("Total tokens: %@", "总 Token：%@"), chat.formattedTotalTokens)
+                    )
+            }
 
             Circle()
                 .fill(statusColor)
@@ -454,7 +474,8 @@ public struct HistoryChatRow: View {
 
     private var statusColor: Color {
         if chat.isRunning { return .cyan }
-        if chat.isError { return .orange }
+        if chat.isAborted { return .orange }
+        if chat.isError { return .red }
         return .green
     }
 
@@ -540,7 +561,7 @@ public struct HistoryRunRow: View {
 
     private var selectionBar: some View {
         Capsule()
-            .fill(selected ? Color.cyan : Color.white.opacity(hovered ? 0.35 : 0.12))
+            .fill(selected ? Color.cyan : (run.isAborted ? Color.orange.opacity(0.6) : Color.white.opacity(hovered ? 0.35 : 0.12)))
             .frame(width: 2.5, height: 24)
     }
 
@@ -578,6 +599,15 @@ public struct HistoryRunRow: View {
             Text(run.formattedDuration)
                 .font(.system(size: 7.4, design: .monospaced))
                 .foregroundColor(.white.opacity(0.5))
+            if run.isInternalTask {
+                Text(L("System", "系统"))
+                    .font(.system(size: 6.8, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 0.5)
+                    .background(Color.white.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            }
             Spacer()
             if !run.allWorkers.isEmpty {
                 let workerText = run.workerTotalTokens > 0 ? "\(run.allWorkers.count)w (\(run.formattedWorkerTokens))" : "\(run.allWorkers.count)w"
@@ -590,16 +620,26 @@ public struct HistoryRunRow: View {
                     )
             }
             quotaDelta
-            Text(run.formattedTotalTokens)
-                .font(.system(size: 7.8, weight: .bold, design: .rounded))
-                .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
-                .help(run.workerTotalTokens > 0
-                    ? String(format: L("Total: %@ (Parent: %@, Worker: %@)", "总计 %@（父级：%@，Worker：%@）"),
-                        run.formattedTotalTokens,
-                        TaskRun.formatTokenCount(run.parentTotalTokens),
-                        run.formattedWorkerTokens)
-                    : String(format: L("Total tokens: %@", "总 Token：%@"), run.formattedTotalTokens)
-                )
+            if run.isAborted && run.totalTokens == 0 {
+                Text(L("Interrupted", "已中断"))
+                    .font(.system(size: 7.2, weight: .medium))
+                    .foregroundColor(.white.opacity(0.45))
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 0.5)
+                    .background(Color.orange.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            } else {
+                Text(run.formattedTotalTokens)
+                    .font(.system(size: 7.8, weight: .bold, design: .rounded))
+                    .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+                    .help(run.workerTotalTokens > 0
+                        ? String(format: L("Total: %@ (Parent: %@, Worker: %@)", "总计 %@（父级：%@，Worker：%@）"),
+                            run.formattedTotalTokens,
+                            TaskRun.formatTokenCount(run.parentTotalTokens),
+                            run.formattedWorkerTokens)
+                        : String(format: L("Total tokens: %@", "总 Token：%@"), run.formattedTotalTokens)
+                    )
+            }
         }
     }
 
@@ -761,6 +801,24 @@ public struct HistoryTaskDetailOverlay: View {
                     privacyBlur: isPrivacyMode,
                     popoverWidth: 300
                 )
+                if run.isInternalTask {
+                    Text(L("System", "系统"))
+                        .font(.system(size: 6.8, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.55))
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 0.5)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+                if run.isAborted {
+                    Text(L("Interrupted", "已中断"))
+                        .font(.system(size: 6.8, weight: .semibold))
+                        .foregroundColor(.orange.opacity(0.9))
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 0.5)
+                        .background(Color.orange.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
                 if let branch = run.gitBranch, !branch.isEmpty {
                     HoverRevealText(
                         "(\(branch))",

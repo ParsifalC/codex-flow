@@ -5,8 +5,21 @@ import copy
 from pathlib import Path
 from typing import Any
 
-from .app_server import enrich_run_metadata, extract_transcript_insights, quota_delta
-from .common import LAST_FILE, atomic_json, iter_run_files, read_json_object
+from .app_server import (
+    enrich_run_metadata,
+    extract_transcript_insights,
+    find_session_transcript,
+    quota_delta,
+    transcript_turn_usage,
+)
+from .common import (
+    LAST_FILE,
+    atomic_json,
+    iter_run_files,
+    now_ms,
+    numeric_ms,
+    read_json_object,
+)
 
 
 def _has_summary(val: Any) -> bool:
@@ -45,6 +58,23 @@ def repair_run(
         and Path(transcript_path).is_file()
     )
 
+    if not has_valid_transcript:
+        thread_path = (
+            run.get("thread", {}).get("path")
+            if isinstance(run.get("thread"), dict)
+            else None
+        )
+        if thread_path and Path(thread_path).is_file():
+            transcript_path = thread_path
+            run["transcript_path"] = thread_path
+            has_valid_transcript = True
+        else:
+            resolved = find_session_transcript(run.get("session_id"))
+            if resolved and Path(resolved).is_file():
+                transcript_path = resolved
+                run["transcript_path"] = resolved
+                has_valid_transcript = True
+
     if has_valid_transcript:
         insights = extract_transcript_insights(transcript_path, turn_id)
         if isinstance(insights, dict):
@@ -53,6 +83,29 @@ def repair_run(
                     run[key] = insights[key]
             if not before_summary and _has_summary(insights.get("summary_info")):
                 run["summary_info"] = insights["summary_info"]
+
+        parent = run.get("parent")
+        if isinstance(parent, dict):
+            u = parent.get("usage_delta")
+            total = u.get("total_tokens") if isinstance(u, dict) else None
+            if total is None or total == 0:
+                recovered_usage = transcript_turn_usage(transcript_path, turn_id)
+                if recovered_usage and recovered_usage.get("total_tokens", 0) > 0:
+                    parent["usage_delta"] = recovered_usage
+                    if report is not None:
+                        report["tokens_restored"] = True
+
+    parent_model = (run.get("parent") or {}).get("model") if isinstance(run.get("parent"), dict) else None
+    if (run.get("cwd") == "/" or (parent_model == "gpt-5.6-terra" and not has_valid_transcript)) and not run.get("is_system_task"):
+        run["is_system_task"] = True
+
+    if run.get("finished_at_ms") is None and run.get("prompt_seen") is True:
+        started = numeric_ms(run.get("started_at_ms"))
+        if started and (now_ms() - started) > 300_000:
+            if not run.get("status") or run.get("status") == "running":
+                run["status"] = "aborted"
+                if report is not None:
+                    report["aborted_marked"] = True
 
     enrich_run_metadata(run)
 
