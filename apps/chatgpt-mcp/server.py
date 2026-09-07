@@ -25,7 +25,7 @@ else:
 
 JSONRPC_VERSION = "2.0"
 SERVER_NAME = "chatgpt-codex-flow"
-SERVER_VERSION = "2.1.4"
+SERVER_VERSION = "2.1.5"
 MAX_REQUEST_BYTES = 1024 * 1024
 
 
