@@ -341,7 +341,11 @@ public struct SummaryView: View {
 
             taskNarrativeCard(run)
             participantsCard(run)
-            TokenUsageBreakdownView(usage: run.aggregatedUsage)
+            TokenUsageBreakdownView(
+                usage: run.aggregatedUsage,
+                workerTokens: run.workerTotalTokens,
+                parentTokens: run.parentTotalTokens
+            )
 
             if run.hasSkillsOrTools {
                 InspectorSkillsToolsView(run: run)
@@ -500,7 +504,7 @@ public struct SummaryView: View {
             InspectorMetricView(
                 title: L("Tokens", "Token"),
                 value: run.formattedCompactTokens,
-                detail: L("total", "总用量"),
+                detail: run.workerTotalTokens > 0 ? "W: \(run.formattedWorkerTokens)" : L("total", "总用量"),
                 icon: "circle.grid.cross.fill",
                 accent: Color(red: 0.95, green: 0.35, blue: 0.8),
                 progress: min(1, Double(usage.totalTokens ?? 0) / 100_000.0)
@@ -1164,9 +1168,13 @@ public struct QuotaWindowsView: View {
 
 public struct TokenUsageBreakdownView: View {
     public let usage: TokenUsage
+    public let workerTokens: Int?
+    public let parentTokens: Int?
 
-    public init(usage: TokenUsage) {
+    public init(usage: TokenUsage, workerTokens: Int? = nil, parentTokens: Int? = nil) {
         self.usage = usage
+        self.workerTokens = workerTokens
+        self.parentTokens = parentTokens
     }
 
     public var body: some View {
@@ -1184,10 +1192,19 @@ public struct TokenUsageBreakdownView: View {
         let reportedTotal = usage.totalTokens ?? segmentedTotal
 
         return VStack(alignment: .leading, spacing: 5) {
-            HStack {
+            HStack(spacing: 4) {
                 Text(L("Token usage", "Token 用量"))
                     .font(.system(size: 8.8, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
+                if let wTok = workerTokens, wTok > 0 {
+                    let share = Double(wTok) / Double(max(1, reportedTotal)) * 100.0
+                    Text(L("Worker: \(TaskRun.formatTokenCount(wTok)) (\(String(format: "%.1f%%", share)))", "Worker: \(TaskRun.formatTokenCount(wTok)) (\(String(format: "%.1f%%", share)))"))
+                        .font(.system(size: 7.2, weight: .semibold, design: .rounded))
+                        .foregroundColor(.teal.opacity(0.9))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.teal.opacity(0.12)))
+                }
                 Spacer()
                 Text(TaskRun.formatTokenCount(reportedTotal))
                     .font(.system(size: 8.5, weight: .bold, design: .rounded))

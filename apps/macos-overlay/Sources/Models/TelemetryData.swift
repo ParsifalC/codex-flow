@@ -832,8 +832,64 @@ public struct TaskRun: Codable, Identifiable {
         )
     }
     
+    public var totalTokens: Int {
+        return aggregatedUsage.totalTokens ?? 0
+    }
+    
+    public var workerUsage: TokenUsage {
+        var total = 0
+        var prompt = 0
+        var completion = 0
+        var cached = 0
+        var reasoning = 0
+        var credits: Double = 0
+        
+        for p in allWorkers {
+            if let u = p.effectiveUsage {
+                total += u.totalTokens ?? (u.effectivePromptTokens + u.effectiveOutputTokens)
+                prompt += u.effectivePromptTokens
+                completion += u.effectiveOutputTokens
+                cached += u.effectiveCachedTokens
+                reasoning += u.effectiveReasoningTokens
+                credits += u.estimatedCreditsMicros ?? 0
+            }
+        }
+        
+        return TokenUsage(
+            totalTokens: total > 0 ? total : nil,
+            promptTokens: prompt > 0 ? prompt : nil,
+            completionTokens: completion > 0 ? completion : nil,
+            cachedPromptTokens: cached > 0 ? cached : nil,
+            reasoningOutputTokens: reasoning > 0 ? reasoning : nil,
+            estimatedCreditsMicros: credits > 0 ? credits : nil
+        )
+    }
+    
+    public var workerTotalTokens: Int {
+        return workerUsage.totalTokens ?? 0
+    }
+    
+    public var parentTotalTokens: Int {
+        guard let u = parent?.effectiveUsage else { return 0 }
+        return u.totalTokens ?? (u.effectivePromptTokens + u.effectiveOutputTokens)
+    }
+    
+    public var formattedWorkerTokens: String {
+        return TaskRun.formatTokenCount(workerTotalTokens)
+    }
+    
+    public var workerTokenShare: Double {
+        let total = totalTokens
+        guard total > 0 else { return 0.0 }
+        return Double(workerTotalTokens) / Double(total)
+    }
+    
+    public var formattedWorkerSharePercent: String {
+        return String(format: "%.1f%%", workerTokenShare * 100.0)
+    }
+    
     public var formattedTotalTokens: String {
-        let count = aggregatedUsage.totalTokens ?? 0
+        let count = totalTokens
         return TaskRun.formatTokenCount(count)
     }
     
@@ -1048,6 +1104,56 @@ public struct ChatSession: Identifiable {
     
     public var totalTokens: Int {
         return aggregatedUsage.totalTokens ?? 0
+    }
+    
+    public var workerUsage: TokenUsage {
+        var total = 0
+        var prompt = 0
+        var completion = 0
+        var cached = 0
+        var reasoning = 0
+        var credits: Double = 0
+        
+        for run in runs {
+            let u = run.workerUsage
+            total += u.totalTokens ?? 0
+            prompt += u.effectivePromptTokens
+            completion += u.effectiveOutputTokens
+            cached += u.effectiveCachedTokens
+            reasoning += u.effectiveReasoningTokens
+            credits += u.estimatedCreditsMicros ?? 0
+        }
+        
+        return TokenUsage(
+            totalTokens: total > 0 ? total : nil,
+            promptTokens: prompt > 0 ? prompt : nil,
+            completionTokens: completion > 0 ? completion : nil,
+            cachedPromptTokens: cached > 0 ? cached : nil,
+            reasoningOutputTokens: reasoning > 0 ? reasoning : nil,
+            estimatedCreditsMicros: credits > 0 ? credits : nil
+        )
+    }
+    
+    public var workerTotalTokens: Int {
+        return workerUsage.totalTokens ?? 0
+    }
+    
+    public var parentTotalTokens: Int {
+        return runs.reduce(0) { $0 + $1.parentTotalTokens }
+    }
+    
+    public var formattedWorkerTokens: String {
+        return TaskRun.formatTokenCount(workerTotalTokens)
+    }
+    
+    public var workerTokenShare: Double {
+        let total = totalTokens
+        guard total > 0 else { return 0.0 }
+        return Double(workerTotalTokens) / Double(total)
+    }
+    
+    public var formattedWorkerSharePercent: String {
+        return String(format: "%.1f%%", workerTokenShare * 100.0)
     }
     
     public var formattedTotalTokens: String {

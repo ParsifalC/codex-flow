@@ -400,6 +400,13 @@ public struct HistoryChatRow: View {
             Text(chat.formattedTotalTokens)
                 .font(.system(size: 8.5, weight: .bold, design: .rounded))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+                .help(chat.workerTotalTokens > 0
+                    ? String(format: L("Total: %@ (Parent: %@, Worker: %@)", "总计 %@（父级：%@，Worker：%@）"),
+                        chat.formattedTotalTokens,
+                        TaskRun.formatTokenCount(chat.parentTotalTokens),
+                        chat.formattedWorkerTokens)
+                    : String(format: L("Total tokens: %@", "总 Token：%@"), chat.formattedTotalTokens)
+                )
 
             Circle()
                 .fill(statusColor)
@@ -410,9 +417,19 @@ public struct HistoryChatRow: View {
     @ViewBuilder
     private var workerCount: some View {
         if chat.maxWorkerCount > 0 {
-            Label("\(chat.maxWorkerCount)w", systemImage: "person.2.fill")
-                .font(.system(size: 7.6, weight: .medium))
-                .foregroundColor(.teal.opacity(0.8))
+            HStack(spacing: 2.5) {
+                Label("\(chat.maxWorkerCount)w", systemImage: "person.2.fill")
+                    .font(.system(size: 7.6, weight: .medium))
+                if chat.workerTotalTokens > 0 {
+                    Text("(\(chat.formattedWorkerTokens))")
+                        .font(.system(size: 7.2, weight: .medium, design: .monospaced))
+                }
+            }
+            .foregroundColor(.teal.opacity(0.85))
+            .help(chat.workerTotalTokens > 0
+                ? String(format: L("Worker tokens: %@ (%@ of total)", "Worker 消耗：%@（占总量的 %@）"), chat.formattedWorkerTokens, chat.formattedWorkerSharePercent)
+                : String(format: L("%d workers max", "最高并发 %d 个 Worker"), chat.maxWorkerCount)
+            )
         }
     }
 
@@ -563,14 +580,26 @@ public struct HistoryRunRow: View {
                 .foregroundColor(.white.opacity(0.5))
             Spacer()
             if !run.allWorkers.isEmpty {
-                Text("\(run.allWorkers.count)w")
+                let workerText = run.workerTotalTokens > 0 ? "\(run.allWorkers.count)w (\(run.formattedWorkerTokens))" : "\(run.allWorkers.count)w"
+                Text(workerText)
                     .font(.system(size: 7.2, weight: .semibold))
-                    .foregroundColor(.teal.opacity(0.8))
+                    .foregroundColor(.teal.opacity(0.85))
+                    .help(run.workerTotalTokens > 0
+                        ? String(format: L("Worker: %@ (%@ of turn)", "Worker 消耗：%@（占本轮 %@）"), run.formattedWorkerTokens, run.formattedWorkerSharePercent)
+                        : String(format: L("%d workers", "%d 个 Worker"), run.allWorkers.count)
+                    )
             }
             quotaDelta
             Text(run.formattedTotalTokens)
                 .font(.system(size: 7.8, weight: .bold, design: .rounded))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
+                .help(run.workerTotalTokens > 0
+                    ? String(format: L("Total: %@ (Parent: %@, Worker: %@)", "总计 %@（父级：%@，Worker：%@）"),
+                        run.formattedTotalTokens,
+                        TaskRun.formatTokenCount(run.parentTotalTokens),
+                        run.formattedWorkerTokens)
+                    : String(format: L("Total tokens: %@", "总 Token：%@"), run.formattedTotalTokens)
+                )
         }
     }
 
@@ -678,7 +707,11 @@ public struct HistoryTaskDetailOverlay: View {
                 detailMetrics
                 quotaSection
                 detailNarrative
-                TokenUsageBreakdownView(usage: run.aggregatedUsage)
+                TokenUsageBreakdownView(
+                    usage: run.aggregatedUsage,
+                    workerTokens: run.workerTotalTokens,
+                    parentTokens: run.parentTotalTokens
+                )
                 skillsSection
                 detailWorkers
                 stepsSection
@@ -759,6 +792,9 @@ public struct HistoryTaskDetailOverlay: View {
         HStack(spacing: 5) {
             miniMetric(L("Time", "耗时"), run.formattedDuration, .cyan)
             miniMetric(L("Tokens", "Token"), run.formattedTotalTokens, Color(red: 0.95, green: 0.35, blue: 0.8))
+            if run.workerTotalTokens > 0 {
+                miniMetric(L("Worker", "Worker"), "\(run.formattedWorkerTokens) (\(run.formattedWorkerSharePercent))", .teal)
+            }
             miniMetric(L("Output", "输出"), TaskRun.formatTokenCount(run.aggregatedUsage.effectiveOutputTokens), .green)
         }
     }
@@ -815,9 +851,13 @@ public struct HistoryTaskDetailOverlay: View {
                     .font(.system(size: 7.7, weight: .bold))
                     .foregroundColor(.white.opacity(0.48))
                 Spacer()
-                Text(L("\(run.allWorkers.count) workers", "\(run.allWorkers.count) 个 Worker"))
+                let workerSummary = run.workerTotalTokens > 0
+                    ? L("\(run.allWorkers.count) workers · \(run.formattedWorkerTokens) (\(run.formattedWorkerSharePercent))",
+                        "\(run.allWorkers.count) 个 Worker · \(run.formattedWorkerTokens)（\(run.formattedWorkerSharePercent)）")
+                    : L("\(run.allWorkers.count) workers", "\(run.allWorkers.count) 个 Worker")
+                Text(workerSummary)
                     .font(.system(size: 7.3))
-                    .foregroundColor(.teal.opacity(0.7))
+                    .foregroundColor(.teal.opacity(0.85))
             }
 
             HStack(spacing: 3) {
