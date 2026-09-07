@@ -213,6 +213,37 @@ def _as_bool(value: str | None, fallback: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def set_policy_value(path: Path, section: str, key: str, value: str, *, quote: bool = True) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        formatted_val = f'"{value}"' if quote else value
+        atomic_write_text(path, f"[{section}]\n{key} = {formatted_val}\n")
+        return
+    text = path.read_text(encoding="utf-8-sig")
+    section_match = re.search(
+        rf"(?ms)^\[{re.escape(section)}\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)", text
+    )
+    formatted_val = f'"{value}"' if quote else value
+    line = f"{key} = {formatted_val}"
+    if section_match:
+        body = section_match.group(1)
+        key_re = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$")
+        if key_re.search(body):
+            body = key_re.sub(line, body)
+        else:
+            if body and not body.endswith("\n"):
+                body += "\n"
+            body += line + "\n"
+        text = text[: section_match.start(1)] + body + text[section_match.end(1):]
+    else:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        if text and not text.endswith("\n\n"):
+            text += "\n"
+        text += f"[{section}]\n{line}\n"
+    atomic_write_text(path, text)
+
+
 @dataclass
 class UpdateConfig:
     channel: str = "stable"
@@ -220,7 +251,7 @@ class UpdateConfig:
     check_interval_hours: int = DEFAULT_CHECK_INTERVAL_HOURS
     notify_cli: bool = True
     notify_app: bool = True
-    auto_install: bool = False
+    auto_install: bool = True
     releases_api: str = DEFAULT_RELEASES_API
     manifest_url: str | None = None
 
@@ -254,6 +285,7 @@ class UpdateState:
     channel: str = "stable"
     notify_cli: bool = True
     notify_app: bool = True
+    auto_install: bool = True
     update_available: bool = False
     checked_at: str | None = None
     last_attempt_at: str | None = None
@@ -290,8 +322,10 @@ class UpdateState:
 
 
 def load_state() -> UpdateState:
+    config = load_config()
     state = UpdateState.from_mapping(_read_json(_update_state_path(), {}))
     state.current_version = current_version()
+    state.auto_install = config.auto_install
     # Cached availability is advisory. Recompute it from the version currently
     # installed on disk so a second process cannot reinstall a version another
     # updater completed after this cache was written.
@@ -626,7 +660,8 @@ def start_background_check() -> bool:
     state = load_state()
     if not config.check or cache_is_fresh(state, config):
         return False
-    cmd = [sys.executable, str(Path(__file__).resolve()), "--check", "--quiet"]
+    action_flag = "--auto" if config.auto_install else "--check"
+    cmd = [sys.executable, str(Path(__file__).resolve()), action_flag, "--quiet"]
     kwargs: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -1335,8 +1370,16 @@ def _print_status(state: UpdateState, as_json: bool = False) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="codex-flow OTA updater")
-    parser.add_argument("command", nargs="?", choices=("rollback",))
+    parser.add_argument("command", nargs="?", choices=("rollback", "auto-install", "auto-update"))
+    parser.add_argument(
+        "action",
+        nargs="?",
+        choices=("status", "enable", "disable", "on", "off"),
+        default=None,
+        help="action for auto-install command: status|enable|disable|on|off",
+    )
     parser.add_argument("--check", action="store_true", help="check only; never install")
+    parser.add_argument("--auto", action="store_true", help="perform auto-update when enabled in policy")
     parser.add_argument("--force", action="store_true", help="ignore cached check interval")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -1371,6 +1414,38 @@ def main(argv: Iterable[str] | None = None) -> int:
         if not args.quiet:
             print("✓ FlowPilot restart reminder cleared.")
         return 0
+    if args.command in {"auto-install", "auto-update"}:
+        action = (args.action or "status").lower()
+        policy = _policy_path()
+        if action in {"enable", "on"}:
+            set_policy_value(policy, "update", "auto_install", "true", quote=False)
+            state = load_state()
+            state.auto_install = True
+            save_state(state)
+            if not args.quiet:
+                if args.json:
+                    print(json.dumps({"auto_install": True}, ensure_ascii=False))
+                else:
+                    print("✓ Auto-update enabled.")
+            return 0
+        if action in {"disable", "off"}:
+            set_policy_value(policy, "update", "auto_install", "false", quote=False)
+            state = load_state()
+            state.auto_install = False
+            save_state(state)
+            if not args.quiet:
+                if args.json:
+                    print(json.dumps({"auto_install": False}, ensure_ascii=False))
+                else:
+                    print("○ Auto-update disabled.")
+            return 0
+        config = load_config()
+        if args.json:
+            print(json.dumps({"auto_install": config.auto_install}, ensure_ascii=False))
+        else:
+            print(f"auto_install = {'true' if config.auto_install else 'false'}")
+        return 0
+
     if args.command == "rollback":
         try:
             state = rollback()
@@ -1384,6 +1459,24 @@ def main(argv: Iterable[str] | None = None) -> int:
         except Exception as exc:
             print(f"codex-flow rollback failed: {exc}", file=sys.stderr)
             return 1
+
+    if args.auto:
+        config = load_config()
+        if not config.auto_install:
+            return 0
+        with update_lock() as acquired:
+            if not acquired:
+                return 0
+            state = check_for_updates(force=args.force, quiet=args.quiet)
+            if state.update_available and state.artifact_available:
+                state = perform_update(force_check=False)
+                if not args.quiet:
+                    print(f"✨ Updated codex-flow to v{state.current_version}.")
+                    if state.flowpilot_restart_required:
+                        print("⚠ Restart FlowPilot to load the updated app binary.")
+                    if state.restart_required:
+                        print("⚠ Restart Codex to activate updated FlowPilot policy/hooks snapshots.")
+        return 0
 
     if args.check:
         with update_lock() as acquired:

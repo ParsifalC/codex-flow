@@ -11,6 +11,7 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
     public var channel: String?
     public var notifyCLI: Bool?
     public var notifyApp: Bool?
+    public var autoInstall: Bool?
     public var updateAvailable: Bool?
     public var checkedAt: String?
     public var restartRequired: Bool?
@@ -26,6 +27,7 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
         case schema, status, channel, mandatory, progress
         case notifyCLI = "notify_cli"
         case notifyApp = "notify_app"
+        case autoInstall = "auto_install"
         case currentVersion = "current_version"
         case latestVersion = "latest_version"
         case updateAvailable = "update_available"
@@ -53,6 +55,8 @@ public final class FlowPilotUpdateService: ObservableObject {
     @Published public private(set) var isInstalling = false
     @Published public private(set) var isAcknowledgingRestart = false
     @Published public private(set) var isRestartingFlowPilot = false
+    @Published public private(set) var isChangingAutoUpdate = false
+    @Published public private(set) var isAutoRestartScheduled = false
     @Published public private(set) var actionError: String?
     @Published public private(set) var actionMessage: String?
 
@@ -103,7 +107,14 @@ public final class FlowPilotUpdateService: ObservableObject {
         return snapshot.currentVersion
     }
 
+    public var isAutoUpdateEnabled: Bool {
+        snapshot.autoInstall ?? true
+    }
+
     public var statusText: String {
+        if isAutoRestartScheduled || isRestartingFlowPilot {
+            return L("Restarting FlowPilot…", "正在重启 FlowPilot…")
+        }
         if isInstalling {
             return L("Installing update…", "正在安装更新…")
         }
@@ -140,6 +151,81 @@ public final class FlowPilotUpdateService: ObservableObject {
         if decoded != snapshot {
             snapshot = decoded
         }
+        checkPendingRestartHandoff()
+    }
+
+    public func scheduleAutoRestart(reason: String, delay: TimeInterval = 1.2) {
+        guard !isAutoRestartScheduled, !isRestartingFlowPilot else { return }
+        isAutoRestartScheduled = true
+        actionMessage = reason
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.isAutoRestartScheduled = false
+            self.restartFlowPilot()
+        }
+    }
+
+    private func checkPendingRestartHandoff() {
+        guard snapshot.flowPilotRestartRequired == true else { return }
+        guard !isRestartingFlowPilot, !isAutoRestartScheduled, actionError == nil else { return }
+        if TelemetryQueryEngine.shared.loadLatestRun()?.isRunning == true {
+            return
+        }
+        scheduleAutoRestart(
+            reason: L("Update installed. Restarting FlowPilot…", "检测到已安装新版本，正在自动重启 FlowPilot…"),
+            delay: 2.0
+        )
+    }
+
+    public func evaluateAutoUpdate() {
+        refreshFromDisk()
+        guard isAutoUpdateEnabled else { return }
+        guard snapshot.updateAvailable == true, snapshot.artifactAvailable == true else { return }
+        guard !isInstalling, !isChecking, !isRestartingFlowPilot, !isAutoRestartScheduled else { return }
+        if TelemetryQueryEngine.shared.loadLatestRun()?.isRunning == true {
+            return
+        }
+        installUpdate(isAutomatic: true)
+    }
+
+    public func setAutoUpdateEnabled(_ enabled: Bool) {
+        guard !isChangingAutoUpdate else { return }
+        isChangingAutoUpdate = true
+        actionError = nil
+        actionMessage = nil
+        guard let executable = codexFlowExecutable else {
+            isChangingAutoUpdate = false
+            actionError = L("codex-flow CLI was not found.", "未找到 codex-flow CLI。")
+            return
+        }
+
+        Task.detached(priority: .utility) {
+            let action = enabled ? "enable" : "disable"
+            let result = Self.executeUpdater(
+                executable: executable,
+                arguments: ["update", "auto-install", action, "--quiet"]
+            )
+            await MainActor.run {
+                FlowPilotUpdateService.shared.finishAutoUpdateToggle(enabled: enabled, result: result)
+            }
+        }
+    }
+
+    private func finishAutoUpdateToggle(enabled: Bool, result: ProcessResult) {
+        isChangingAutoUpdate = false
+        refreshFromDisk()
+        if result.exitCode != 0 {
+            actionError = result.output.isEmpty
+                ? L("Failed to update auto-update setting.", "更新自动更新设置失败。")
+                : result.output
+        } else {
+            actionMessage = enabled
+                ? L("Automatic updates enabled.", "已开启自动更新。")
+                : L("Automatic updates disabled.", "已关闭自动更新。")
+            if enabled {
+                evaluateAutoUpdate()
+            }
+        }
     }
 
     public func requestCachedCheck() {
@@ -153,10 +239,10 @@ public final class FlowPilotUpdateService: ObservableObject {
         runUpdater(arguments: ["update", "--check", "--force", "--quiet"], mode: .foregroundCheck)
     }
 
-    public func installUpdate() {
+    public func installUpdate(isAutomatic: Bool = false) {
         guard !isInstalling else { return }
         actionError = nil
-        actionMessage = nil
+        actionMessage = isAutomatic ? L("Auto-updating…", "正在自动更新…") : nil
         isInstalling = true
         runUpdater(arguments: ["update"], mode: .install)
     }
@@ -281,6 +367,7 @@ public final class FlowPilotUpdateService: ObservableObject {
 
     private func requestLifecycleRefresh() {
         refreshFromDisk()
+        evaluateAutoUpdate()
         requestBackgroundCheck(force: true, minimumInterval: Self.lifecycleRefreshInterval)
     }
 
@@ -391,19 +478,23 @@ public final class FlowPilotUpdateService: ObservableObject {
         switch mode {
         case .backgroundCheck:
             isBackgroundCheckRunning = false
+            evaluateAutoUpdate()
         case .foregroundCheck:
             isChecking = false
             if result.exitCode != 0 {
                 actionError = result.output.isEmpty ? L("Update check failed.", "检查更新失败。") : result.output
             } else {
                 actionMessage = statusText
+                evaluateAutoUpdate()
             }
         case .install:
             isInstalling = false
             if result.exitCode != 0 {
                 actionError = result.output.isEmpty ? L("Update failed.", "更新失败。") : result.output
             } else {
-                actionMessage = result.output.isEmpty ? L("Update completed.", "更新完成。") : result.output
+                let msg = L("Update completed. Restarting FlowPilot…", "更新完成，正在自动重启 FlowPilot…")
+                actionMessage = msg
+                scheduleAutoRestart(reason: msg, delay: 1.2)
             }
         case .acknowledgeRestart:
             isAcknowledgingRestart = false

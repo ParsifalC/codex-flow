@@ -47,6 +47,37 @@ public struct FlowPilotUpdateView: View {
                     .fill(Color.primary.opacity(0.045))
             )
 
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Automatic Updates", "自动更新"))
+                        .font(.system(size: 10, weight: .bold))
+                    Text(L("Automatically download, install, and restart", "发现新版本时自动下载安装并重启"))
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                if service.isChangingAutoUpdate {
+                    ProgressView().controlSize(.mini)
+                }
+                Toggle("", isOn: Binding(
+                    get: { service.isAutoUpdateEnabled },
+                    set: { service.setAutoUpdateEnabled($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(SleekSwitchToggleStyle(tint: .cyan, width: 32, height: 18))
+                .disabled(
+                    service.isChangingAutoUpdate
+                    || service.isInstalling
+                    || service.isRestartingFlowPilot
+                    || service.isAutoRestartScheduled
+                )
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.primary.opacity(0.035))
+            )
+
             if let notes = service.snapshot.releaseNotes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(L("What's New", "更新内容"))
@@ -91,18 +122,19 @@ public struct FlowPilotUpdateView: View {
                                 service.restartFlowPilot()
                             } label: {
                                 HStack(spacing: 4) {
-                                    if service.isRestartingFlowPilot {
+                                    if service.isRestartingFlowPilot || service.isAutoRestartScheduled {
                                         ProgressView().controlSize(.mini)
                                     } else {
                                         Image(systemName: "arrow.clockwise")
                                     }
-                                    Text(L("Restart FlowPilot", "重启 FlowPilot"))
+                                    Text(service.isAutoRestartScheduled ? L("Restarting…", "正在重启…") : L("Restart FlowPilot", "重启 FlowPilot"))
                                 }
                                 .font(.system(size: 9.5, weight: .semibold))
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(
                                 service.isRestartingFlowPilot
+                                || service.isAutoRestartScheduled
                                 || service.isAcknowledgingRestart
                                 || service.isInstalling
                                 || service.isChecking
@@ -127,6 +159,7 @@ public struct FlowPilotUpdateView: View {
                             .disabled(
                                 service.isAcknowledgingRestart
                                 || service.isRestartingFlowPilot
+                                || service.isAutoRestartScheduled
                                 || service.isInstalling
                                 || service.isChecking
                             )
@@ -156,6 +189,7 @@ public struct FlowPilotUpdateView: View {
                     || service.isInstalling
                     || service.isAcknowledgingRestart
                     || service.isRestartingFlowPilot
+                    || service.isAutoRestartScheduled
                 )
 
                 Button {
@@ -178,6 +212,7 @@ public struct FlowPilotUpdateView: View {
                     || service.isChecking
                     || service.isAcknowledgingRestart
                     || service.isRestartingFlowPilot
+                    || service.isAutoRestartScheduled
                     || service.snapshot.updateAvailable != true
                     || service.snapshot.artifactAvailable == false
                 )

@@ -67,4 +67,4 @@ check = true
 check_interval_hours = 24
 notify_cli = true
 notify_app = true
-auto_install = false
+auto_install = true

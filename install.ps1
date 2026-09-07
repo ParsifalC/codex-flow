@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 
 function New-Utf8NoBomEncoding { return New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false }
 function Read-Utf8NoBom([string]$Path) { return [System.IO.File]::ReadAllText($Path, (New-Utf8NoBomEncoding)) }
@@ -101,7 +101,7 @@ $ExistingUpdateCheck = Existing-OrDefault $existingText 'update' 'check' 'true'
 $ExistingUpdateInterval = Existing-OrDefault $existingText 'update' 'check_interval_hours' '24'
 $ExistingUpdateNotifyCli = Existing-OrDefault $existingText 'update' 'notify_cli' 'true'
 $ExistingUpdateNotifyApp = Existing-OrDefault $existingText 'update' 'notify_app' 'true'
-$ExistingUpdateAutoInstall = Existing-OrDefault $existingText 'update' 'auto_install' 'false'
+$ExistingUpdateAutoInstall = Existing-OrDefault $existingText 'update' 'auto_install' 'true'
 
 $StrategyEnabled = if ($env:CODEX_FLOW_STRATEGY_ENABLED) { $env:CODEX_FLOW_STRATEGY_ENABLED } else { $ExistingStrategyEnabled }
 $StrategyProfile = if ($env:CODEX_FLOW_STRATEGY) { $env:CODEX_FLOW_STRATEGY } else { $ExistingStrategy }

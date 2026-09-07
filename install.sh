@@ -107,7 +107,7 @@ EXISTING_UPDATE_CHECK="$(policy_or_default update check true)"
 EXISTING_UPDATE_INTERVAL="$(policy_or_default update check_interval_hours 24)"
 EXISTING_UPDATE_NOTIFY_CLI="$(policy_or_default update notify_cli true)"
 EXISTING_UPDATE_NOTIFY_APP="$(policy_or_default update notify_app true)"
-EXISTING_UPDATE_AUTO_INSTALL="$(policy_or_default update auto_install false)"
+EXISTING_UPDATE_AUTO_INSTALL="$(policy_or_default update auto_install true)"
 
 STRATEGY_ENABLED="${CODEX_FLOW_STRATEGY_ENABLED:-$EXISTING_STRATEGY_ENABLED}"
 STRATEGY_PROFILE="${CODEX_FLOW_STRATEGY:-$EXISTING_STRATEGY}"

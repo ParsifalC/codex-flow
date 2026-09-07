@@ -16,11 +16,16 @@ codex-flow update
 
 # 回退到上一版本
 codex-flow rollback
+
+# 查看或设置自动更新开关
+codex-flow update auto-install status
+codex-flow update auto-install enable
+codex-flow update auto-install disable
 ```
 
 终端交互菜单会直接在“更新”选项中显示“已是最新”或“vX.Y.Z 可用”。FlowPilot 顶栏提供更新按钮；有更新或已安装但仍需要重启 Codex / FlowPilot 时显示角标。App 与 CLI 都读取 `~/.codex/codex-flow/state/update.json`。
 
-更新安装完成后会写入 `restart_required=true`。用户完整重启 Codex 后，可在 FlowPilot 更新面板点击“我已重启 Codex”，或使用 `codex-flow update --ack-restart` 清除 Codex 提醒。macOS 还会单独记录 `flowpilot_restart_required`；新的 FlowPilot 进程成功启动后会自动执行 `codex-flow update --ack-flowpilot-restart`，因此 App 二进制激活与 Codex snapshot 激活不会被混成同一个状态。Updater 无法可靠跨平台证明 Codex 宿主进程是否已经完整重启，因此 Codex 仍要求用户主动确认。
+更新安装完成后会自动触发 FlowPilot 重启交接，并通过新进程自动执行 `codex-flow update --ack-flowpilot-restart` 清除 FlowPilot 重启标记。若同时存在策略/Hook等全局变更，会写入 `restart_required=true`。用户完整重启 Codex 后，可在 FlowPilot 更新面板点击“我已重启 Codex”，或使用 `codex-flow update --ack-restart` 清除 Codex 提醒。Updater 无法可靠跨平台证明 Codex 宿主进程是否已经完整重启，因此 Codex 仍要求用户主动确认。
 
 ## 默认配置
 
@@ -31,10 +36,10 @@ check = true
 check_interval_hours = 24
 notify_cli = true
 notify_app = true
-auto_install = false
+auto_install = true
 ```
 
-`stable`、`beta`、`nightly` 使用同一套 manifest 协议。CLI / App 启动时先读本地缓存；缓存过期后由独立静默进程刷新，因此 GitHub 网络延迟不会阻塞主界面。当前默认交互仍是“自动检查 + 明确提醒 + 用户主动安装”；不会静默自动升级。
+`stable`、`beta`、`nightly` 使用同一套 manifest 协议。CLI / App 启动时先读本地缓存；缓存过期后由独立静默进程刷新。默认开启自动更新（`auto_install = true`）；FlowPilot App 运行期间会自动定期检查并在空闲无任务运行时自动执行静默更新并平滑重启。用户可在 FlowPilot 更新窗口或通过 CLI 随时开启或关闭自动更新。
 
 ## 安全与事务模型
 

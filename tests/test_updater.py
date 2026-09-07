@@ -426,6 +426,36 @@ class UpdaterTest(unittest.TestCase):
         if (ROOT / "apps" / "macos-overlay" / "bin" / "FlowPilot").exists():
             self.assertIn("apps/macos-overlay/bin/FlowPilot", mac)
 
+    def test_auto_install_cli_enable_disable_status(self) -> None:
+        self.assertEqual(updater.main(["auto-install", "enable", "--quiet"]), 0)
+        self.assertTrue(updater.load_config().auto_install)
+        self.assertTrue(updater.load_state().auto_install)
+
+        self.assertEqual(updater.main(["auto-install", "disable", "--quiet"]), 0)
+        self.assertFalse(updater.load_config().auto_install)
+        self.assertFalse(updater.load_state().auto_install)
+
+        self.assertEqual(updater.main(["auto-install", "status", "--quiet"]), 0)
+
+    def test_auto_flag_skips_when_disabled(self) -> None:
+        updater.main(["auto-install", "disable", "--quiet"])
+        with patch.object(updater, "check_for_updates") as mock_check:
+            self.assertEqual(updater.main(["--auto", "--quiet"]), 0)
+            mock_check.assert_not_called()
+
+    def test_auto_flag_performs_update_when_enabled(self) -> None:
+        updater.main(["auto-install", "enable", "--quiet"])
+        fake_state = updater.UpdateState(
+            update_available=True,
+            artifact_available=True,
+            current_version="1.8.0",
+        )
+        with patch.object(updater, "check_for_updates", return_value=fake_state) as mock_check:
+            with patch.object(updater, "perform_update", return_value=fake_state) as mock_perform:
+                self.assertEqual(updater.main(["--auto", "--quiet"]), 0)
+                mock_check.assert_called_once()
+                mock_perform.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
