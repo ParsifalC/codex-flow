@@ -482,7 +482,7 @@ public final class FlowPilotUpdateService: ObservableObject {
         case .foregroundCheck:
             isChecking = false
             if result.exitCode != 0 {
-                actionError = result.output.isEmpty ? L("Update check failed.", "检查更新失败。") : result.output
+                actionError = Self.cleanErrorMessage(result.output, fallback: L("Update check failed.", "检查更新失败。"))
             } else {
                 actionMessage = statusText
                 evaluateAutoUpdate()
@@ -490,7 +490,7 @@ public final class FlowPilotUpdateService: ObservableObject {
         case .install:
             isInstalling = false
             if result.exitCode != 0 {
-                actionError = result.output.isEmpty ? L("Update failed.", "更新失败。") : result.output
+                actionError = Self.cleanErrorMessage(result.output, fallback: L("Update failed.", "更新失败。"))
             } else {
                 let msg = L("Update completed. Restarting FlowPilot…", "更新完成，正在自动重启 FlowPilot…")
                 actionMessage = msg
@@ -499,11 +499,23 @@ public final class FlowPilotUpdateService: ObservableObject {
         case .acknowledgeRestart:
             isAcknowledgingRestart = false
             if result.exitCode != 0 {
-                actionError = result.output.isEmpty ? L("Could not clear the restart reminder.", "无法清除重启提醒。") : result.output
+                actionError = Self.cleanErrorMessage(result.output, fallback: L("Could not clear the restart reminder.", "无法清除重启提醒。"))
             } else {
                 actionMessage = L("Restart reminder cleared.", "已清除重启提醒。")
             }
         }
+    }
+
+    private static func cleanErrorMessage(_ output: String, fallback: String) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fallback }
+        let lines = trimmed.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if lines.count <= 3 {
+            return lines.joined(separator: "\n")
+        }
+        return lines.prefix(3).joined(separator: "\n")
     }
 
     private var updateStateURL: URL {
