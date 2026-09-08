@@ -389,9 +389,9 @@ public struct SummaryView: View {
     private func projectHeader(_ run: TaskRun) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 5) {
-                Image(systemName: "folder.fill")
+                Image(systemName: run.isInternalTask ? "gearshape.fill" : "folder.fill")
                     .font(.system(size: 8))
-                    .foregroundColor(.white.opacity(0.48))
+                    .foregroundColor(run.isInternalTask ? .cyan.opacity(0.7) : .white.opacity(0.48))
 
                 HoverRevealText(
                     run.projectName,
@@ -401,6 +401,16 @@ public struct SummaryView: View {
                     privacyBlur: state.isPrivacyMode,
                     popoverWidth: 300
                 )
+
+                if run.isInternalTask {
+                    Text(L("System", "系统"))
+                        .font(.system(size: 6.8, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.55))
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 0.5)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
 
                 if let branch = run.gitBranch, !branch.isEmpty {
                     Text("·").foregroundColor(.white.opacity(0.25))
@@ -459,7 +469,8 @@ public struct SummaryView: View {
                                     state.inspect(run: latest)
                                 }
                             } label: {
-                                Text("#\(index + 1) \(chat.projectName) · \(chat.localizedFormattedDate) · \(shortMenuText(chat.title))")
+                                let tag = chat.isInternalTask ? " [\(L("System", "系统"))]" : ""
+                                Text("#\(index + 1) \(chat.projectName)\(tag) · \(chat.localizedFormattedDate) · \(shortMenuText(chat.title))")
                             }
                         }
                     }
@@ -528,19 +539,25 @@ public struct SummaryView: View {
     }
 
     private func taskNarrativeCard(_ run: TaskRun) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            sectionHeader("sparkles.rectangle.stack.fill", L("Task Objective & Summary", "任务目标与概要说明"), .cyan)
+        let hasGoal = run.effectiveGoal?.isEmpty == false
+        let hasConclusion = run.effectiveConclusion?.isEmpty == false
+        return Group {
+            if hasGoal || hasConclusion {
+                VStack(alignment: .leading, spacing: 6) {
+                    sectionHeader("sparkles.rectangle.stack.fill", L("Task Objective & Summary", "任务目标与概要说明"), .cyan)
 
-            if let goal = run.effectiveGoal, !goal.isEmpty {
-                narrativeBlock(L("Objective", "目标"), "target", goal, .cyan, 3)
-            }
+                    if let goal = run.effectiveGoal, !goal.isEmpty {
+                        narrativeBlock(L("Objective", "目标"), "target", goal, .cyan, 3)
+                    }
 
-            if let conclusion = run.effectiveConclusion, !conclusion.isEmpty {
-                narrativeBlock(L("Outcome / Conclusion", "交付结论"), "checkmark.seal.fill", conclusion, .green, 4)
+                    if let conclusion = run.effectiveConclusion, !conclusion.isEmpty {
+                        narrativeBlock(L("Outcome / Conclusion", "交付结论"), "checkmark.seal.fill", conclusion, .green, 4)
+                    }
+                }
+                .padding(8)
+                .background(cardBackground())
             }
         }
-        .padding(8)
-        .background(cardBackground())
     }
 
     private func narrativeBlock(_ label: String, _ icon: String, _ text: String, _ tint: Color, _ lines: Int) -> some View {

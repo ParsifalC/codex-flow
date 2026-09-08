@@ -596,13 +596,20 @@ public struct TaskRun: Codable, Identifiable {
     // MARK: - Computed Properties
     
     public var projectName: String {
+        if isInternalTask && (thread?.cwd == "/" || cwd == "/" || cwd == nil) {
+            return L("System Task", "系统任务")
+        }
         if let c = thread?.cwd ?? cwd, !c.isEmpty {
-            return URL(fileURLWithPath: c).lastPathComponent
+            let last = URL(fileURLWithPath: c).lastPathComponent
+            if last.isEmpty || last == "/" {
+                return isInternalTask ? L("System Task", "系统任务") : "codex-flow"
+            }
+            return last
         }
         if let n = thread?.name, !n.isEmpty {
             return n
         }
-        return "codex-flow"
+        return isInternalTask ? L("System Task", "系统任务") : "codex-flow"
     }
     
     public var gitBranch: String? {
@@ -610,11 +617,29 @@ public struct TaskRun: Codable, Identifiable {
     }
     
     public var sessionTitle: String {
-        return thread?.preview ?? thread?.name ?? summary ?? sessionId ?? "FlowPilot Task"
+        if let p = thread?.preview, !p.isEmpty { return p }
+        if let n = thread?.name, !n.isEmpty { return n }
+        if let s = summary, !s.isEmpty { return s }
+        if isInternalTask {
+            if let model = parent?.displayModel, !model.isEmpty {
+                return L("System Background Task (\(model))", "系统后台任务 (\(model))")
+            }
+            return L("System Background Task", "系统后台任务")
+        }
+        if let sid = sessionId, !sid.isEmpty {
+            return L("Task #\(String(sid.prefix(8)))", "任务 #\(String(sid.prefix(8)))")
+        }
+        return L("FlowPilot Task", "FlowPilot 任务")
     }
     
     public var effectiveGoal: String? {
-        return summaryInfo?.goal ?? thread?.preview
+        if let g = summaryInfo?.goal, !g.isEmpty { return g }
+        if let p = thread?.preview, !p.isEmpty { return p }
+        if let s = summary, !s.isEmpty { return s }
+        if isInternalTask {
+            return sessionTitle
+        }
+        return nil
     }
     
     public var effectiveConclusion: String? {

@@ -65,12 +65,22 @@ def participant_runtime_label(participant: dict[str, Any], usage: dict[str, Any]
 
 def run_context(run: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
     thread = run.get("thread") if isinstance(run.get("thread"), dict) else {}
-    session = compact_text(thread.get("name") or thread.get("preview") or run.get("session_id"))
+    session = compact_text(
+        thread.get("name")
+        or thread.get("preview")
+        or run.get("summary")
+        or ("系统后台任务" if run.get("is_system_task") else None)
+        or run.get("session_id")
+    )
     cwd = thread.get("cwd") or run.get("cwd")
     project = None
     if cwd:
         try:
-            project = Path(str(cwd)).name or str(cwd)
+            pname = Path(str(cwd)).name
+            if not pname and run.get("is_system_task"):
+                project = "系统任务"
+            else:
+                project = pname or str(cwd)
         except (OSError, ValueError):
             project = str(cwd)
     git_info = thread.get("gitInfo")

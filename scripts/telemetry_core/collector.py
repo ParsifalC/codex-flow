@@ -566,6 +566,8 @@ def collect_hook(event: dict[str, Any]) -> None:
             }
             if is_system:
                 run_updates["is_system_task"] = True
+            if prompt_text and not run.get("summary"):
+                run_updates["summary"] = prompt_text[:200].strip()
             run.update(run_updates)
             if event.get("model") is not None:
                 run.setdefault("parent", {})["model"] = event.get("model")
