@@ -234,7 +234,9 @@ def load_worker_index() -> dict[str, Any]:
     return value
 
 
-def worker_index_entry(agent_id: str, session_id: Any) -> dict[str, Any] | None:
+def worker_index_entry(
+    agent_id: str, session_id: Any, worker_turn_id: Any = None
+) -> dict[str, Any] | None:
     if not agent_id or agent_id == "unknown":
         return None
     index = load_worker_index()
@@ -245,6 +247,35 @@ def worker_index_entry(agent_id: str, session_id: Any) -> dict[str, Any] | None:
     if str(entry.get("session_id") or "") != str(session_id or ""):
         return None
     key = entry.get("run_key")
+    if worker_turn_id is not None:
+        target = str(worker_turn_id)
+        executions = entry.get("executions")
+        if isinstance(executions, dict):
+            execution = executions.get(target)
+            if isinstance(execution, dict):
+                execution_key = execution.get("run_key") or execution.get("parent_key")
+                if isinstance(execution_key, str) and run_path_for_key(execution_key).is_file():
+                    result = dict(entry)
+                    result["run_key"] = execution_key
+                    result["parent_key"] = execution_key
+                    result["parent_turn_id"] = execution.get("parent_turn_id")
+                    result["execution"] = execution
+                    return result
+        elif isinstance(executions, list):
+            for execution in executions:
+                if not isinstance(execution, dict) or str(execution.get("turn_id") or "") != target:
+                    continue
+                execution_key = execution.get("run_key") or execution.get("parent_key")
+                if isinstance(execution_key, str) and run_path_for_key(execution_key).is_file():
+                    result = dict(entry)
+                    result["run_key"] = execution_key
+                    result["parent_key"] = execution_key
+                    result["parent_turn_id"] = execution.get("parent_turn_id")
+                    result["execution"] = execution
+                    return result
+        # A legacy index entry has no child-turn identity. Returning it here
+        # would silently route a delayed stop to whichever parent was latest.
+        return None
     if not isinstance(key, str) or not run_path_for_key(key).is_file():
         return None
     return entry
@@ -256,6 +287,9 @@ def remember_worker_parent(
     parent_key: str,
     parent_turn_id: Any,
     started_at_ms: Any,
+    worker_turn_id: Any = None,
+    finished_at_ms: Any = None,
+    transcript_path: Any = None,
 ) -> None:
     if not agent_id or agent_id == "unknown":
         return
@@ -268,28 +302,50 @@ def remember_worker_parent(
             workers = {}
             index["workers"] = workers
         existing = workers.get(agent_id)
-        old_started = (
-            numeric_ms(existing.get("started_at_ms"))
-            if isinstance(existing, dict)
-            else None
-        )
         new_started = numeric_ms(started_at_ms)
-        if (
-            isinstance(existing, dict)
-            and str(existing.get("session_id") or "") == str(session_id or "")
-            and old_started is not None
-            and (new_started is None or old_started > new_started)
-        ):
-            return
-        workers[agent_id] = {
+        if not isinstance(existing, dict) or str(existing.get("session_id") or "") != str(session_id or ""):
+            existing = None
+        entry = dict(existing) if existing is not None else {
             "agent_id": agent_id,
             "session_id": session_id,
-            "parent_key": parent_key,
-            "parent_turn_id": parent_turn_id,
-            "run_key": parent_key,
-            "started_at_ms": numeric_ms(started_at_ms),
-            "updated_at_ms": now_ms(),
         }
+        old_started = numeric_ms(entry.get("started_at_ms"))
+        # Keep the legacy top-level pointer useful for a newly-started worker,
+        # while retaining every child execution for exact late-stop routing.
+        if old_started is None or (new_started is not None and new_started >= old_started):
+            entry.update(
+                {
+                    "parent_key": parent_key,
+                    "parent_turn_id": parent_turn_id,
+                    "run_key": parent_key,
+                    "started_at_ms": new_started,
+                }
+            )
+        executions = entry.get("executions")
+        if not isinstance(executions, dict):
+            executions = {}
+            entry["executions"] = executions
+        if worker_turn_id is not None:
+            execution_id = str(worker_turn_id)
+            execution = executions.get(execution_id)
+            if not isinstance(execution, dict):
+                execution = {"turn_id": worker_turn_id}
+            execution["run_key"] = parent_key
+            execution["parent_key"] = parent_key
+            execution["parent_turn_id"] = parent_turn_id
+            previous_started = numeric_ms(execution.get("started_at_ms"))
+            if previous_started is None or (new_started is not None and new_started < previous_started):
+                execution["started_at_ms"] = new_started
+            new_finished = numeric_ms(finished_at_ms)
+            previous_finished = numeric_ms(execution.get("finished_at_ms"))
+            if new_finished is not None and (previous_finished is None or new_finished > previous_finished):
+                execution["finished_at_ms"] = new_finished
+            if transcript_path is not None:
+                execution["transcript_path"] = transcript_path
+            execution["updated_at_ms"] = now_ms()
+            executions[execution_id] = execution
+        entry["updated_at_ms"] = now_ms()
+        workers[agent_id] = entry
         atomic_json(WORKER_INDEX_FILE, index)
 
 

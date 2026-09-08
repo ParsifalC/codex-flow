@@ -19,6 +19,7 @@ from .app_server import (
     quota_delta,
     quota_windows,
     session_index_metadata,
+    transcript_turn_started_at,
     transcript_turn_usage,
     usage_delta,
     usage_summary,
@@ -49,6 +50,309 @@ from .render import (
     render_summary,
     run_context,
 )
+
+
+_USAGE_NUMERIC_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "net_new_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "cache_write_input_tokens",
+    "total_tokens",
+    "estimated_credits_micros",
+    "estimated_usd_micros",
+)
+
+
+def _worker_execution_records(worker: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return distinct child executions, including the legacy single row."""
+    result: dict[str, dict[str, Any]] = {}
+    executions = worker.get("executions")
+    if isinstance(executions, dict):
+        for key, value in executions.items():
+            if isinstance(value, dict):
+                record = dict(value)
+                record.setdefault("turn_id", key)
+                result[str(key)] = record
+    elif isinstance(executions, list):
+        for value in executions:
+            if not isinstance(value, dict) or value.get("turn_id") is None:
+                continue
+            result[str(value["turn_id"])] = dict(value)
+
+    # Older runs only had one top-level worker turn. Preserve it as an
+    # execution when upgrading the row so a later resumed turn cannot absorb
+    # its usage or lifecycle into the new execution.
+    legacy_turn = worker.get("turn_id")
+    if legacy_turn is not None and str(legacy_turn) not in result:
+        result[str(legacy_turn)] = {
+            key: value
+            for key, value in worker.items()
+            if key not in {"executions", "service_usage_cumulative"}
+        }
+    return result
+
+
+def _ensure_worker_execution_map(worker: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    executions = _worker_execution_records(worker)
+    worker["executions"] = executions
+    return executions
+
+
+def _sum_usage_values(usages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not usages:
+        return None
+    result: dict[str, Any] = {}
+    for field in _USAGE_NUMERIC_FIELDS:
+        values = [
+            value.get(field)
+            for value in usages
+            if isinstance(value.get(field), (int, float))
+            and not isinstance(value.get(field), bool)
+        ]
+        if values:
+            result[field] = int(sum(values))
+    groups: list[dict[str, Any]] = []
+    for usage in usages:
+        value = usage.get("groups")
+        if isinstance(value, list):
+            groups.extend(group for group in value if isinstance(group, dict))
+    result["groups"] = groups
+    sources = {str(value.get("source")) for value in usages if value.get("source")}
+    if sources:
+        result["source"] = next(iter(sources)) if len(sources) == 1 else "+".join(sorted(sources))
+    return result
+
+
+def _rebuild_worker_usage(worker: dict[str, Any]) -> None:
+    executions = _worker_execution_records(worker)
+    usages = [
+        execution["usage"]
+        for execution in executions.values()
+        if isinstance(execution.get("usage"), dict)
+    ]
+    aggregate = _sum_usage_values(usages)
+    if aggregate is not None:
+        worker["usage"] = aggregate
+    elif not usages and not isinstance(worker.get("usage"), dict):
+        worker["usage"] = None
+
+
+def _refresh_worker_lifecycle(worker: dict[str, Any]) -> None:
+    executions = _worker_execution_records(worker)
+    statuses = [
+        execution.get("status")
+        for execution in executions.values()
+        if execution.get("status") in {"running", "observed", "completed"}
+    ]
+    if statuses:
+        order = {"running": 1, "observed": 2, "completed": 3}
+        # An execution still running keeps the UI row live. Otherwise expose
+        # the strongest terminal state seen for the distinct executions.
+        worker["status"] = (
+            "running"
+            if "running" in statuses
+            else max(statuses, key=lambda status: order[status])
+        )
+    elif worker.get("status") == "running":
+        worker["status"] = "observed"
+    started = [
+        numeric_ms(execution.get("started_at_ms"))
+        for execution in executions.values()
+        if numeric_ms(execution.get("started_at_ms")) is not None
+    ]
+    if started:
+        worker["started_at_ms"] = min(started)
+    finished = [
+        numeric_ms(execution.get("finished_at_ms"))
+        for execution in executions.values()
+        if numeric_ms(execution.get("finished_at_ms")) is not None
+    ]
+    if finished:
+        worker["finished_at_ms"] = max(finished)
+
+
+def _merge_execution_usage(
+    existing: dict[str, Any] | None, incoming: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    if incoming is None:
+        return existing
+    if existing is None:
+        return dict(incoming)
+    existing_source = str(existing.get("source") or "")
+    incoming_source = str(incoming.get("source") or "")
+    if incoming_source.startswith("transcript") and existing_source == "app-server":
+        # A delayed stop can provide exact per-turn transcript usage after a
+        # parent stop filled the running execution from cumulative service
+        # usage. Prefer the exact turn evidence even when its total is lower.
+        return dict(incoming)
+    old_total = existing.get("total_tokens")
+    new_total = incoming.get("total_tokens")
+    if (
+        isinstance(old_total, (int, float))
+        and isinstance(new_total, (int, float))
+        and not isinstance(old_total, bool)
+        and not isinstance(new_total, bool)
+        and int(new_total) <= int(old_total)
+    ):
+        return existing
+    return dict(incoming)
+
+
+def _merge_execution_values(
+    existing: dict[str, Any] | None, incoming: dict[str, Any]
+) -> dict[str, Any]:
+    previous = dict(existing) if isinstance(existing, dict) else {}
+    result = dict(previous)
+    for key, value in incoming.items():
+        if value is not None:
+            result[key] = value
+    for field, reducer in (
+        ("started_at_ms", min),
+        ("finished_at_ms", max),
+    ):
+        values = [
+            numeric_ms(previous.get(field)),
+            numeric_ms(incoming.get(field)),
+        ]
+        values = [value for value in values if value is not None]
+        if values:
+            result[field] = reducer(values)
+    statuses = [previous.get("status"), incoming.get("status")]
+    status_order = {"running": 1, "observed": 2, "completed": 3}
+    valid_statuses = [status for status in statuses if status in status_order]
+    if valid_statuses:
+        result["status"] = max(valid_statuses, key=lambda status: status_order[status])
+    result["usage"] = _merge_execution_usage(
+        existing.get("usage") if isinstance(existing, dict) else None,
+        incoming.get("usage"),
+    )
+    if result.get("service_usage_cumulative") is None and incoming.get("service_usage_cumulative") is not None:
+        result["service_usage_cumulative"] = incoming["service_usage_cumulative"]
+    return result
+
+
+def _service_usage_delta(
+    worker: dict[str, Any],
+    execution: dict[str, Any],
+    service_usage: dict[str, Any] | None,
+    execution_count: int,
+    session_id: Any = None,
+    agent_id: str | None = None,
+) -> dict[str, Any] | None:
+    if service_usage is None:
+        return None
+    if execution.get("service_usage_finalized"):
+        return None
+    if execution.get("service_usage_from_zero"):
+        return service_usage
+    previous = execution.get("service_usage_baseline")
+    if not isinstance(previous, dict):
+        current_turn = str(execution.get("turn_id") or "")
+        snapshots = [
+            item.get("service_usage_cumulative")
+            for item in _worker_execution_records(worker).values()
+            if str(item.get("turn_id") or "") != current_turn
+            and isinstance(item.get("service_usage_cumulative"), dict)
+        ]
+        if snapshots:
+            previous = snapshots[-1]
+    prior_execution_seen = False
+    if (
+        not isinstance(previous, dict)
+        and session_id is not None
+        and agent_id
+        and agent_id != "unknown"
+    ):
+        historical: list[dict[str, Any]] = []
+        current_turn = str(execution.get("turn_id") or "")
+        for path in iter_run_files():
+            run = read_json_object(path)
+            if run is None or str(run.get("session_id") or "") != str(session_id or ""):
+                continue
+            workers = run.get("workers")
+            candidate = workers.get(agent_id) if isinstance(workers, dict) else None
+            if not isinstance(candidate, dict):
+                continue
+            for item in _worker_execution_records(candidate).values():
+                if str(item.get("turn_id") or "") == current_turn:
+                    continue
+                prior_execution_seen = True
+                snapshot = item.get("service_usage_cumulative")
+                if isinstance(snapshot, dict):
+                    historical.append(item)
+        if historical:
+            historical.sort(
+                key=lambda item: max(
+                    numeric_ms(item.get("updated_at_ms")) or 0,
+                    numeric_ms(item.get("finished_at_ms")) or 0,
+                    numeric_ms(item.get("started_at_ms")) or 0,
+                )
+            )
+            previous = historical[-1].get("service_usage_cumulative")
+    if isinstance(previous, dict):
+        execution["service_usage_baseline"] = dict(previous)
+        return usage_delta(previous, service_usage)
+    # Once this agent has more than one execution, a cumulative service value
+    # cannot be attributed to the current turn without a prior snapshot.
+    if execution_count > 1 or prior_execution_seen:
+        return None
+    execution["service_usage_from_zero"] = True
+    return service_usage
+
+
+def _execution_match(
+    session_id: Any, agent_id: str, worker_turn_id: Any
+) -> str | None:
+    if worker_turn_id is None:
+        return None
+    target = str(worker_turn_id)
+    matches: set[str] = set()
+    for path in iter_run_files():
+        run = read_json_object(path)
+        if run is None or str(run.get("session_id") or "") != str(session_id or ""):
+            continue
+        workers = run.get("workers")
+        worker = workers.get(agent_id) if isinstance(workers, dict) else None
+        if not isinstance(worker, dict):
+            continue
+        executions = _worker_execution_records(worker)
+        if target in executions:
+            key = path.stem
+            merged = run.get("merged_into")
+            if isinstance(merged, str) and run_path_for_key(merged).is_file():
+                key = resolve_merged_run_key(merged)
+            matches.add(key)
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _transcript_worker_started_at(event: dict[str, Any]) -> int | None:
+    turn_id = event.get("turn_id")
+    if turn_id is None:
+        return None
+    for field in ("agent_transcript_path", "transcript_path"):
+        started = transcript_turn_started_at(event.get(field), turn_id)
+        if started is not None:
+            return started
+    for field in ("task_started_at_ms", "worker_started_at_ms"):
+        value = numeric_ms(event.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _parent_key_for_worker_timestamp(session_id: Any, started_at_ms: int) -> str | None:
+    matches: list[str] = []
+    for key, _, parent in parent_candidates(session_id):
+        parent_started = numeric_ms(parent.get("started_at_ms"))
+        parent_finished = numeric_ms(parent.get("finished_at_ms"))
+        if parent_started is not None and started_at_ms < parent_started:
+            continue
+        if parent_finished is not None and started_at_ms > parent_finished:
+            continue
+        matches.append(key)
+    return matches[0] if len(matches) == 1 else None
 
 
 def resolve_merged_run_key(key: str) -> str:
@@ -204,31 +508,27 @@ def worker_run_key(event: dict[str, Any]) -> str:
     kind = event.get("hook_event_name")
     event_time_ms = now_ms()
 
-    if kind == "SubagentStart":
-        active_parent = find_parent_run_key(session_id, event_time_ms)
-        if active_parent is not None:
-            return active_parent
+    # A child turn id is the stable identity for a resumed execution. Resolve
+    # it before consulting the legacy agent-only index, which otherwise points
+    # every later stop at the first parent that used this agent.
+    exact = _execution_match(session_id, agent_id, event.get("turn_id"))
+    if exact is not None:
+        return exact
 
-    indexed = worker_index_entry(agent_id, session_id)
-    if indexed is not None:
-        return resolve_merged_run_key(str(indexed["run_key"]))
+    # If the stop has a transcript, its exact task_started timestamp can place
+    # it in one parent interval even when the corresponding Start hook was
+    # absent. Require a unique interval; overlapping parents are ambiguous.
+    if kind == "SubagentStop":
+        started_at_ms = _transcript_worker_started_at(event)
+        if started_at_ms is not None:
+            timestamp_parent = _parent_key_for_worker_timestamp(session_id, started_at_ms)
+            if timestamp_parent is not None:
+                return timestamp_parent
 
-    source = find_worker_record(session_id, agent_id)
-    if source is not None:
-        source_key, _, source_run, _ = source
-        merged = source_run.get("merged_into")
-        if isinstance(merged, str) and run_path_for_key(merged).is_file():
-            return resolve_merged_run_key(merged)
-        if source_run.get("prompt_seen") is True:
-            return source_key
-        source_parent = find_parent_run_key(
-            session_id,
-            event_time_ms,
-            (source_run, source[3]),
-        )
-        if source_parent is not None:
-            return source_parent
-        return source_key
+        # No exact execution or timestamp evidence means we cannot safely
+        # reassign this stop to the currently active parent. Keep it in its
+        # child-keyed run so later repair can make an evidence-based choice.
+        return run_key(event)
 
     active_parent = find_parent_run_key(session_id, event_time_ms)
     return active_parent or run_key(event)
@@ -261,7 +561,19 @@ def merge_worker_values(
     statuses = [status for status in statuses if status in status_order]
     if statuses:
         result["status"] = max(statuses, key=lambda status: status_order[status])
-    if result.get("usage") is None and incoming.get("usage") is not None:
+    existing_executions = _worker_execution_records(previous)
+    incoming_executions = _worker_execution_records(incoming)
+    if existing_executions or incoming_executions:
+        merged_executions: dict[str, dict[str, Any]] = {}
+        for execution_id in set(existing_executions) | set(incoming_executions):
+            merged_executions[execution_id] = _merge_execution_values(
+                existing_executions.get(execution_id),
+                incoming_executions.get(execution_id)
+                or {"turn_id": execution_id},
+            )
+        result["executions"] = merged_executions
+        _rebuild_worker_usage(result)
+    elif result.get("usage") is None and incoming.get("usage") is not None:
         result["usage"] = incoming["usage"]
     return result
 
@@ -310,6 +622,8 @@ def reconcile_orphan_workers() -> set[str]:
         for source_path in iter_run_files():
             source_run = read_json_object(source_path)
             if source_run is None or source_run.get("prompt_seen") is True:
+                continue
+            if source_run.get("worker_correlation") == "unresolved":
                 continue
             if source_run.get("merged_into"):
                 continue
@@ -367,6 +681,9 @@ def reconcile_orphan_workers() -> set[str]:
                     target_key,
                     target_turn_id,
                     source_worker.get("started_at_ms") or source_run.get("started_at_ms"),
+                    source_worker.get("turn_id"),
+                    source_worker.get("finished_at_ms"),
+                    source_worker.get("transcript_path"),
                 )
             source_worker_ids = set(workers.keys())
             if source_worker_ids and source_worker_ids.issubset(merged_workers.keys()):
@@ -639,6 +956,16 @@ def collect_hook(event: dict[str, Any]) -> None:
                 absorb_worker_source(run, key, event.get("session_id"), agent_id)
             workers = run.setdefault("workers", {})
             worker = workers.setdefault(agent_id, {"agent_id": agent_id})
+            executions = _ensure_worker_execution_map(worker)
+            worker_turn_id = event.get("turn_id")
+            execution = None
+            if worker_turn_id is not None:
+                execution_id = str(worker_turn_id)
+                execution = executions.setdefault(
+                    execution_id, {"turn_id": worker_turn_id}
+                )
+            elif kind == "SubagentStop" and len(executions) == 1:
+                execution = next(iter(executions.values()))
             worker["agent_id"] = agent_id
             if event.get("agent_type") is not None:
                 worker["agent_type"] = event.get("agent_type")
@@ -647,20 +974,67 @@ def collect_hook(event: dict[str, Any]) -> None:
             if event.get("turn_id") is not None:
                 worker["turn_id"] = event.get("turn_id")
             if kind == "SubagentStart":
-                worker.setdefault("started_at_ms", now_ms())
-                worker["status"] = "running"
+                started_at_ms = _transcript_worker_started_at(event) or now_ms()
+                previous_started = numeric_ms(worker.get("started_at_ms"))
+                worker["started_at_ms"] = (
+                    started_at_ms
+                    if previous_started is None
+                    else min(previous_started, started_at_ms)
+                )
+                if worker.get("status") != "completed":
+                    worker["status"] = "running"
+                if execution is not None:
+                    execution["agent_id"] = agent_id
+                    execution["started_at_ms"] = min(
+                        value
+                        for value in (
+                            numeric_ms(execution.get("started_at_ms")),
+                            started_at_ms,
+                        )
+                        if value is not None
+                    )
+                    execution["status"] = (
+                        "completed"
+                        if execution.get("status") == "completed"
+                        else "running"
+                    )
                 if event.get("agent_transcript_path") is not None:
                     worker["transcript_path"] = event.get("agent_transcript_path")
+                    if execution is not None:
+                        execution["transcript_path"] = event.get("agent_transcript_path")
             else:
                 agent_transcript_path = event.get("agent_transcript_path")
-                worker.update(
-                    {
-                        "finished_at_ms": now_ms(),
-                        "status": "completed",
-                    }
+                finished_at_ms = now_ms()
+                worker["finished_at_ms"] = max(
+                    value
+                    for value in (
+                        numeric_ms(worker.get("finished_at_ms")),
+                        finished_at_ms,
+                    )
+                    if value is not None
                 )
+                worker["status"] = "completed"
                 if agent_transcript_path is not None:
                     worker["transcript_path"] = agent_transcript_path
+                if execution is not None:
+                    execution["agent_id"] = agent_id
+                    execution_started = _transcript_worker_started_at(event)
+                    if execution_started is None:
+                        execution_started = numeric_ms(execution.get("started_at_ms"))
+                    if execution_started is None:
+                        execution_started = finished_at_ms
+                    execution["started_at_ms"] = execution_started
+                    execution["finished_at_ms"] = max(
+                        value
+                        for value in (
+                            numeric_ms(execution.get("finished_at_ms")),
+                            finished_at_ms,
+                        )
+                        if value is not None
+                    )
+                    execution["status"] = "completed"
+                    if agent_transcript_path is not None:
+                        execution["transcript_path"] = agent_transcript_path
                 last_message = event.get("last_assistant_message")
                 if isinstance(last_message, str):
                     last_message = last_message.strip()
@@ -675,9 +1049,31 @@ def collect_hook(event: dict[str, Any]) -> None:
                         if server.available
                         else None
                     )
-                merged_usage = merge_usage(transcript_usage, service_usage)
-                if merged_usage is not None or worker.get("usage") is None:
-                    worker["usage"] = merged_usage
+                if execution is not None:
+                    service_delta = _service_usage_delta(
+                        worker,
+                        execution,
+                        service_usage,
+                        len(executions),
+                        event.get("session_id"),
+                        agent_id,
+                    )
+                    if service_usage is not None and not execution.get("service_usage_finalized"):
+                        execution["service_usage_cumulative"] = service_usage
+                    merged_usage = merge_usage(transcript_usage, service_delta)
+                    if service_usage is not None:
+                        execution["service_usage_finalized"] = True
+                    execution["usage"] = _merge_execution_usage(
+                        execution.get("usage"), merged_usage
+                    )
+                else:
+                    merged_usage = merge_usage(transcript_usage, service_usage)
+                    if merged_usage is not None or worker.get("usage") is None:
+                        worker["usage"] = merged_usage
+                _rebuild_worker_usage(worker)
+                if not run.get("prompt_seen"):
+                    run["worker_correlation"] = "unresolved"
+            _refresh_worker_lifecycle(worker)
             apply_participant_metadata(
                 worker,
                 event=event,
@@ -696,6 +1092,9 @@ def collect_hook(event: dict[str, Any]) -> None:
             key,
             run.get("turn_id"),
             worker.get("started_at_ms"),
+            worker_turn_id,
+            worker.get("finished_at_ms") if kind == "SubagentStop" else None,
+            worker.get("transcript_path"),
         )
         return
 
@@ -783,27 +1182,56 @@ def collect_hook(event: dict[str, Any]) -> None:
                 usage=run["parent"].get("usage_delta"),
             )
             for agent_id, worker in run.get("workers", {}).items():
-                if worker.get("usage") is None:
-                    transcript_usage = transcript_turn_usage(
-                        worker.get("transcript_path"),
-                        worker.get("turn_id") or event.get("turn_id"),
-                    )
-                    service_usage = (
-                        usage_summary(server.thread_usage(agent_id))
-                        if server.available
-                        else None
-                    )
-                    worker["usage"] = merge_usage(
-                        transcript_usage, service_usage
-                    )
+                if not isinstance(worker, dict):
+                    continue
+                executions = _ensure_worker_execution_map(worker)
+                service_usage = (
+                    usage_summary(server.thread_usage(agent_id))
+                    if server.available
+                    else None
+                )
+                for execution in executions.values():
+                    if not isinstance(execution, dict):
+                        continue
+                    if execution.get("usage") is None:
+                        execution_path = execution.get("transcript_path") or worker.get(
+                            "transcript_path"
+                        )
+                        execution_turn = execution.get("turn_id") or worker.get("turn_id")
+                        transcript_usage = transcript_turn_usage(
+                            execution_path,
+                            execution_turn,
+                        )
+                        service_delta = _service_usage_delta(
+                            worker,
+                            execution,
+                            service_usage,
+                            len(executions),
+                            event.get("session_id"),
+                            agent_id,
+                        )
+                        if service_usage is not None and not execution.get("service_usage_finalized"):
+                            execution["service_usage_cumulative"] = service_usage
+                        execution["usage"] = _merge_execution_usage(
+                            execution.get("usage"),
+                            merge_usage(transcript_usage, service_delta),
+                        )
+                _rebuild_worker_usage(worker)
+                if any(
+                    execution.get("status") == "running"
+                    for execution in executions.values()
+                    if isinstance(execution, dict)
+                ):
+                    for execution in executions.values():
+                        if isinstance(execution, dict) and execution.get("status") == "running":
+                            execution["status"] = "observed"
+                _refresh_worker_lifecycle(worker)
                 apply_participant_metadata(
                     worker,
                     transcript_path=worker.get("transcript_path"),
                     turn_id=worker.get("turn_id") or event.get("turn_id"),
                     usage=worker.get("usage"),
                 )
-                if worker.get("status") == "running":
-                    worker["status"] = "observed"
         atomic_json(path, run)
         atomic_json(LAST_FILE, run)
 

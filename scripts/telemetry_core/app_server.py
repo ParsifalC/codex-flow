@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -704,6 +705,70 @@ def find_session_transcript(session_id: Any) -> str | None:
             return str(matches[0])
     except (OSError, UnicodeError):
         pass
+    return None
+
+
+def _transcript_timestamp_ms(value: Any) -> int | None:
+    """Normalize a transcript record timestamp to epoch milliseconds."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Transcript timestamps are normally ISO strings. Treat small numeric
+        # values as seconds so fixtures and older writers remain readable.
+        return int(value * 1000) if abs(float(value)) < 10_000_000_000 else int(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    try:
+        numeric = float(raw)
+    except ValueError:
+        numeric = None
+    if numeric is not None:
+        return int(numeric * 1000) if abs(numeric) < 10_000_000_000 else int(numeric)
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return int(parsed.timestamp() * 1000)
+
+
+def transcript_turn_started_at(path_value: Any, turn_id: Any) -> int | None:
+    """Return the recorded task-start timestamp for one transcript turn.
+
+    Callers use the exact ``task_started`` event to correlate delayed hooks
+    with a parent lifecycle interval instead of using the hook arrival time.
+    """
+    if not isinstance(path_value, str) or not path_value or not turn_id:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+    target_turn = str(turn_id)
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "event_msg":
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict) or payload.get("type") != "task_started":
+                    continue
+                candidate_turn = payload.get("turn_id")
+                if candidate_turn is None or str(candidate_turn) != target_turn:
+                    continue
+                timestamp = record.get("timestamp")
+                if timestamp is None:
+                    timestamp = payload.get("timestamp")
+                if timestamp is None:
+                    timestamp = payload.get("started_at")
+                started_at_ms = _transcript_timestamp_ms(timestamp)
+                if started_at_ms is not None:
+                    return started_at_ms
+    except (OSError, UnicodeError):
+        return None
     return None
 
 

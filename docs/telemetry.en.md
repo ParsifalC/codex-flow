@@ -52,6 +52,8 @@ flowchart LR
 
 ## Output Formats
 
+A worker can be reused across turns. The collector records attribution and usage by worker ID and child execution turn ID. Executions in different parent turns remain separate; multiple executions within one parent turn count as one worker with their token usage combined. Duplicate stop events do not add usage again, and delayed events retain their original attribution. When attribution evidence is missing, a separate record preserves the event without overwriting another turn. A reused worker's cumulative thread usage cannot substitute for one execution's usage.
+
 ### Terminal Summary Card
 At the conclusion of a task, FlowPilot outputs a structured summary:
 
