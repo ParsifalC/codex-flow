@@ -28,6 +28,12 @@ $hookManager = Join-Path $StateDir 'manage-hooks.py'
 if ((Test-Path $hookManager) -and (Get-Command python3 -ErrorAction SilentlyContinue)) {
     & python3 $hookManager uninstall --hooks $Hooks
 }
+$instructionManager = Join-Path $StateDir 'manage-instructions.py'
+if ((Test-Path $instructionManager) -and (Get-Command python3 -ErrorAction SilentlyContinue)) {
+    # Remove the managed entry before deleting the helper/runtime that owns it.
+    & python3 $instructionManager --codex-home $CodexHome uninstall
+    if ($LASTEXITCODE -ne 0) { throw 'FlowPilot entry removal failed; keeping runtime for repair' }
+}
 
 Remove-Item (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force -ErrorAction SilentlyContinue

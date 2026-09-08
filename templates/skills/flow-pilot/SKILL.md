@@ -1,6 +1,6 @@
 ---
 name: flow-pilot
-description: Profile non-trivial technical work, compile a deterministic ExecutionPlan through codex-flow, and execute its worker, lifecycle, task-budget, review, and validation contracts exactly.
+description: Require the FlowPilot strategy gate for repository technical work, then compile a deterministic ExecutionPlan through codex-flow and execute its worker, lifecycle, task-budget, review, and validation contracts exactly.
 ---
 
 # FlowPilot Strategy Runtime
@@ -12,6 +12,25 @@ FlowPilot is the semantic profiler and execution runtime for codex-flow. It is *
 Do not independently re-implement strategy topology, capability selection, reasoning selection, quota policy, Worker counts, review mode, fan-out, lifecycle policy, local repair budget, task budget, phase admission, or implementation work-unit policy. The installed planner and deterministic runtime helpers are authoritative.
 
 Default policy remains `strategy=efficient` with `routing=adaptive`.
+
+## 0. Entry caller and receipt
+
+The managed global `AGENTS.md` entry instructions call this skill before
+repository exploration, edits, configuration, integration, tests, or other
+technical implementation. Apply that entry rule to every repository
+technical task; do not invent a “non-trivial” escape hatch. Conversation-only
+answers and work explicitly assigned to a subagent are outside this entry
+caller.
+
+When the entry caller is present, first read this installed skill completely,
+then run `show --json` and, only when enabled, `consume-bypass` below before
+repository exploration or technical action. Treat the output as a task-local
+receipt. `enabled=false` or a `true` bypass receipt means ordinary execution
+for this task. Never infer enabled state from an earlier turn. Same-task
+follow-ups preserve the current plan and ledger; a bypass is consumed once per
+task. Higher-priority instructions and explicit current-task overrides still
+apply. The prompt entry is a host-dependent caller, not a security boundary
+or a guarantee of model adherence; hooks remain telemetry-only.
 
 ## 0. Strategy gate and precedence
 

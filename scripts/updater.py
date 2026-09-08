@@ -811,20 +811,32 @@ def _snapshot(current: str) -> Path:
             shutil.copy2(path, backup / name)
     managed = backup / "managed"
     managed.mkdir()
+    instruction_managed_names = {
+        "manage-instructions.py",
+        "flow-pilot-instructions.md",
+        "instructions-state.json",
+    }
+    instruction_presence: dict[str, bool] = {}
     for name in (
         "updater.py",
         "update_runtime_config.py",
         "telemetry.py",
         "manage-hooks.py",
+        "manage-instructions.py",
         "menu.py",
         "localization.py",
         "ui.py",
         "doctor.py",
         "strategy_runtime.py",
+        "flow-pilot-instructions.md",
+        "instructions-state.json",
     ):
         path = _state_dir() / name
+        if name in instruction_managed_names:
+            instruction_presence[name] = path.exists()
         if path.exists():
             shutil.copy2(path, managed / name)
+    atomic_write_json(managed / "instructions-presence.json", instruction_presence)
     for name in ("strategies", "telemetry_core"):
         path = _state_dir() / name
         if path.exists():
@@ -850,14 +862,20 @@ def _snapshot(current: str) -> Path:
         "worker-implementer.toml": _codex_home() / "agents" / "worker-implementer.toml",
         "worker-reviewer.toml": _codex_home() / "agents" / "worker-reviewer.toml",
         "SKILL.md": _codex_home() / "skills" / "flow-pilot" / "SKILL.md",
+        "AGENTS.md": _codex_home() / "AGENTS.md",
+        "AGENTS.override.md": _codex_home() / "AGENTS.override.md",
         "migrations.json": _migration_state_path(),
     }
     presence: dict[str, bool] = {}
+    symlinks: dict[str, str] = {}
     for name, path in live_targets.items():
-        presence[name] = path.exists()
-        if path.exists():
+        presence[name] = os.path.lexists(str(path))
+        if path.is_symlink():
+            symlinks[name] = os.readlink(str(path))
+        elif path.exists():
             shutil.copy2(path, user_backup / name)
     atomic_write_json(user_backup / "presence.json", presence)
+    atomic_write_json(user_backup / "symlinks.json", symlinks)
     return backup
 
 
@@ -875,12 +893,20 @@ def _restore_snapshot(backup: Path) -> None:
             _atomic_copy(src, _state_dir() / dst_name)
     managed = backup / "managed"
     if managed.exists():
+        instruction_presence = _read_json(managed / "instructions-presence.json", {})
         for path in managed.iterdir():
+            if path.name == "instructions-presence.json":
+                continue
             dst = _state_dir() / path.name
             if path.is_dir():
                 _replace_dir(path, dst)
             else:
                 _atomic_copy(path, dst, executable=path.suffix == ".py")
+        if isinstance(instruction_presence, dict):
+            for name, present in instruction_presence.items():
+                if not present:
+                    with contextlib.suppress(FileNotFoundError):
+                        (_state_dir() / name).unlink()
     bin_backup = backup / "bin"
     if bin_backup.exists():
         for path in bin_backup.iterdir():
@@ -899,11 +925,19 @@ def _restore_snapshot(backup: Path) -> None:
             "worker-implementer.toml": _codex_home() / "agents" / "worker-implementer.toml",
             "worker-reviewer.toml": _codex_home() / "agents" / "worker-reviewer.toml",
             "SKILL.md": _codex_home() / "skills" / "flow-pilot" / "SKILL.md",
+            "AGENTS.md": _codex_home() / "AGENTS.md",
+            "AGENTS.override.md": _codex_home() / "AGENTS.override.md",
             "migrations.json": _migration_state_path(),
         }
+        symlinks = _read_json(user_backup / "symlinks.json", {})
         for name, dst in live_targets.items():
             src = user_backup / name
-            if src.exists():
+            if isinstance(symlinks, dict) and name in symlinks:
+                with contextlib.suppress(FileNotFoundError):
+                    dst.unlink()
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(str(symlinks[name]), str(dst))
+            elif src.exists():
                 _atomic_copy(src, dst)
             elif isinstance(presence, dict) and presence.get(name) is False:
                 with contextlib.suppress(FileNotFoundError):
@@ -969,6 +1003,7 @@ def _sync_managed_runtime(package_root: Path) -> None:
         "update_runtime_config.py",
         "telemetry.py",
         "manage-hooks.py",
+        "manage-instructions.py",
         "menu.py",
         "localization.py",
         "ui.py",
@@ -995,6 +1030,25 @@ def _sync_managed_runtime(package_root: Path) -> None:
     skill_src = package_root / "templates" / "skills" / "flow-pilot" / "SKILL.md"
     if skill_src.exists():
         _atomic_copy(skill_src, _codex_home() / "skills" / "flow-pilot" / "SKILL.md")
+    instruction_helper = state / "manage-instructions.py"
+    instruction_template = state / "flow-pilot-instructions.md"
+    template_src = package_root / "templates" / "flow-pilot-instructions.md"
+    if template_src.exists():
+        _atomic_copy(template_src, instruction_template)
+    if instruction_helper.exists() and instruction_template.exists():
+        subprocess.run(
+            [
+                sys.executable,
+                str(instruction_helper),
+                "--codex-home",
+                str(_codex_home()),
+                "--template",
+                str(instruction_template),
+                "install",
+            ],
+            check=True,
+            env=os.environ.copy(),
+        )
 
     bin_dir = _bin_dir()
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -1107,7 +1161,7 @@ def _ensure_current_version_package(version: str) -> Path | None:
             (staging / "VERSION").write_text(version + "\n", encoding="utf-8")
             scripts = staging / "scripts"
             scripts.mkdir(parents=True)
-            for name in ("updater.py", "update_runtime_config.py", "telemetry.py", "manage-hooks.py", "menu.py", "localization.py", "ui.py", "doctor.py", "strategy_runtime.py"):
+            for name in ("updater.py", "update_runtime_config.py", "telemetry.py", "manage-hooks.py", "manage-instructions.py", "menu.py", "localization.py", "ui.py", "doctor.py", "strategy_runtime.py"):
                 src = _state_dir() / name
                 if src.exists():
                     shutil.copy2(src, scripts / name)
@@ -1124,6 +1178,10 @@ def _ensure_current_version_package(version: str) -> Path | None:
             if defaults.exists():
                 (staging / "policy").mkdir()
                 shutil.copy2(defaults, staging / "policy" / "defaults.toml")
+            instruction_template = _state_dir() / "flow-pilot-instructions.md"
+            if instruction_template.exists():
+                (staging / "templates").mkdir()
+                shutil.copy2(instruction_template, staging / "templates" / "flow-pilot-instructions.md")
             for name in ("FlowPilot", "codex-flow-overlay"):
                 src = _state_dir() / "bin" / name
                 if src.exists():

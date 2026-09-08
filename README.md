@@ -125,6 +125,8 @@ irm https://raw.githubusercontent.com/ParsifalC/codex-flow/main/install-release.
 > 1. **首次一次性授权**：在终端启动一次 `codex`，在对话框中输入 `/hooks` 批准 FlowPilot telemetry（仅需做一次，完成永久信任）。
 > 2. **重启 Codex 桌面端**：完全退出 Codex 桌面应用后重新打开。FlowPilot 悬浮窗已在 macOS 桌面自动运行，后续所有日常工作**直接在 Codex 桌面端使用即可**，无需再打开终端。
 
+安装器还会把带有明确标记的 FlowPilot 入口写入生效的全局 `AGENTS.md`。入口会要求当前 Agent 在仓库技术工作前读取已安装 skill 并取得策略门禁 receipt，因此不需要在提示中点名 skill。安装后请开始新任务或完整重新加载 Codex，确保新的指令生效。全局开关关闭或本任务的一次性 bypass 已消费时，该任务按普通流程执行。这个提示入口依赖当前宿主遵循指令，不是 100% 的强制边界；生命周期 hooks 仍只用于遥测。
+
 ---
 
 ## 🎮 基本使用

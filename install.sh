@@ -172,6 +172,15 @@ case "$UPDATE_AUTO_INSTALL" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_AUTO_IN
 [[ "$UPDATE_INTERVAL" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS must be a positive integer" >&2; exit 2; }
 
 mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$STATE_DIR/state" "$STATE_DIR/versions" "$BIN_DIR"
+# Validate and install the prompt entry before changing policy/configuration.
+# The helper owns only its marked block and refuses malformed markers or
+# symlinks instead of replacing an unexpected target.
+INSTRUCTION_HELPER="$STATE_DIR/manage-instructions.py"
+INSTRUCTION_TEMPLATE="$STATE_DIR/flow-pilot-instructions.md"
+cp "$ROOT_DIR/scripts/manage-instructions.py" "$INSTRUCTION_HELPER"
+cp "$ROOT_DIR/templates/flow-pilot-instructions.md" "$INSTRUCTION_TEMPLATE"
+chmod +x "$INSTRUCTION_HELPER"
+python3 "$INSTRUCTION_HELPER" --codex-home "$CODEX_HOME" --template "$INSTRUCTION_TEMPLATE" install >/dev/null
 if [[ -f "$CONFIG" ]]; then cp "$CONFIG" "$CONFIG.codex-flow.$STAMP.bak"; else touch "$CONFIG"; fi
 
 python3 - "$CONFIG" "$WORKER_MODEL" "$WORKER_MIN_EFFORT" "$MAX_THREADS" <<'PY'
@@ -272,11 +281,12 @@ printf '%s\n' "$VERSION" > "$STATE_DIR/version"
 printf '%s\n' "$BIN_DIR" > "$STATE_DIR/bin_dir"
 cp "$DEFAULTS" "$STATE_DIR/defaults.toml"
 cp "$ROOT_DIR/bin/codex-flow" "$BIN_DIR/codex-flow"; chmod +x "$BIN_DIR/codex-flow"
-for file in updater.py update_runtime_config.py telemetry.py manage-hooks.py menu.py localization.py ui.py doctor.py strategy_runtime.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
+for file in updater.py update_runtime_config.py telemetry.py manage-hooks.py manage-instructions.py menu.py localization.py ui.py doctor.py strategy_runtime.py; do cp "$ROOT_DIR/scripts/$file" "$STATE_DIR/$file"; done
+cp "$ROOT_DIR/templates/flow-pilot-instructions.md" "$STATE_DIR/flow-pilot-instructions.md"
 rm -rf "$STATE_DIR/strategies" "$STATE_DIR/telemetry_core"
 cp -r "$ROOT_DIR/scripts/strategies" "$STATE_DIR/strategies"
 cp -r "$ROOT_DIR/scripts/telemetry_core" "$STATE_DIR/telemetry_core"
-chmod +x "$STATE_DIR/updater.py" "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/doctor.py" "$STATE_DIR/strategy_runtime.py"
+chmod +x "$STATE_DIR/updater.py" "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/manage-instructions.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/doctor.py" "$STATE_DIR/strategy_runtime.py"
 
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"; else python3 "$STATE_DIR/manage-hooks.py" uninstall --hooks "$HOOKS"; fi
 
@@ -306,6 +316,7 @@ printf '  ╭─ %s ────────────────────
 printf '  │  • %s: %s\n' "$(cf_t 'Policy' '策略文件')" "$disp_policy"
 printf '  │  • CLI: %s\n' "$disp_cli"
 printf '  │  • Skill: FlowPilot (flow-pilot)\n'
+printf '  │  • Entry: global AGENTS.md instructions installed\n'
 printf '  │  • %s: %s / %s\n' "$(cf_t 'Strategy' '执行策略')" "$STRATEGY_PROFILE" "$ROUTING_MODE"
 printf '  │  • %s: %s (%s / %s / %s / %s)\n' "$(cf_t 'Reasoning rollout' '推理 rollout')" "$ROLLOUT_MODE" "$ROLLOUT_MINIMUM" "$ROLLOUT_ROUTINE" "$ROLLOUT_COMPLEX" "$ROLLOUT_CRITICAL"
 printf '  │  • %s: review=%s / fanout=%s\n' "$(cf_t 'Modifiers' '修饰策略')" "$REVIEW_MODIFIER" "$FANOUT_MODIFIER"

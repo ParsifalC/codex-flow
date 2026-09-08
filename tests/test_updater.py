@@ -145,13 +145,23 @@ class UpdaterTest(unittest.TestCase):
             updater.safe_extract(archive, self.root / "extract")
 
     def test_perform_update_from_local_release_artifact(self) -> None:
+        agents = self.codex_home / "AGENTS.md"
+        agents_original = b"OTA global sentinel without final newline"
+        agents.write_bytes(agents_original)
         package = self.root / "package"
         release_root = package / "codex-flow-1.8.0"
         (release_root / "scripts").mkdir(parents=True)
+        (release_root / "templates").mkdir(parents=True)
         (release_root / "bin").mkdir(parents=True)
         (release_root / "policy").mkdir(parents=True)
         (release_root / "VERSION").write_text("1.8.0\n", encoding="utf-8")
         (release_root / "scripts" / "updater.py").write_text("# updater fixture\n", encoding="utf-8")
+        (release_root / "scripts" / "manage-instructions.py").write_bytes(
+            (ROOT / "scripts" / "manage-instructions.py").read_bytes()
+        )
+        (release_root / "templates" / "flow-pilot-instructions.md").write_bytes(
+            (ROOT / "templates" / "flow-pilot-instructions.md").read_bytes()
+        )
         launcher = release_root / "bin" / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")
         launcher.write_text("@echo off\r\n" if os.name == "nt" else "#!/usr/bin/env bash\necho ota-fixture\n", encoding="utf-8")
         if os.name != "nt":
@@ -180,6 +190,10 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual((self.state / "version").read_text(encoding="utf-8").strip(), "1.8.0")
         self.assertEqual((self.state / "previous-version").read_text(encoding="utf-8").strip(), "1.7.0")
         self.assertTrue((self.state / "versions" / "1.8.0" / "VERSION").exists())
+        self.assertIn(b"<!-- codex-flow:begin -->", agents.read_bytes())
+        self.assertTrue(agents.read_bytes().endswith(agents_original))
+        self.assertTrue((self.state / "manage-instructions.py").exists())
+        self.assertTrue((self.state / "flow-pilot-instructions.md").exists())
         self.assertTrue((self.bin_dir / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")).exists())
         config_text = (self.codex_home / "config.toml").read_text(encoding="utf-8")
         self.assertIn("keep_me = true", config_text)
@@ -276,10 +290,20 @@ class UpdaterTest(unittest.TestCase):
     def test_failed_health_check_restores_policy_and_does_not_commit_migration(self) -> None:
         original_policy = (self.codex_home / "codex-flow.toml").read_text(encoding="utf-8")
         original_config = (self.codex_home / "config.toml").read_text(encoding="utf-8")
+        agents = self.codex_home / "AGENTS.md"
+        agents_original = b"rollback sentinel without final newline"
+        agents.write_bytes(agents_original)
         (self.state / "updater.py").write_text("# installed updater\n", encoding="utf-8")
         package = self.root / "failed-package"
         (package / "scripts" / "migrations").mkdir(parents=True)
+        (package / "templates").mkdir(parents=True)
         (package / "scripts" / "updater.py").write_text("# new updater\n", encoding="utf-8")
+        (package / "scripts" / "manage-instructions.py").write_bytes(
+            (ROOT / "scripts" / "manage-instructions.py").read_bytes()
+        )
+        (package / "templates" / "flow-pilot-instructions.md").write_bytes(
+            (ROOT / "templates" / "flow-pilot-instructions.md").read_bytes()
+        )
         (package / "policy").mkdir(parents=True)
         (package / "policy" / "defaults.toml").write_text('[models]\nworker_model = "fixture-worker"\n\n[reasoning.worker]\nminimum = "xhigh"\n\n[runtime]\nmax_concurrent_threads = 4\n', encoding="utf-8")
         (package / "scripts" / "update_runtime_config.py").write_text(
@@ -305,6 +329,8 @@ class UpdaterTest(unittest.TestCase):
         )
         migration_state = self.state / "state" / "migrations.json"
         self.assertFalse(migration_state.exists())
+        self.assertEqual(agents.read_bytes(), agents_original)
+        self.assertFalse((self.state / "instructions-state.json").exists())
 
     def test_legacy_update_detached_checkout_reinstalls_without_pull(self) -> None:
         source = self.root / "source"

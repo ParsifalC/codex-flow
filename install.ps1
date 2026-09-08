@@ -168,6 +168,12 @@ if ($UpdateAutoInstall -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_AUTO
 if ($UpdateInterval -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS must be a positive integer' }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $CodexHome 'agents'),(Join-Path $CodexHome 'skills/flow-pilot'),$StateDir,(Join-Path $StateDir 'state'),(Join-Path $StateDir 'versions'),$BinDir | Out-Null
+$InstructionHelper = Join-Path $StateDir 'manage-instructions.py'
+$InstructionTemplate = Join-Path $StateDir 'flow-pilot-instructions.md'
+Copy-Item (Join-Path $RootDir 'scripts/manage-instructions.py') $InstructionHelper -Force
+Copy-Item (Join-Path $RootDir 'templates/flow-pilot-instructions.md') $InstructionTemplate -Force
+& python3 $InstructionHelper --codex-home $CodexHome --template $InstructionTemplate install | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'FlowPilot entry instruction installation failed; existing AGENTS files were not safely updated' }
 if (Test-Path $Config) { Copy-Item $Config "$Config.codex-flow.$Stamp.bak" } else { New-Item -ItemType File -Force -Path $Config | Out-Null }
 
 $text = Read-Utf8NoBom $Config
@@ -271,7 +277,8 @@ Write-Utf8NoBom (Join-Path $StateDir 'source') $RootDir
 Write-Utf8NoBom (Join-Path $StateDir 'version') $Version
 Write-Utf8NoBom $BinDirState $BinDir
 Copy-Item $Defaults (Join-Path $StateDir 'defaults.toml') -Force
-foreach ($name in @('updater.py','update_runtime_config.py','telemetry.py','manage-hooks.py','menu.py','localization.py','ui.py','doctor.py','strategy_runtime.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
+foreach ($name in @('updater.py','update_runtime_config.py','telemetry.py','manage-hooks.py','manage-instructions.py','menu.py','localization.py','ui.py','doctor.py','strategy_runtime.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
+Copy-Item (Join-Path $RootDir 'templates/flow-pilot-instructions.md') (Join-Path $StateDir 'flow-pilot-instructions.md') -Force
 Remove-Item (Join-Path $StateDir 'strategies') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $StateDir 'telemetry_core') -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $RootDir 'scripts/strategies') (Join-Path $StateDir 'strategies') -Recurse -Force

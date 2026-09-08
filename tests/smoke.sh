@@ -29,6 +29,8 @@ model_reasoning_effort = "high"
 [unrelated]
 keep_me = true
 EOF
+printf 'global AGENTS sentinel without final newline' > "$CODEX_HOME/AGENTS.md"
+cp "$CODEX_HOME/AGENTS.md" "$TMP/agents-before"
 
 install_output="$(bash "$ROOT_DIR/install.sh")"
 printf '%s\n' "$install_output"
@@ -91,6 +93,11 @@ grep -Fq "codex-flow.bash" "$CODEX_HOME/codex-flow/shell/init.sh"
 [[ -f "$CODEX_HOME/agents/worker-implementer.toml" ]]
 [[ -f "$CODEX_HOME/agents/worker-reviewer.toml" ]]
 [[ -f "$CODEX_HOME/skills/flow-pilot/SKILL.md" ]]
+[[ -f "$CODEX_HOME/codex-flow/manage-instructions.py" ]]
+[[ -f "$CODEX_HOME/codex-flow/flow-pilot-instructions.md" ]]
+grep -Fq '<!-- codex-flow:begin -->' "$CODEX_HOME/AGENTS.md"
+grep -Fq 'global AGENTS sentinel without final newline' "$CODEX_HOME/AGENTS.md"
+[[ ! -e "$CODEX_HOME/AGENTS.override.md" ]]
 grep -Fq 'name: flow-pilot' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'model = "user-parent-model"' "$CODEX_HOME/config.toml"
 grep -Fq 'default_subagent_model = "gpt-5.6-luna"' "$CODEX_HOME/config.toml"
@@ -325,5 +332,7 @@ grep -Fq 'model = "user-parent-model"' "$CODEX_HOME/config.toml"
 grep -Fq 'keep_me = true' "$CODEX_HOME/config.toml"
 ! grep -q '^default_subagent_model' "$CODEX_HOME/config.toml"
 ! grep -q '^default_subagent_reasoning_effort' "$CODEX_HOME/config.toml"
+cmp "$CODEX_HOME/AGENTS.md" "$TMP/agents-before"
+[[ ! -e "$CODEX_HOME/AGENTS.override.md" ]]
 
 printf 'smoke test passed\n'

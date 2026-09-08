@@ -17,6 +17,8 @@ CONFIG = CODEX_HOME / "config.toml"
 POLICY = CODEX_HOME / "codex-flow.toml"
 HOOKS = CODEX_HOME / "hooks.json"
 STATE_DIR = CODEX_HOME / "codex-flow"
+INSTRUCTION_HELPER = STATE_DIR / "manage-instructions.py"
+INSTRUCTION_TEMPLATE = STATE_DIR / "flow-pilot-instructions.md"
 LANG = resolve_language(POLICY)
 FAILED = False
 CODEX_AVAILABLE = True
@@ -111,6 +113,29 @@ def _hook_action_hint() -> str:
     )
 
 
+def _instruction_entry_status() -> dict:
+    if not INSTRUCTION_HELPER.is_file():
+        return {"status": "missing", "error": "instruction helper is missing"}
+    if not INSTRUCTION_TEMPLATE.is_file():
+        return {"status": "missing", "error": "instruction template is missing"}
+    code, output = run_capture([
+        sys.executable,
+        str(INSTRUCTION_HELPER),
+        "--codex-home",
+        str(CODEX_HOME),
+        "--template",
+        str(INSTRUCTION_TEMPLATE),
+        "--json",
+        "check",
+    ])
+    try:
+        report = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        report = {"status": "error", "error": output or "instruction status unavailable"}
+    report["returncode"] = code
+    return report
+
+
 def main() -> int:
     global CODEX_AVAILABLE, HOOKS_ACTION_REQUIRED
     print(f"\n🩺 {T('codex-flow doctor', 'codex-flow 系统诊断')}")
@@ -143,6 +168,8 @@ def main() -> int:
         (CODEX_HOME / "agents/worker-implementer.toml", "worker-implementer"),
         (CODEX_HOME / "agents/worker-reviewer.toml", "worker-reviewer"),
         (CODEX_HOME / "skills/flow-pilot/SKILL.md", "FlowPilot skill"),
+        (INSTRUCTION_HELPER, "FlowPilot entry helper"),
+        (INSTRUCTION_TEMPLATE, "FlowPilot entry template"),
         (STATE_DIR / "strategy_runtime.py", "strategy runtime helper"),
         (STATE_DIR / "strategies/__init__.py", "built-in strategy registry"),
         (STATE_DIR / "strategies/task_budget_runtime.py", "task budget runtime helper"),
@@ -153,6 +180,37 @@ def main() -> int:
     ]
     for path, label in checks:
         ok(T(f"{label} installed", f"{label} 已安装")) if path.is_file() else fail(T(f"{label} missing", f"缺少 {label}"))
+
+    section("Prompt Entry", "提示入口")
+    entry = _instruction_entry_status()
+    entry_status = str(entry.get("status") or "unknown")
+    entry_target = str(entry.get("target") or "AGENTS.md")
+    if entry_status == "installed":
+        ok(T(
+            f"FlowPilot entry instructions installed in {entry_target}",
+            f"FlowPilot 提示入口已安装到 {entry_target}",
+        ))
+    elif entry_status == "missing":
+        fail(T(
+            "FlowPilot entry instructions missing from the effective AGENTS file",
+            "生效的 AGENTS 文件缺少 FlowPilot 提示入口",
+        ))
+    elif entry_status == "stale":
+        fail(T(
+            f"FlowPilot entry instructions are stale in {entry_target}",
+            f"{entry_target} 中的 FlowPilot 提示入口已过期",
+        ))
+    elif entry_status == "shadowed":
+        fail(T(
+            "FlowPilot entry instructions are shadowed by a non-empty AGENTS.override.md",
+            "FlowPilot 提示入口被非空 AGENTS.override.md 遮蔽",
+        ))
+    else:
+        detail = str(entry.get("error") or entry_status)
+        fail(T(
+            f"FlowPilot entry instructions could not be checked: {detail}",
+            f"无法检查 FlowPilot 提示入口：{detail}",
+        ))
 
     if POLICY.is_file():
         schema = root_value("schema_version")

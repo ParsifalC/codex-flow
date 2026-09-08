@@ -125,6 +125,8 @@ The bootstrap detects OS/CPU, resolves the Latest Stable Release, downloads the 
 > 1. **One-time authorization**: Launch `codex` in your terminal once, type `/hooks` in the conversation prompt, and approve FlowPilot telemetry (required only once for permanent trust).
 > 2. **Restart Codex Desktop**: Fully quit and relaunch your Codex Desktop App. FlowPilot is already running on macOS; you can now perform all daily tasks directly in the Codex Desktop App.
 
+The installer also adds a marked FlowPilot entry block to the effective global `AGENTS.md`. This tells the active agent to load the installed skill and record the strategy gate receipt before repository technical work, so you do not need to name the skill. Start a new task after installation or fully reload Codex so the updated instructions are available. A disabled global switch or a consumed one-shot bypass allows ordinary execution for that task. This prompt entry depends on the active host following its instructions; it is not a 100% enforcement boundary, and lifecycle hooks remain telemetry-only.
+
 ---
 
 ## 🎮 Basic Usage
