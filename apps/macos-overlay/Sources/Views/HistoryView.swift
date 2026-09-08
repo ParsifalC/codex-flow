@@ -455,20 +455,43 @@ public struct HistoryChatRow: View {
 
     @ViewBuilder
     private var quotaDelta: some View {
-        if let delta = chat.totalQuotaDelta, abs(delta) >= 0.1 {
+        if let delta = chat.totalQuotaDelta {
             let formatted = abs(delta) < 0.95
                 ? String(format: "%+.1f%%", -delta)
                 : String(format: "%+.0f%%", -delta)
             let deltaMagnitude = abs(delta) < 0.95
                 ? String(format: "%.1f%%", abs(delta))
                 : String(format: "%.0f%%", abs(delta))
+            if abs(delta) >= 0.1 {
+                let helpText = chat.isPartiallyAttributed
+                    ? String(format: L("Partially attributed quota: %@ (subtotal, some runs pending)", "部分已归因配额：%@（小计，部分任务待归因）"), deltaMagnitude)
+                    : (delta > 0
+                        ? String(format: L("Quota consumed (Estimated): %@", "配额消耗（估算）：%@"), deltaMagnitude)
+                        : String(format: L("Quota restored (Estimated): %@", "配额恢复（估算）：%@"), deltaMagnitude))
+                Text("≈\(formatted)")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(delta > 0 ? .orange : .green)
+                    .help(helpText)
+            } else {
+                let helpText = chat.isPartiallyAttributed
+                    ? L("Partially attributed quota: 0.0% (subtotal, some runs pending)", "部分已归因配额：0.0%（小计，部分任务待归因）")
+                    : L("Quota consumed (Estimated): 0.0%", "配额消耗（估算）：0.0%")
+                Text("≈0%")
+                    .font(.system(size: 7.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.4))
+                    .help(helpText)
+            }
+        } else if let obs = chat.observedAccountDelta, abs(obs) >= 0.1 {
+            let formatted = abs(obs) < 0.95
+                ? String(format: "%+.1f%%", -obs)
+                : String(format: "%+.0f%%", -obs)
+            let deltaMagnitude = abs(obs) < 0.95
+                ? String(format: "%.1f%%", abs(obs))
+                : String(format: "%.0f%%", abs(obs))
             Text(formatted)
-                .font(.system(size: 7.5, weight: .bold))
-                .foregroundColor(delta > 0 ? .orange : .green)
-                .help(delta > 0
-                    ? String(format: L("Quota consumed: %@", "配额消耗：%@"), deltaMagnitude)
-                    : String(format: L("Quota restored: %@", "配额恢复：%@"), deltaMagnitude)
-                )
+                .font(.system(size: 7.5, weight: .medium))
+                .foregroundColor(.white.opacity(0.45))
+                .help(String(format: L("Observed account change during execution: %@ (Attribution pending)", "执行期间账户变化：%@（归因待完成）"), deltaMagnitude))
         }
     }
 
@@ -645,21 +668,38 @@ public struct HistoryRunRow: View {
 
     @ViewBuilder
     private var quotaDelta: some View {
-        let deltaValue = run.canonicalQuotaDelta ?? run.shortWindowQuotaDelta ?? run.effectiveQuotaWindows.first(where: { $0.deltaPercentagePoints != nil })?.deltaPercentagePoints
-        if let delta = deltaValue, abs(delta) >= 0.1 {
+        if let delta = run.canonicalQuotaDelta {
             let formatted = abs(delta) < 0.95
                 ? String(format: "%+.1f%%", -delta)
                 : String(format: "%+.0f%%", -delta)
             let deltaMagnitude = abs(delta) < 0.95
                 ? String(format: "%.1f%%", abs(delta))
                 : String(format: "%.0f%%", abs(delta))
+            if abs(delta) >= 0.1 {
+                Text("≈\(formatted)")
+                    .font(.system(size: 7.2, weight: .bold))
+                    .foregroundColor(delta > 0 ? .orange : .green)
+                    .help(delta > 0
+                        ? String(format: L("Quota consumed (Estimated): %@", "配额消耗（估算）：%@"), deltaMagnitude)
+                        : String(format: L("Quota restored (Estimated): %@", "配额恢复（估算）：%@"), deltaMagnitude)
+                    )
+            } else {
+                Text("≈0%")
+                    .font(.system(size: 7.2, weight: .medium))
+                    .foregroundColor(.white.opacity(0.4))
+                    .help(L("Quota consumed (Estimated): 0.0%", "配额消耗（估算）：0.0%"))
+            }
+        } else if let obs = run.observedAccountDelta, abs(obs) >= 0.1 {
+            let formatted = abs(obs) < 0.95
+                ? String(format: "%+.1f%%", -obs)
+                : String(format: "%+.0f%%", -obs)
+            let deltaMagnitude = abs(obs) < 0.95
+                ? String(format: "%.1f%%", abs(obs))
+                : String(format: "%.0f%%", abs(obs))
             Text(formatted)
-                .font(.system(size: 7.2, weight: .bold))
-                .foregroundColor(delta > 0 ? .orange : .green)
-                .help(delta > 0
-                    ? String(format: L("Quota consumed: %@", "配额消耗：%@"), deltaMagnitude)
-                    : String(format: L("Quota restored: %@", "配额恢复：%@"), deltaMagnitude)
-                )
+                .font(.system(size: 7.2, weight: .medium))
+                .foregroundColor(.white.opacity(0.45))
+                .help(String(format: L("Observed account change during execution: %@ (Attribution pending)", "执行期间账户变化：%@（归因待完成）"), deltaMagnitude))
         }
     }
 

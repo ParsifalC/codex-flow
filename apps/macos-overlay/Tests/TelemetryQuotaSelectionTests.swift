@@ -34,22 +34,36 @@ struct TelemetryQuotaSelectionTests {
 
         precondition(run.shortWindowQuotaDelta == 5.0)
         precondition(run.weeklyQuotaDelta == 6.0)
-        precondition(run.canonicalQuotaDelta == 6.0)
+        precondition(run.observedAccountDelta == 6.0)
+        // Contract 1: canonicalQuotaDelta strictly returns allocatedQuotaDelta; nil when missing
+        precondition(run.canonicalQuotaDelta == nil)
         let weeklyWindow = run.effectiveQuotaWindows.first { $0.windowDurationMins == 10_080 }
         precondition(weeklyWindow?.deltaPercentagePoints == 6.0)
+
+        // When allocation is provided, canonicalQuotaDelta returns it
+        let runWithAlloc = TaskRun(
+            sessionId: "quota-test-alloc",
+            turnId: UUID().uuidString,
+            status: "completed",
+            quotaBefore: before,
+            quotaAfter: after,
+            allocatedQuotaDelta: 6.0
+        )
+        precondition(runWithAlloc.canonicalQuotaDelta == 6.0)
     }
 
-    private static func makeRun(_ windows: [QuotaWindow]) -> TaskRun {
+    private static func makeRun(_ windows: [QuotaWindow], allocated: Double? = nil) -> TaskRun {
         TaskRun(
             sessionId: "quota-test",
             turnId: UUID().uuidString,
             status: "completed",
-            quotaChangeDuringRun: windows
+            quotaChangeDuringRun: windows,
+            allocatedQuotaDelta: allocated
         )
     }
 
     private static func testCanonicalDeltaUsesWeeklyWindow() {
-        let run = makeRun([
+        let runWithoutAlloc = makeRun([
             QuotaWindow(
                 slot: "primary",
                 usedPercent: 24.0,
@@ -64,10 +78,22 @@ struct TelemetryQuotaSelectionTests {
             ),
         ])
 
-        precondition(run.shortWindowQuotaDelta == 4.0)
-        precondition(run.weeklyQuotaDelta == 0.8)
-        precondition(run.canonicalQuotaDelta == 0.8)
-        precondition(run.primaryQuotaDelta == 0.8)
+        precondition(runWithoutAlloc.shortWindowQuotaDelta == 4.0)
+        precondition(runWithoutAlloc.weeklyQuotaDelta == 0.8)
+        precondition(runWithoutAlloc.observedAccountDelta == 0.8)
+        // Missing allocation strictly returns nil, never falls back to 0.8
+        precondition(runWithoutAlloc.canonicalQuotaDelta == nil)
+
+        // With allocation
+        let runWithAlloc = makeRun([
+            QuotaWindow(
+                slot: "secondary",
+                usedPercent: 40.8,
+                windowDurationMins: 10_080,
+                deltaPercentagePoints: 0.8
+            ),
+        ], allocated: 0.8)
+        precondition(runWithAlloc.canonicalQuotaDelta == 0.8)
     }
 
     private static func testWindowOrderDoesNotChangeSemantics() {
@@ -84,10 +110,11 @@ struct TelemetryQuotaSelectionTests {
                 windowDurationMins: 300,
                 deltaPercentagePoints: 4.0
             ),
-        ])
+        ], allocated: 0.8)
 
         precondition(run.shortWindowQuotaDelta == 4.0)
         precondition(run.weeklyQuotaDelta == 0.8)
+        precondition(run.observedAccountDelta == 0.8)
         precondition(run.canonicalQuotaDelta == 0.8)
     }
 

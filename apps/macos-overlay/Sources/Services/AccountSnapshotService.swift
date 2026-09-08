@@ -2,9 +2,24 @@ import Foundation
 
 public struct AccountQuotaWindow: Identifiable {
     public let id: String
+    public let slot: String?
     public let durationMinutes: Int?
     public let usedPercent: Double?
     public let resetsAt: Date?
+
+    public init(
+        id: String,
+        slot: String? = nil,
+        durationMinutes: Int?,
+        usedPercent: Double?,
+        resetsAt: Date?
+    ) {
+        self.id = id
+        self.slot = slot
+        self.durationMinutes = durationMinutes
+        self.usedPercent = usedPercent
+        self.resetsAt = resetsAt
+    }
 
     public var remainingPercent: Double? {
         guard let usedPercent else { return nil }
@@ -41,6 +56,7 @@ public struct AccountResetCredit: Identifiable {
 }
 
 public struct AccountSnapshot {
+    public let accountId: String?
     public let accountType: String?
     public let email: String?
     public let planType: String?
@@ -54,6 +70,38 @@ public struct AccountSnapshot {
     public let spendControlReached: Bool?
     public let rateLimitReachedType: String?
     public let fetchedAt: Date
+
+    public init(
+        accountId: String? = nil,
+        accountType: String?,
+        email: String?,
+        planType: String?,
+        requiresOpenAIAuth: Bool?,
+        quotaWindows: [AccountQuotaWindow],
+        resetCreditCount: Int?,
+        resetCredits: [AccountResetCredit],
+        hasCredits: Bool?,
+        unlimitedCredits: Bool?,
+        creditsBalance: String?,
+        spendControlReached: Bool?,
+        rateLimitReachedType: String?,
+        fetchedAt: Date
+    ) {
+        self.accountId = accountId
+        self.accountType = accountType
+        self.email = email
+        self.planType = planType
+        self.requiresOpenAIAuth = requiresOpenAIAuth
+        self.quotaWindows = quotaWindows
+        self.resetCreditCount = resetCreditCount
+        self.resetCredits = resetCredits
+        self.hasCredits = hasCredits
+        self.unlimitedCredits = unlimitedCredits
+        self.creditsBalance = creditsBalance
+        self.spendControlReached = spendControlReached
+        self.rateLimitReachedType = rateLimitReachedType
+        self.fetchedAt = fetchedAt
+    }
 
     public var fiveHourWindow: AccountQuotaWindow? {
         quotaWindows.first { $0.durationMinutes == 300 }
@@ -78,7 +126,7 @@ public struct AccountSnapshot {
     /// successful but empty response is distinct from a transport/RPC error so
     /// the Account view can render an explicit empty state.
     public var isEmpty: Bool {
-        accountType == nil && email == nil && planType == nil &&
+        accountId == nil && accountType == nil && email == nil && planType == nil &&
             requiresOpenAIAuth == nil && quotaWindows.isEmpty &&
             resetCreditCount == nil && resetCredits.isEmpty &&
             hasCredits == nil && unlimitedCredits == nil &&
@@ -746,7 +794,8 @@ public enum AccountSnapshotService {
     public static func parse(
         accountResponse: [String: Any]?,
         limitsResponse: [String: Any]?,
-        now: Date = Date()
+        now: Date = Date(),
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> AccountSnapshot {
         guard accountResponse != nil || limitsResponse != nil else {
             throw NSError(
@@ -792,7 +841,16 @@ public enum AccountSnapshotService {
 
         let credits = mergedSnapshot?["credits"] as? [String: Any]
         let plan = stringValue(account?["planType"]) ?? stringValue(mergedSnapshot?["planType"])
+        let rpcAccountId = nonBlankStringValue(account?["id"])
+            ?? nonBlankStringValue(account?["accountId"])
+            ?? nonBlankStringValue(account?["account_id"])
+        // auth.json is a local identity source, but it is only meaningful when
+        // account/read confirms a real account. A limits-only or empty response
+        // must remain empty and must not inherit an unrelated local identity.
+        let resolvedAccountId = rpcAccountId
+            ?? (isChatGPTAccount(account) ? resolveCodexAuthAccountId(environment: environment) : nil)
         return AccountSnapshot(
+            accountId: resolvedAccountId,
             accountType: stringValue(account?["type"]),
             email: stringValue(account?["email"]),
             planType: plan,
@@ -807,6 +865,37 @@ public enum AccountSnapshotService {
             rateLimitReachedType: stringValue(mergedSnapshot?["rateLimitReachedType"]),
             fetchedAt: now
         )
+    }
+
+    public static func resolveCodexAuthAccountId(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let codexHome: URL
+        if let configured = environment["CODEX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !configured.isEmpty {
+            codexHome = URL(fileURLWithPath: (configured as NSString).expandingTildeInPath)
+        } else {
+            codexHome = home.appendingPathComponent(".codex")
+        }
+        let authURL = codexHome.appendingPathComponent("auth.json")
+        guard let data = try? Data(contentsOf: authURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let tokens = json["tokens"] as? [String: Any],
+           let accId = tokens["account_id"] as? String, !accId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return accId.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let accId = json["account_id"] as? String, !accId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return accId.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private static func isChatGPTAccount(_ account: [String: Any]?) -> Bool {
+        // API-key or unknown account types cannot borrow a local ChatGPT identity.
+        nonBlankStringValue(account?["type"]) == "chatgpt"
     }
 
     private struct QuotaCandidate {
@@ -861,6 +950,7 @@ public enum AccountSnapshotService {
         return selected.values.map { candidate in
             AccountQuotaWindow(
                 id: stableWindowID(candidate),
+                slot: candidate.slot,
                 durationMinutes: candidate.duration,
                 usedPercent: candidate.used,
                 resetsAt: candidate.reset
@@ -960,6 +1050,12 @@ public enum AccountSnapshotService {
         if let value = value as? String { return value }
         if let value = value as? NSNumber { return value.stringValue }
         return nil
+    }
+
+    private static func nonBlankStringValue(_ value: Any?) -> String? {
+        guard let value = stringValue(value)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        return value
     }
 
     private static func intValue(_ value: Any?) -> Int? {

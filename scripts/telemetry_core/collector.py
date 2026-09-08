@@ -572,9 +572,29 @@ def collect_hook(event: dict[str, Any]) -> None:
             if event.get("model") is not None:
                 run.setdefault("parent", {})["model"] = event.get("model")
             with AppServer() as server:
-                run["quota_before"] = (
-                    quota_windows(server.rate_limits()) if server.available else []
-                )
+                sample_time_before = now_ms()
+                raw_before = quota_windows(server.rate_limits()) if server.available else []
+                run["quota_before"] = [
+                    {**w, "sampled_at_ms": sample_time_before} for w in raw_before
+                ]
+                try:
+                    from .quota_ledger import get_db, record_observation, resolve_account_id
+                    resolved_account = resolve_account_id(event.get("account_id"))
+                    for w in run["quota_before"]:
+                        if w.get("window_duration_mins") == 10080 and isinstance(w.get("used_percent"), (int, float)):
+                            with get_db() as db_conn:
+                                record_observation(
+                                    conn=db_conn,
+                                    account_id=resolved_account,
+                                    bucket_id=w.get("slot") or "primary",
+                                    used_percent=float(w["used_percent"]),
+                                    sampled_at_ms=sample_time_before,
+                                    sample_source="turn_start",
+                                    resets_at_ms=w.get("resets_at"),
+                                    run_id=key,
+                                )
+                except Exception:
+                    pass
                 run.setdefault("parent", {})["usage_before"] = (
                     usage_summary(server.thread_usage(event.get("session_id")))
                     if server.available
@@ -695,7 +715,11 @@ def collect_hook(event: dict[str, Any]) -> None:
                 if server.available
                 else None,
             )
-            quota_after = quota_windows(server.rate_limits()) if server.available else []
+            sample_time_after = now_ms()
+            raw_after = quota_windows(server.rate_limits()) if server.available else []
+            quota_after = [
+                {**w, "sampled_at_ms": sample_time_after} for w in raw_after
+            ]
             parent_after = (
                 usage_summary(server.thread_usage(event.get("session_id")))
                 if server.available
@@ -705,6 +729,25 @@ def collect_hook(event: dict[str, Any]) -> None:
             run["quota_change_during_run"] = quota_delta(
                 run.get("quota_before", []), quota_after
             )
+            try:
+                from .quota_ledger import get_db, record_observation, export_quota_summary, resolve_account_id
+                resolved_account = resolve_account_id(event.get("account_id"))
+                for w in quota_after:
+                    if w.get("window_duration_mins") == 10080 and isinstance(w.get("used_percent"), (int, float)):
+                        with get_db() as db_conn:
+                            record_observation(
+                                conn=db_conn,
+                                account_id=resolved_account,
+                                bucket_id=w.get("slot") or "primary",
+                                used_percent=float(w["used_percent"]),
+                                sampled_at_ms=sample_time_after,
+                                sample_source="turn_finish",
+                                resets_at_ms=w.get("resets_at"),
+                                run_id=key,
+                            )
+                            export_quota_summary(db_conn)
+            except Exception:
+                pass
             run["parent"]["usage_after"] = parent_after
             service_delta = usage_delta(
                 run["parent"].get("usage_before"), parent_after

@@ -265,22 +265,111 @@ public struct QuotaWindow: Codable, Identifiable {
     }
 }
 
+public struct QuotaAllocationInfo: Codable {
+    public let allocationId: String?
+    public let allocatedPp: Double
+    public let tokenWeight: Int?
+    public let attributionMethod: String?
+    public let status: String?
+
+    enum CodingKeys: String, CodingKey {
+        case allocationId = "allocation_id"
+        case allocatedPp = "allocated_pp"
+        case tokenWeight = "token_weight"
+        case attributionMethod = "attribution_method"
+        case status
+    }
+
+    public init(
+        allocationId: String? = nil,
+        allocatedPp: Double,
+        tokenWeight: Int? = nil,
+        attributionMethod: String? = nil,
+        status: String? = nil
+    ) {
+        self.allocationId = allocationId
+        self.allocatedPp = allocatedPp
+        self.tokenWeight = tokenWeight
+        self.attributionMethod = attributionMethod
+        self.status = status
+    }
+}
+
+public struct DailyQuotaItem: Codable, Identifiable {
+    public var id: String {
+        let acc = accountId ?? ""
+        let b = bucketId ?? ""
+        return "\(acc)_\(b)_\(date)"
+    }
+    public let accountId: String?
+    public let bucketId: String?
+    public let date: String
+    public let observedDeltaPp: Double
+    public let unattributedPp: Double?
+    public let crossMidnightPendingPp: Double?
+    public let coverageStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case accountId = "account_id"
+        case bucketId = "bucket_id"
+        case date
+        case observedDeltaPp = "observed_delta_pp"
+        case unattributedPp = "unattributed_pp"
+        case crossMidnightPendingPp = "cross_midnight_pending_pp"
+        case coverageStatus = "coverage_status"
+    }
+}
+
+public struct SessionAllocationItem: Codable {
+    public let allocatedPp: Double
+    public let attributionStatus: String
+    public let method: String?
+
+    enum CodingKeys: String, CodingKey {
+        case allocatedPp = "allocated_pp"
+        case attributionStatus = "attribution_status"
+        case method
+    }
+}
+
+public struct QuotaSummary: Codable {
+    public let revision: Int
+    public let exportedAtMs: Double?
+    public let timezone: String?
+    public let activeAccountId: String?
+    public let dailyUsage: [DailyQuotaItem]?
+    public let sessionAllocations: [String: SessionAllocationItem]?
+
+    enum CodingKeys: String, CodingKey {
+        case revision
+        case exportedAtMs = "exported_at_ms"
+        case timezone
+        case activeAccountId = "active_account_id"
+        case dailyUsage = "daily_usage"
+        case sessionAllocations = "session_allocations"
+    }
+}
+
 public struct DailyQuotaUsage: Identifiable {
     public var id: String { dateString }
     public let date: Date
     public let dateString: String
     public let displayDate: String
-    public let quotaDelta: Double
+    public let quotaDelta: Double?
     public let tokens: Int
     public let runs: Int
+    public let crossMidnightPendingPp: Double?
+    public let coverageStatus: String?
 
     public init(
         date: Date,
         dateString: String,
         displayDate: String,
-        quotaDelta: Double,
+        quotaDelta: Double?,
         tokens: Int,
-        runs: Int
+        runs: Int,
+        crossMidnightPendingPp: Double? = nil,
+        coverageStatus: String? = nil
     ) {
         self.date = date
         self.dateString = dateString
@@ -288,6 +377,8 @@ public struct DailyQuotaUsage: Identifiable {
         self.quotaDelta = quotaDelta
         self.tokens = tokens
         self.runs = runs
+        self.crossMidnightPendingPp = crossMidnightPendingPp
+        self.coverageStatus = coverageStatus
     }
 }
 
@@ -434,6 +525,8 @@ public struct TaskRun: Codable, Identifiable {
     public var transcriptPath: String?
     public var mergedInto: String?
     public var isSystemTask: Bool?
+    public var allocatedQuotaDelta: Double?
+    public var quotaAllocation: QuotaAllocationInfo?
     
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -457,6 +550,8 @@ public struct TaskRun: Codable, Identifiable {
         case transcriptPath = "transcript_path"
         case mergedInto = "merged_into"
         case isSystemTask = "is_system_task"
+        case allocatedQuotaDelta = "allocated_quota_pp"
+        case quotaAllocation = "quota_allocation"
     }
     
     public init(from decoder: Decoder) throws {
@@ -492,6 +587,11 @@ public struct TaskRun: Codable, Identifiable {
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         mergedInto = try container.decodeIfPresent(String.self, forKey: .mergedInto)
         isSystemTask = try container.decodeIfPresent(Bool.self, forKey: .isSystemTask)
+        allocatedQuotaDelta = try? container.decode(Double.self, forKey: .allocatedQuotaDelta)
+        quotaAllocation = try? container.decode(QuotaAllocationInfo.self, forKey: .quotaAllocation)
+        if allocatedQuotaDelta == nil, let alloc = quotaAllocation {
+            allocatedQuotaDelta = alloc.allocatedPp
+        }
         
         if let dict = try? container.decode([String: ParticipantInfo].self, forKey: .workers) {
             var updatedDict: [String: ParticipantInfo] = [:]
@@ -543,6 +643,8 @@ public struct TaskRun: Codable, Identifiable {
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
         try container.encodeIfPresent(mergedInto, forKey: .mergedInto)
         try container.encodeIfPresent(isSystemTask, forKey: .isSystemTask)
+        try container.encodeIfPresent(allocatedQuotaDelta, forKey: .allocatedQuotaDelta)
+        try container.encodeIfPresent(quotaAllocation, forKey: .quotaAllocation)
     }
     
     public init(
@@ -567,7 +669,9 @@ public struct TaskRun: Codable, Identifiable {
         transcriptPath: String? = nil,
         fileStem: String? = nil,
         mergedInto: String? = nil,
-        isSystemTask: Bool? = nil
+        isSystemTask: Bool? = nil,
+        allocatedQuotaDelta: Double? = nil,
+        quotaAllocation: QuotaAllocationInfo? = nil
     ) {
         self.sessionId = sessionId
         self.turnId = turnId
@@ -591,6 +695,8 @@ public struct TaskRun: Codable, Identifiable {
         self.fileStem = fileStem
         self.mergedInto = mergedInto
         self.isSystemTask = isSystemTask
+        self.allocatedQuotaDelta = allocatedQuotaDelta ?? quotaAllocation?.allocatedPp
+        self.quotaAllocation = quotaAllocation
     }
     
     // MARK: - Computed Properties
@@ -831,15 +937,20 @@ public struct TaskRun: Codable, Identifiable {
         return quotaWindow(durationMinutes: Self.weeklyQuotaWindowMinutes)?.deltaPercentagePoints
     }
 
-    /// Canonical quota movement used by task, project, model, chat and trend analytics.
-    /// Never fall back to the short window: a 5h percentage point is not comparable
-    /// with a weekly percentage point when account capacities differ.
-    public var canonicalQuotaDelta: Double? {
+    /// Observed account watermark movement during execution.
+    /// Used ONLY for single-run detail inspection/evidence; strictly forbidden for cumulative statistics.
+    public var observedAccountDelta: Double? {
         return weeklyQuotaDelta
     }
+
+    /// Canonical quota movement used by task, project, model, chat and trend analytics.
+    /// Strictly returns allocatedQuotaDelta; returns nil if attribution is missing or pending.
+    /// NEVER falls back to observedAccountDelta or short window to prevent double counting.
+    public var canonicalQuotaDelta: Double? {
+        return allocatedQuotaDelta
+    }
     
-    /// Backward-compatible name used by existing analytics consumers. Its semantic
-    /// value is now the canonical weekly quota delta, not the first/shortest window.
+    /// Backward-compatible name used by existing analytics consumers.
     public var primaryQuotaDelta: Double? {
         return canonicalQuotaDelta
     }
@@ -1250,6 +1361,28 @@ public struct ChatSession: Identifiable {
             }
         }
         return hasDelta ? total : nil
+    }
+    
+    public var isPartiallyAttributed: Bool {
+        let allocatedCount = runs.filter { $0.canonicalQuotaDelta != nil }.count
+        return allocatedCount > 0 && allocatedCount < runs.count
+    }
+
+    public var isFullyAttributed: Bool {
+        guard !runs.isEmpty else { return false }
+        return runs.allSatisfy { $0.canonicalQuotaDelta != nil }
+    }
+
+    public var observedAccountDelta: Double? {
+        var total: Double = 0
+        var hasObserved = false
+        for r in runs {
+            if let d = r.observedAccountDelta {
+                total += d
+                hasObserved = true
+            }
+        }
+        return hasObserved ? total : nil
     }
     
     public var totalWorkersCount: Int {

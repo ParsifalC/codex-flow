@@ -23,6 +23,56 @@ func formatLocalDateTime(_ date: Date) -> String { "date" }
 struct AccountSnapshotFixtureTest {
     static func main() throws {
         let fixtureURL = URL(fileURLWithPath: CommandLine.arguments[1])
+        if CommandLine.arguments.count > 2, CommandLine.arguments[2] == "custom-auth" {
+            guard CommandLine.arguments.count > 3 else {
+                throw NSError(
+                    domain: "FlowPilot.AccountFixture",
+                    code: 5,
+                    userInfo: [NSLocalizedDescriptionKey: "custom-auth requires an auth home path"]
+                )
+            }
+            let authHomeURL = URL(fileURLWithPath: CommandLine.arguments[3])
+            try FileManager.default.createDirectory(at: authHomeURL, withIntermediateDirectories: true)
+            let authJSON = """
+            {"tokens":{"account_id":"fixture-account"}}
+            """
+            try authJSON.write(to: authHomeURL.appendingPathComponent("auth.json"), atomically: true, encoding: .utf8)
+            let customEnvironment = ["CODEX_HOME": authHomeURL.path]
+
+            let authenticated = try AccountSnapshotService.parse(
+                accountResponse: ["account": ["type": "chatgpt"]],
+                limitsResponse: [:],
+                environment: customEnvironment
+            )
+            precondition(authenticated.accountId == "fixture-account", "CODEX_HOME auth fixture was not used")
+
+            let empty = try AccountSnapshotService.parse(
+                accountResponse: [:],
+                limitsResponse: ["rateLimitResetCredits": ["credits": []]],
+                environment: customEnvironment
+            )
+            precondition(empty.accountId == nil, "Empty RPC response must not inherit local auth identity")
+            precondition(empty.isEmpty, "Empty RPC response must remain empty")
+            for account in [[:], ["type": "apiKey"], ["unknown": "value"]] {
+                let unverified = try AccountSnapshotService.parse(
+                    accountResponse: ["account": account], limitsResponse: [:],
+                    environment: customEnvironment
+                )
+                precondition(unverified.accountId == nil, "Unverified account must not borrow a ChatGPT identity")
+            }
+            let missingAccount = try AccountSnapshotService.parse(
+                accountResponse: ["account": NSNull()], limitsResponse: [:],
+                environment: customEnvironment
+            )
+            precondition(missingAccount.accountId == nil && missingAccount.isEmpty)
+            let explicit = try AccountSnapshotService.parse(
+                accountResponse: ["account": ["type": "chatgpt", "id": "rpc-account"]],
+                limitsResponse: [:], environment: customEnvironment
+            )
+            precondition(explicit.accountId == "rpc-account", "RPC identity must take precedence")
+            print("account snapshot custom CODEX_HOME fixture passed")
+            return
+        }
         if CommandLine.arguments.count > 2 {
             let mode = CommandLine.arguments[2]
             let startedAt = Date()
@@ -174,6 +224,8 @@ CLANG_MODULE_CACHE_PATH="$TMP/module-cache" swiftc \
     -o "$TMP/account-snapshot-test"
 
 "$TMP/account-snapshot-test" "$ROOT_DIR/tests/fixtures/account-rate-limits.json"
+
+"$TMP/account-snapshot-test" "$ROOT_DIR/tests/fixtures/account-rate-limits.json" custom-auth "$TMP/custom-codex-home"
 
 for mode in silent eof malformed rpc-error; do
     CODEX_FLOW_APP_SERVER_COMMAND="exec python3 \"$TMP/fake-app-server.py\" $mode" \

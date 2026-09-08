@@ -253,7 +253,7 @@ public struct AccountView: View {
                     }
                 }
             } else {
-                dailyQuotaView
+                dailyQuotaView(value)
             }
         }
         .padding(9)
@@ -279,22 +279,33 @@ public struct AccountView: View {
         .buttonStyle(.plain)
     }
 
-    private var dailyQuotaView: some View {
-        let dailyUsages = TelemetryQueryEngine.shared.computeDailyQuotaUsage(days: 7)
-        let maxDelta = max(1.0, dailyUsages.map(\.quotaDelta).max() ?? 1.0)
-        let totalRecentDelta = dailyUsages.map(\.quotaDelta).reduce(0, +)
+    private func dailyQuotaView(_ value: AccountSnapshot) -> some View {
+        let currentAccountId = value.accountId
+        let weeklySlot = value.weeklyWindow?.slot
+        let dailyUsages = TelemetryQueryEngine.shared.computeDailyQuotaUsage(days: 7, accountId: currentAccountId, bucketId: weeklySlot)
+        let knownDeltas: [Double] = dailyUsages.compactMap { $0.quotaDelta }
+        let maxDelta = max(1.0, knownDeltas.max() ?? 1.0)
+        let totalRecentDelta = knownDeltas.reduce(0, +)
         let todayUsage = dailyUsages.first
 
         return VStack(spacing: 6) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(L("TODAY'S USAGE", "今日消耗"))
+                    Text(L("TODAY'S OBSERVED USAGE", "今日已观测周额度消耗"))
                         .font(.system(size: 7.5, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.4))
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(String(format: "%.0f%%", todayUsage?.quotaDelta ?? 0))
-                            .font(.system(size: 13, weight: .heavy, design: .rounded))
-                            .foregroundColor((todayUsage?.quotaDelta ?? 0) > 0 ? .orange : .white.opacity(0.8))
+                        if let todayDelta = todayUsage?.quotaDelta {
+                            Text(String(format: "%.1f pp", todayDelta))
+                                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                                .foregroundColor(todayDelta > 0 ? .orange : .white.opacity(0.8))
+                        } else {
+                            let pending = todayUsage?.crossMidnightPendingPp ?? 0.0
+                            Text("—")
+                                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                                .foregroundColor(.white.opacity(0.4))
+                                .help(pending > 0 ? String(format: L("Pending cross-midnight allocation: %.1f pp", "跨日待分配：%.1f pp"), pending) : "")
+                        }
                         if let tokens = todayUsage?.tokens, tokens > 0 {
                             Text("· \(TaskRun.formatTokenCount(tokens))")
                                 .font(.system(size: 7.8, weight: .semibold))
@@ -309,9 +320,15 @@ public struct AccountView: View {
                     Text(L("7-DAY TOTAL", "近 7 天消耗"))
                         .font(.system(size: 7.5, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.4))
-                    Text(String(format: "%.0f%%", totalRecentDelta))
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundColor(.cyan)
+                    if !knownDeltas.isEmpty {
+                        Text(String(format: "%.0f%%", totalRecentDelta))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(.cyan)
+                    } else {
+                        Text("—")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.4))
+                    }
                 }
             }
             .padding(.horizontal, 4)
@@ -326,8 +343,9 @@ public struct AccountView: View {
     }
 
     private func dailyQuotaRow(_ item: DailyQuotaUsage, maxDelta: Double) -> some View {
-        let fraction = max(0.0, min(1.0, item.quotaDelta / maxDelta))
-        let accent: Color = item.quotaDelta >= 10 ? .orange : (item.quotaDelta > 0 ? .cyan : .white.opacity(0.2))
+        let deltaVal = item.quotaDelta ?? 0.0
+        let fraction = max(0.0, min(1.0, deltaVal / maxDelta))
+        let accent: Color = deltaVal >= 10 ? .orange : (deltaVal > 0 ? .cyan : .white.opacity(0.2))
 
         return HStack(spacing: 6) {
             Text(item.displayDate)
@@ -338,7 +356,7 @@ public struct AccountView: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.06))
-                    if item.quotaDelta > 0 {
+                    if deltaVal > 0 {
                         Capsule().fill(accent)
                             .frame(width: max(4, proxy.size.width * CGFloat(fraction)))
                     }
@@ -347,14 +365,22 @@ public struct AccountView: View {
             .frame(height: 4)
 
             HStack(spacing: 3) {
-                if item.quotaDelta > 0 {
-                    Text(String(format: "%.0f%%", item.quotaDelta))
-                        .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .foregroundColor(accent)
+                if let delta = item.quotaDelta {
+                    if delta > 0 {
+                        Text(String(format: "%.0f%%", delta))
+                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                            .foregroundColor(accent)
+                    } else {
+                        Text("0%")
+                            .font(.system(size: 7.8))
+                            .foregroundColor(.white.opacity(0.3))
+                    }
                 } else {
-                    Text("0%")
+                    let pending = item.crossMidnightPendingPp ?? 0.0
+                    Text("—")
                         .font(.system(size: 7.8))
                         .foregroundColor(.white.opacity(0.3))
+                        .help(pending > 0 ? String(format: L("Pending cross-midnight allocation: %.1f pp", "跨日待分配：%.1f pp"), pending) : "")
                 }
 
                 if item.runs > 0 {

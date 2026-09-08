@@ -2,7 +2,7 @@ import Foundation
 
 public class TelemetryQueryEngine {
     public static let shared = TelemetryQueryEngine()
-    
+
     // History/stats refreshes can arrive concurrently from IPC-triggered UI
     // updates.  Keep the entire scan under one lock so cachedRuns is never
     // read while another refresh is mutating its Dictionary storage.
@@ -10,11 +10,13 @@ public class TelemetryQueryEngine {
     private var cachedRuns: [String: (mtime: Date, run: TaskRun)] = [:]
     private var runsDirURL: URL
     private var lastFileURL: URL
+    private var quotaSummaryURL: URL
     
     public init(customRoot: URL? = nil) {
         if let root = customRoot {
             self.runsDirURL = root.appendingPathComponent("runs")
             self.lastFileURL = root.appendingPathComponent("last.json")
+            self.quotaSummaryURL = root.appendingPathComponent("quota_summary.json")
         } else {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
@@ -23,7 +25,16 @@ public class TelemetryQueryEngine {
                 .appendingPathComponent("telemetry")
             self.runsDirURL = telemetryRoot.appendingPathComponent("runs")
             self.lastFileURL = telemetryRoot.appendingPathComponent("last.json")
+            self.quotaSummaryURL = telemetryRoot.appendingPathComponent("quota_summary.json")
         }
+    }
+
+    public func loadQuotaSummary() -> QuotaSummary? {
+        guard FileManager.default.fileExists(atPath: quotaSummaryURL.path),
+              let data = try? Data(contentsOf: quotaSummaryURL) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(QuotaSummary.self, from: data)
     }
     
     // MARK: - Core File Reading & Cache
@@ -701,8 +712,36 @@ public class TelemetryQueryEngine {
     }
 
     // MARK: - Daily Quota Usage Aggregation
-    public func computeDailyQuotaUsage(days: Int = 7) -> [DailyQuotaUsage] {
+    public func computeDailyQuotaUsage(days: Int = 7, accountId: String? = nil, bucketId: String? = nil) -> [DailyQuotaUsage] {
         let runs = loadAllRuns()
+        let summary = loadQuotaSummary()
+
+        // Daily quota data is only meaningful when the caller supplies both
+        // dimensions from the same live account snapshot. A missing dimension
+        // must remain unknown; do not select the summary's cached account or a
+        // conventional bucket because either can belong to an older context.
+        let targetAccountId = accountId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetBucketId = bucketId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summaryDailyMap: [String: DailyQuotaItem]
+        if let targetAcc = targetAccountId, !targetAcc.isEmpty,
+           let targetBucket = targetBucketId, !targetBucket.isEmpty {
+            let activeAccountId = summary?.activeAccountId?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let activeAccountId, !activeAccountId.isEmpty, activeAccountId != targetAcc {
+                // Identity inconsistency: summary was exported for a different account.
+                summaryDailyMap = [:]
+            } else {
+                let bucketFiltered = (summary?.dailyUsage ?? []).filter {
+                    $0.accountId == targetAcc && $0.bucketId == targetBucket
+                }
+                summaryDailyMap = Dictionary(
+                    bucketFiltered.map { ($0.date, $0) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+            }
+        } else {
+            summaryDailyMap = [:]
+        }
+
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let cutoff = calendar.date(byAdding: .day, value: -(max(1, days) - 1), to: today) ?? today
@@ -713,7 +752,7 @@ public class TelemetryQueryEngine {
             let day = calendar.startOfDay(for: Date(timeIntervalSince1970: ms / 1000.0))
             guard day >= cutoff && day <= today else { continue }
             let existing = buckets[day] ?? (0.0, 0, 0)
-            let delta = run.primaryQuotaDelta ?? 0.0
+            let delta = run.canonicalQuotaDelta ?? 0.0
             let tokens = run.aggregatedUsage.totalTokens ?? 0
             buckets[day] = (existing.quotaDelta + delta, existing.tokens + tokens, existing.runs + 1)
         }
@@ -726,7 +765,18 @@ public class TelemetryQueryEngine {
 
         return (0..<days).compactMap { offset in
             guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            let dStr = dateFormatter.string(from: day)
             let value = buckets[day] ?? (0.0, 0, 0)
+            let item = summaryDailyMap[dStr]
+            let rawDelta = item?.observedDeltaPp
+            let crossPending = item?.crossMidnightPendingPp
+            let coverage = item?.coverageStatus
+            let delta: Double?
+            if let cov = coverage, cov == "has_cross_midnight_pending", (rawDelta ?? 0.0) == 0.0 {
+                delta = nil
+            } else {
+                delta = rawDelta
+            }
             let displayDate: String
             if calendar.isDateInToday(day) {
                 displayDate = L("Today", "今天")
@@ -737,11 +787,13 @@ public class TelemetryQueryEngine {
             }
             return DailyQuotaUsage(
                 date: day,
-                dateString: dateFormatter.string(from: day),
+                dateString: dStr,
                 displayDate: displayDate,
-                quotaDelta: value.quotaDelta,
+                quotaDelta: delta,
                 tokens: value.tokens,
-                runs: value.runs
+                runs: value.runs,
+                crossMidnightPendingPp: crossPending,
+                coverageStatus: coverage
             )
         }
     }
