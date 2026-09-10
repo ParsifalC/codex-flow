@@ -30,10 +30,12 @@
             "required": ["id", "strategy", "reasoning_policy", "parent", "worker"],
             "properties": {
               "id": {"type": "string", "minLength": 1},
-              "strategy": {"const": "flow"},
+              "strategy": {"enum": ["flow", "runtime"]},
               "reasoning_policy": {"enum": ["fixed", "adaptive"]},
               "parent": {"$ref": "#/$defs/actor"},
-              "worker": {"$ref": "#/$defs/actor"}
+              "worker": {"$ref": "#/$defs/actor"},
+              "profile": {"type": "string"},
+              "routing_mode": {"type": "string"}
             },
             "allOf": [
               {

@@ -53,6 +53,14 @@ if [[ "$model" == "gpt-test-parent" ]]; then
     else
       printf '%s\n' 'Implement answer.txt exactly as required and verify it.' > "$last_message"
     fi
+  elif [[ "$prompt" == *"FlowPilot"* ]]; then
+    printf 'correct\n' > "$workdir/answer.txt"
+    if [[ -n "${CODEX_HOME:-}" ]]; then
+      mkdir -p "$CODEX_HOME/codex-flow/telemetry/runs"
+      cat > "$CODEX_HOME/codex-flow/telemetry/runs/simulated-run.json" <<'TELEM'
+{"parent":{"model":"gpt-test-parent","usage":{"input_tokens":80,"cached_input_tokens":15,"output_tokens":8}},"workers":{"worker-1":{"name":"worker-implementer","model":"gpt-test-worker","usage":{"input_tokens":120,"cached_input_tokens":25,"output_tokens":12}}}}
+TELEM
+    fi
   fi
   printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":10}}'
   exit 0
@@ -170,6 +178,66 @@ usage={item['role']:item for item in row['model_usage']}
 assert usage['parent']['calls']==3 and usage['parent']['input_tokens']==300,usage
 assert usage['worker']['calls']==2 and usage['worker']['input_tokens']==200,usage
 PY
+
+cat > "$TMP/runtime-manifest.json" <<EOF
+{
+  "schema_version": 2,
+  "repetitions": 1,
+  "timeout_seconds": 30,
+  "max_repair_cycles": 2,
+  "matrix": [{
+    "id":"codex-flow-runtime",
+    "strategy":"runtime",
+    "reasoning_policy":"fixed",
+    "parent":{"model":"gpt-test-parent","reasoning_effort":"high"},
+    "worker":{"model":"gpt-test-worker","reasoning_effort":"high"}
+  }],
+  "tasks": [{
+    "id":"runtime-smoke",
+    "class":"complex",
+    "source":"$REPO",
+    "base_ref":"$BASE",
+    "prompt":"Create answer.txt containing correct.",
+    "verify":["python3","verify.py"]
+  }]
+}
+EOF
+
+python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/runtime-manifest.json" --output "$TMP/runtime-results.jsonl"
+python3 - "$TMP/runtime-results.jsonl" <<'PY'
+import json, sys
+row=json.loads(open(sys.argv[1]).read())
+assert row['strategy_id']=='codex-flow-runtime',row
+assert row['strategy']=='runtime' and row['reasoning_policy']=='fixed',row
+assert row['model']=='gpt-test-parent' and row['worker_model']=='gpt-test-worker',row
+assert row['passed'] is True and row['first_passed'] is True,row
+assert row['repair_cycles']==0,row
+assert row['input_tokens']==200 and row['cached_input_tokens']==40 and row['output_tokens']==20,row
+usage={item['role']:item for item in row['model_usage']}
+assert usage['parent']['calls']==1 and usage['parent']['input_tokens']==80,usage
+assert usage['worker']['calls']==1 and usage['worker']['input_tokens']==120,usage
+PY
+
+cat > "$TMP/prices.json" <<'EOF'
+{
+  "gpt-test-parent": {"input": 1.0, "cached_input": 0.5, "output": 2.0},
+  "gpt-test-worker": {"input": 0.5, "cached_input": 0.2, "output": 1.0}
+}
+EOF
+
+python3 "$ROOT/scripts/analyze-benchmark.py" \
+  --results "$TMP/runtime-results.jsonl" \
+  --prices "$TMP/prices.json" \
+  --policy "$ROOT/policy/benchmark.toml" \
+  --min-samples 1 \
+  --json > "$TMP/runtime-analysis.json"
+python3 - "$TMP/runtime-analysis.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+configs = data['configurations']
+assert any(c['strategy_id'] == 'codex-flow-runtime' and c['strategy'] == 'runtime' for c in configs), configs
+PY
+
 
 cat > "$TMP/failfast.json" <<EOF
 {

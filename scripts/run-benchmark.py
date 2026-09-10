@@ -10,7 +10,9 @@ is measurable instead of estimated.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -22,7 +24,7 @@ from typing import Any
 
 VALID_CLASSES = {"routine", "complex", "critical"}
 VALID_EFFORTS = {"high", "xhigh", "max"}
-VALID_STRATEGIES = {"direct", "flow"}
+VALID_STRATEGIES = {"direct", "flow", "runtime"}
 FULL_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 MAX_CAPTURE = 8000
 REVIEW_SCHEMA = {
@@ -43,8 +45,8 @@ def fail(message: str) -> None:
 def config_id(config: dict[str, Any]) -> str:
     if isinstance(config.get("id"), str) and config["id"]:
         return config["id"]
-    if config.get("strategy", "direct") == "flow":
-        fail("flow strategies require a non-empty id")
+    if config.get("strategy", "direct") in {"flow", "runtime"}:
+        fail(f"{config['strategy']} strategies require a non-empty id")
     return f"{config['model']}-{config['reasoning_effort']}"
 
 
@@ -133,7 +135,7 @@ def load_manifest(path: Path) -> dict[str, Any]:
                 fail(f"matrix[{identifier}] direct strategies require a fixed reasoning_effort")
         else:
             if version < 2:
-                fail("flow strategies require manifest schema_version 2")
+                fail(f"{strategy} strategies require manifest schema_version 2")
             validate_actor(config.get("parent"), f"matrix[{identifier}].parent")
             validate_actor(config.get("worker"), f"matrix[{identifier}].worker")
             policy = config.get("reasoning_policy", "fixed")
@@ -142,9 +144,9 @@ def load_manifest(path: Path) -> dict[str, Any]:
             parent_effort = config["parent"]["reasoning_effort"]
             worker_effort = config["worker"]["reasoning_effort"]
             if policy == "fixed" and not all(isinstance(value, str) for value in (parent_effort, worker_effort)):
-                fail(f"matrix[{identifier}] fixed flow requires fixed actor reasoning efforts")
+                fail(f"matrix[{identifier}] fixed {strategy} requires fixed actor reasoning efforts")
             if policy == "adaptive" and not all(isinstance(value, dict) for value in (parent_effort, worker_effort)):
-                fail(f"matrix[{identifier}] adaptive flow requires per-class actor reasoning efforts")
+                fail(f"matrix[{identifier}] adaptive {strategy} requires per-class actor reasoning efforts")
 
     repetitions = data.get("repetitions", 1)
     timeout = data.get("timeout_seconds", 1800)
@@ -204,20 +206,29 @@ def run_codex(
     sandbox: str = "workspace-write",
     last_message_path: Path | None = None,
     output_schema_path: Path | None = None,
+    ignore_user_config: bool = True,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, int], str, float, str]:
     cmd = [
-        "codex", "exec", "--ephemeral", "--json", "--ignore-user-config",
+        "codex", "exec", "--ephemeral", "--json",
+    ]
+    if ignore_user_config:
+        cmd.append("--ignore-user-config")
+    cmd.extend([
         "--sandbox", sandbox, "--model", model,
         "-c", f'model_reasoning_effort="{effort}"',
-    ]
+    ])
     if output_schema_path is not None:
         cmd.extend(["--output-schema", str(output_schema_path)])
     if last_message_path is not None:
         cmd.extend(["--output-last-message", str(last_message_path)])
     cmd.extend(["--cd", str(workdir), prompt])
     started = time.monotonic()
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
     try:
-        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=run_env)
         elapsed = time.monotonic() - started
         last_message = ""
         if last_message_path is not None and last_message_path.exists():
@@ -531,6 +542,186 @@ def execute_flow(
     )
 
 
+def _load_manage_hooks() -> Any:
+    path = Path(__file__).resolve().parent / "manage-hooks.py"
+    spec = importlib.util.spec_from_file_location("manage_hooks", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def authorize_hooks(codex_home: Path) -> None:
+    hooks_path = codex_home / "hooks.json"
+    config_path = codex_home / "config.toml"
+    if not hooks_path.exists():
+        return
+    manage_hooks = _load_manage_hooks()
+    if manage_hooks is None:
+        return
+    entries = manage_hooks._managed_hook_entries(hooks_path)
+    if not entries:
+        return
+    lines = []
+    if config_path.exists():
+        lines.append(config_path.read_text(encoding="utf-8"))
+    lines.append("\n# Pre-authorized FlowPilot benchmark hooks")
+    for entry in entries:
+        key_repr = json.dumps(entry["key"])
+        lines.append(f"[hooks.state.{key_repr}]")
+        lines.append(f'trusted_hash = "{entry["current_hash"]}"')
+        lines.append("enabled = true\n")
+    config_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def execute_runtime(
+    task: dict[str, Any],
+    config: dict[str, Any],
+    root: Path,
+    repetition: int,
+    timeout: int,
+    max_repairs: int,
+) -> dict[str, Any]:
+    workdir = root / "repo"
+    commit = clone_source(task["source"], task["base_ref"], workdir)
+    parent = config["parent"]
+    worker = config["worker"]
+    parent_model = parent["model"]
+    worker_model = worker["model"]
+    parent_effort = actor_effort(parent, task["class"])
+    worker_effort = actor_effort(worker, task["class"])
+    usage_by_model: dict[tuple[str, str, str], dict[str, int]] = {}
+    total_wall = 0.0
+    diagnostic = ""
+
+    # Provision isolated FlowPilot environment
+    codex_home = root / ".codex"
+    bin_dir = root / "bin"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    install_sh = Path(__file__).resolve().parent.parent / "install.sh"
+    install_env = os.environ.copy()
+    install_env.update({
+        "CODEX_HOME": str(codex_home),
+        "CODEX_FLOW_BIN_DIR": str(bin_dir),
+        "CODEX_FLOW_SHELL": "none",
+        "CODEX_FLOW_STRATEGY": config.get("profile", "balanced"),
+        "CODEX_FLOW_ROUTING_MODE": config.get("routing_mode", "delegate"),
+        "CODEX_FLOW_WORKER_MODEL": worker_model,
+        "CODEX_FLOW_WORKER_ROUTINE_EFFORT": actor_effort(worker, "routine"),
+        "CODEX_FLOW_WORKER_COMPLEX_EFFORT": actor_effort(worker, "complex"),
+        "CODEX_FLOW_WORKER_CRITICAL_EFFORT": actor_effort(worker, "critical"),
+        "CODEX_FLOW_PARENT_MIN_EFFORT": actor_effort(parent, "routine"),
+        "CODEX_FLOW_PARENT_ROUTINE_EFFORT": actor_effort(parent, "routine"),
+        "CODEX_FLOW_PARENT_COMPLEX_EFFORT": actor_effort(parent, "complex"),
+        "CODEX_FLOW_PARENT_CRITICAL_EFFORT": actor_effort(parent, "critical"),
+        "CODEX_FLOW_TELEMETRY_ENABLED": "true",
+        "CODEX_FLOW_TELEMETRY_NOTIFICATIONS": "false",
+    })
+    try:
+        subprocess.run(
+            [str(install_sh)],
+            env=install_env,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        return build_row(
+            task, config, repetition, commit, False, False, 0, 0, 0.0,
+            exc.returncode, "FlowPilot runtime installation failed",
+            exc.stderr[-MAX_CAPTURE:], usage_by_model,
+        )
+
+    # Pre-authorize hooks for headless non-interactive execution
+    authorize_hooks(codex_home)
+
+    runtime_env = {
+        "CODEX_HOME": str(codex_home),
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+    }
+
+    runtime_prompt = (
+        "You are operating in an environment with the FlowPilot multi-agent runtime installed. "
+        "Follow the FlowPilot task entry instructions, use the flow-pilot skill and subagents "
+        "to inspect, plan, implement, and verify the task.\n\n"
+        f"Task:\n{task['prompt']}"
+    )
+
+    codex_exit, usage, diagnostic, elapsed, _ = run_codex(
+        workdir, parent_model, parent_effort, runtime_prompt, timeout,
+        ignore_user_config=False, env=runtime_env,
+    )
+    total_wall += elapsed
+    cumulative_codex_usage = empty_usage()
+    add_usage(cumulative_codex_usage, usage)
+
+    repair_cycles = 0
+    if codex_exit == 0:
+        passed, verification, verify_elapsed = run_verify(workdir, task["verify"], timeout)
+        total_wall += verify_elapsed
+    else:
+        passed = False
+        verification = "benchmark verification skipped because codex exec exited non-zero"
+    first_passed = passed
+
+    while not passed and codex_exit == 0 and repair_cycles < max_repairs:
+        repair_cycles += 1
+        repair_prompt = (
+            "The previous implementation did not pass the fixed benchmark verifier. "
+            "Use FlowPilot to repair only the implementation needed to satisfy the original task; do not weaken, skip, or edit the verifier.\n\n"
+            f"Original task:\n{task['prompt']}\n\nVerifier output:\n{verification}"
+        )
+        codex_exit, usage, diagnostic, elapsed, _ = run_codex(
+            workdir, parent_model, parent_effort, repair_prompt, timeout,
+            ignore_user_config=False, env=runtime_env,
+        )
+        total_wall += elapsed
+        add_usage(cumulative_codex_usage, usage)
+        if codex_exit != 0:
+            passed = False
+            verification = "benchmark verification skipped because repair codex exec exited non-zero"
+            break
+        passed, verification, verify_elapsed = run_verify(workdir, task["verify"], timeout)
+        total_wall += verify_elapsed
+
+    # Attribute tokens from FlowPilot telemetry runs if present
+    runs_dir = codex_home / "codex-flow" / "telemetry" / "runs"
+    review_cycles = 0
+    if runs_dir.exists():
+        for run_file in sorted(runs_dir.glob("*.json")):
+            try:
+                run_data = json.loads(run_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            p = run_data.get("parent")
+            if isinstance(p, dict):
+                p_u = p.get("usage_delta") or p.get("usage")
+                if isinstance(p_u, dict) and any(p_u.get(k, 0) > 0 for k in ("input_tokens", "cached_input_tokens", "output_tokens")):
+                    add_model_usage(usage_by_model, "parent", parent_model, parent_effort, p_u)
+            workers = run_data.get("workers")
+            if isinstance(workers, dict):
+                for w_name, w in workers.items():
+                    if "review" in w_name.lower():
+                        review_cycles += 1
+                    if isinstance(w, dict) and isinstance(w.get("usage"), dict):
+                        w_u = w["usage"]
+                        if any(w_u.get(k, 0) > 0 for k in ("input_tokens", "cached_input_tokens", "output_tokens")):
+                            add_model_usage(usage_by_model, "worker", worker_model, worker_effort, w_u)
+
+    # Fallback to top-level codex exec usage attributed to parent if telemetry was not populated
+    if not usage_by_model:
+        add_model_usage(usage_by_model, "parent", parent_model, parent_effort, cumulative_codex_usage)
+
+    return build_row(
+        task, config, repetition, commit, passed, first_passed, repair_cycles,
+        review_cycles, total_wall, codex_exit, verification, diagnostic, usage_by_model,
+    )
+
+
 def execute_run(
     task: dict[str, Any],
     config: dict[str, Any],
@@ -539,8 +730,11 @@ def execute_run(
     timeout: int,
     max_repairs: int,
 ) -> dict[str, Any]:
-    if config_strategy(config) == "flow":
+    strategy = config_strategy(config)
+    if strategy == "flow":
         return execute_flow(task, config, root, repetition, timeout, max_repairs)
+    if strategy == "runtime":
+        return execute_runtime(task, config, root, repetition, timeout, max_repairs)
     return execute_direct(task, config, root, repetition, timeout, max_repairs)
 
 

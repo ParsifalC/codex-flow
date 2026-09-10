@@ -13,7 +13,7 @@
     "task_id": {"type": "string", "minLength": 1},
     "task_class": {"enum": ["routine", "complex", "critical"]},
     "strategy_id": {"type": "string", "minLength": 1},
-    "strategy": {"enum": ["direct", "flow"]},
+    "strategy": {"enum": ["direct", "flow", "runtime"]},
     "reasoning_policy": {"enum": ["fixed", "adaptive"]},
     "model": {"type": "string", "minLength": 1},
     "reasoning_effort": {"enum": ["high", "xhigh", "max"]},
@@ -64,7 +64,7 @@
       }
     },
     {
-      "if": {"properties": {"strategy": {"const": "flow"}}},
+      "if": {"properties": {"strategy": {"enum": ["flow", "runtime"]}}},
       "then": {
         "properties": {
           "worker_model": {"type": "string", "minLength": 1},

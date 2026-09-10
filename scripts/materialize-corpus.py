@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 FIXED_DATE = "2026-01-01T00:00:00+00:00"
 VALID_CLASSES = {"routine", "complex", "critical"}
 VALID_EFFORTS = {"high", "xhigh", "max"}
-VALID_STRATEGIES = {"direct", "flow"}
+VALID_STRATEGIES = {"direct", "flow", "runtime"}
 
 
 def load_json(path: Path):
@@ -121,7 +121,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default="benchmark/corpus.json")
     ap.add_argument("--profiles", default="benchmark/profiles.json")
-    ap.add_argument("--profile", choices=["quick", "full"], default="quick")
+    ap.add_argument("--profile", choices=["quick", "full", "agentic"], default="quick")
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--timeout-seconds", type=int, default=900)

@@ -131,7 +131,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
                     raise ValueError(f"{path}:{n}: missing {field}")
             if not isinstance(row["strategy_id"], str) or not row["strategy_id"]:
                 raise ValueError(f"{path}:{n}: invalid strategy_id")
-            if row["strategy"] not in {"direct", "flow"}:
+            if row["strategy"] not in {"direct", "flow", "runtime"}:
                 raise ValueError(f"{path}:{n}: invalid strategy")
             if row["reasoning_policy"] not in {"fixed", "adaptive"}:
                 raise ValueError(f"{path}:{n}: invalid reasoning_policy")
@@ -170,12 +170,12 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
                     raise ValueError(f"{path}:{n}: direct model_usage does not match strategy metadata")
             else:
                 if not isinstance(row.get("worker_model"), str) or not row["worker_model"]:
-                    raise ValueError(f"{path}:{n}: flow strategy requires worker_model")
+                    raise ValueError(f"{path}:{n}: {row['strategy']} strategy requires worker_model")
                 if row.get("worker_reasoning_effort") not in EFFORT_RANK:
-                    raise ValueError(f"{path}:{n}: flow strategy requires worker_reasoning_effort")
+                    raise ValueError(f"{path}:{n}: {row['strategy']} strategy requires worker_reasoning_effort")
                 for usage in row["model_usage"]:
                     if usage["role"] == "direct":
-                        raise ValueError(f"{path}:{n}: flow model_usage cannot use direct role")
+                        raise ValueError(f"{path}:{n}: {row['strategy']} model_usage cannot use direct role")
                     expected_model = row["model"] if usage["role"] == "parent" else row["worker_model"]
                     expected_effort = row["reasoning_effort"] if usage["role"] == "parent" else row["worker_reasoning_effort"]
                     if usage["model"] != expected_model or usage["reasoning_effort"] != expected_effort:

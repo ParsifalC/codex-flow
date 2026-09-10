@@ -58,6 +58,24 @@
           }
         }
       ]
+    },
+    "agentic": {
+      "description": "One repetition comparing direct baselines with real FlowPilot runtime execution.",
+      "repetitions": 1,
+      "matrix": [
+        {"id": "luna-direct", "strategy": "direct", "model": "gpt-5.6-luna", "reasoning_effort": "high"},
+        {"id": "terra-direct", "strategy": "direct", "model": "gpt-5.6-terra", "reasoning_effort": "high"},
+        {"id": "sol-direct", "strategy": "direct", "model": "gpt-5.6-sol", "reasoning_effort": "high"},
+        {
+          "id": "codex-flow-runtime",
+          "strategy": "runtime",
+          "reasoning_policy": "fixed",
+          "profile": "balanced",
+          "routing_mode": "delegate",
+          "parent": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+          "worker": {"model": "gpt-5.6-luna", "reasoning_effort": "high"}
+        }
+      ]
     }
   }
 }
