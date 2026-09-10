@@ -8,10 +8,52 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
+def _parse_toml_value(raw: str) -> Any:
+    raw = raw.strip()
+    if raw.lower() == "true":
+        return True
+    if raw.lower() == "false":
+        return False
+    if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+        return raw[1:-1]
+    try:
+        if "." in raw or "e" in raw.lower():
+            return float(raw)
+        return int(raw)
+    except ValueError:
+        return raw
+
+
+def _fallback_load_toml(text: str) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    current_section: dict[str, Any] = result
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section_name = line[1:-1].strip()
+            current_section = result.setdefault(section_name, {})
+            continue
+        if "=" in line:
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = _parse_toml_value(val)
+            current_section[key] = val
+    return result
+
+
+def load_policy(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    try:
+        import tomllib
+        return tomllib.loads(text)
+    except ImportError:
+        try:
+            import tomli
+            return tomli.loads(text)
+        except ImportError:
+            return _fallback_load_toml(text)
 
 EFFORT_RANK = {"high": 0, "xhigh": 1, "max": 2}
 TASK_CLASSES = ("routine", "complex", "critical")
@@ -368,15 +410,25 @@ def main() -> int:
     ap.add_argument("--results", required=True)
     ap.add_argument("--prices", required=True)
     ap.add_argument("--policy", default="policy/benchmark.toml")
+    ap.add_argument("--min-samples", type=int, default=None, help="override minimum required samples")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    with open(args.policy, "rb") as policy_file:
-        policy = tomllib.load(policy_file)
+    policy = load_policy(Path(args.policy))
     if policy.get("schema_version") != 2:
         raise ValueError("benchmark policy schema_version must be 2")
     quality = policy["quality"]
     comparison = policy["comparison"]
+
+    min_samples_override = args.min_samples
+    if min_samples_override is not None and min_samples_override < 1:
+        raise ValueError("--min-samples must be >= 1")
+
+    quality_min_samples = min_samples_override if min_samples_override is not None else quality["min_samples_per_configuration"]
+    comparison_config = dict(comparison)
+    if min_samples_override is not None:
+        comparison_config["min_samples"] = min_samples_override
+
     prices = json.loads(Path(args.prices).read_text())
     validate_prices(prices)
     rows = load_jsonl(Path(args.results))
@@ -391,7 +443,7 @@ def main() -> int:
         "critical": quality["critical_min_pass_rate"],
     }
     summaries = [
-        summarize(items, prices, thresholds[task_class], quality["min_samples_per_configuration"], quality["max_average_repair_cycles"])
+        summarize(items, prices, thresholds[task_class], quality_min_samples, quality["max_average_repair_cycles"])
         for (task_class, _), items in sorted(grouped.items())
     ]
 
@@ -420,9 +472,9 @@ def main() -> int:
         else:
             recommendations[task_class] = None
         by_id = {item["strategy_id"]: item for item in class_items}
-        sol_evidence[task_class] = capability_comparison(task_class, by_id, comparison)
-        flow_evidence[task_class] = flow_comparison(task_class, by_id, comparison)
-        adaptive_evidence[task_class] = adaptive_comparison(task_class, by_id, comparison)
+        sol_evidence[task_class] = capability_comparison(task_class, by_id, comparison_config)
+        flow_evidence[task_class] = flow_comparison(task_class, by_id, comparison_config)
+        adaptive_evidence[task_class] = adaptive_comparison(task_class, by_id, comparison_config)
 
     result = {
         "recommendations": recommendations,

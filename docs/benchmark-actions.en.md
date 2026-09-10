@@ -6,7 +6,7 @@
 
 </div>
 
-The optional GitHub Actions workflow automates the built-in 30-run `quick` benchmark profile in the cloud. It is not scheduled and will never trigger on `push` or `pull_request`; it requires manual dispatch with an explicit confirmation phrase.
+The optional GitHub Actions workflow automates the built-in 45-run `quick` benchmark profile in the cloud. It is not scheduled and will never trigger on `push` or `pull_request`; it requires manual dispatch with an explicit confirmation phrase.
 
 ---
 
@@ -27,7 +27,7 @@ Use an API project/key with an intentionally bounded budget and only the model a
 1. Open the **Actions** tab on GitHub.
 2. Select the **benchmark quick** workflow and click **Run workflow**.
 3. Fill in the parameters:
-   - `confirm`: `RUN QUICK 30`
+   - `confirm`: `RUN QUICK 45`
    - `codex_npm_version`: `latest` (or a pinned npm version)
 
 ---
@@ -35,7 +35,7 @@ Use an API project/key with an intentionally bounded budget and only the model a
 ## Benchmark Composition
 
 ```text
-6 tasks × 5 strategies × 1 repetition = 30 runs
+9 tasks × 5 strategies × 1 repetition = 45 runs
 
 1. Luna direct (high)
 2. Terra direct (high)

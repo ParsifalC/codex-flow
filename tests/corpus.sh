@@ -23,14 +23,14 @@ python3 - "$TMP/summary-a.json" "$TMP/quick-a.json" "$TMP/quick-b.json" <<'PY'
 import json, subprocess, sys
 summary=json.load(open(sys.argv[1]))
 a=json.load(open(sys.argv[2])); b=json.load(open(sys.argv[3]))
-assert summary['tasks']==6, summary
+assert summary['tasks']==9, summary
 assert summary['configurations']==5, summary
 assert summary['repetitions']==1, summary
-assert summary['planned_runs']==30, summary
+assert summary['planned_runs']==45, summary
 assert summary['controlled_reasoning_effort']=='high', summary
 assert summary['strategies']==['luna-direct','terra-direct','sol-direct','codex-flow-high','codex-flow-adaptive'],summary
-assert len(a['tasks'])==6 and len(a['matrix'])==5 and a['repetitions']==1 and a['schema_version']==2
-assert {name:sum(t['class']==name for t in a['tasks']) for name in ('routine','complex','critical')} == {'routine':2,'complex':2,'critical':2}
+assert len(a['tasks'])==9 and len(a['matrix'])==5 and a['repetitions']==1 and a['schema_version']==2
+assert {name:sum(t['class']==name for t in a['tasks']) for name in ('routine','complex','critical')} == {'routine':3,'complex':3,'critical':3}
 assert [t['base_ref'] for t in a['tasks']] == [t['base_ref'] for t in b['tasks']]
 for task in a['tasks']:
     assert len(task['base_ref']) == 40, task
@@ -47,17 +47,17 @@ python3 "$ROOT/scripts/materialize-corpus.py" \
 python3 - "$TMP/full-summary.json" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))
-assert s['tasks']==6, s
+assert s['tasks']==9, s
 assert s['configurations']==5, s
 assert s['repetitions']==3, s
-assert s['planned_runs']==90, s
+assert s['planned_runs']==135, s
 PY
 
 python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/quick-a.json" --output "$TMP/unused.jsonl" --dry-run > "$TMP/runner-plan.json"
 python3 - "$TMP/runner-plan.json" <<'PY'
 import json,sys
 p=json.load(open(sys.argv[1]))
-assert p['planned_runs']==30,p
+assert p['planned_runs']==45,p
 assert p['strategies']==['luna-direct','terra-direct','sol-direct','codex-flow-high','codex-flow-adaptive'],p
 PY
 

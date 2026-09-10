@@ -36,16 +36,19 @@
 
 ## 平衡工程语料库 (Corpus)
 
-语料库包含 6 个确定性工程任务，严格平衡分布于三类复杂度：
+语料库包含 9 个确定性工程任务，严格平衡分布于三类复杂度：
 
 | 任务名称 | 复杂度分类 | 核心考察焦点 |
 | :--- | :--- | :--- |
 | `routine-query-normalization` | 常规 (Routine) | 本地化 Unicode 与空白字符处理 |
 | `routine-env-precedence` | 常规 (Routine) | 配置加载优先级与边界分支 |
+| `routine-header-sanitization` | 常规 (Routine) | HTTP 标头规范化、类型安全与 CRLF 注入防御 |
 | `complex-renew-provider-refactor` | 复杂 (Complex) | 模块化 Provider 注册表重构、校验与向下兼容 |
 | `complex-config-migration` | 复杂 (Complex) | 深拷贝安全的新旧配置迁移与幂等性保证 |
+| `complex-dag-resolver` | 复杂 (Complex) | 拓扑依赖解析、环路与缺失依赖检测、确定性平局仲裁与分批 |
 | `critical-resumable-migration` | 关键 (Critical) | 带审计日志、校验可恢复的幂等数据迁移 |
 | `critical-atomic-state-write` | 关键 (Critical) | 原子化文件持久替换、权限控制、软链安全与异常回滚 |
+| `critical-audit-event-wal` | 关键 (Critical) | 带校验和保护、撕裂写入自动修复与崩溃恢复的只追加预写日志 |
 
 无需调用大模型即可本地初始化语料库：
 
@@ -56,8 +59,8 @@ codex-flow benchmark-corpus quick
 测试配置文件见 `benchmark/profiles.json`：
 
 ```text
-quick: 6 任务 × 5 策略 × 1 次重复 = 30 轮运行
-full:  6 任务 × 5 策略 × 3 次重复 = 90 轮运行
+quick: 9 任务 × 5 策略 × 1 次重复 = 45 轮运行
+full:  9 任务 × 5 策略 × 3 次重复 = 135 轮运行
 ```
 
 ---

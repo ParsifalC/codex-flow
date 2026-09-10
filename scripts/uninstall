@@ -18,7 +18,7 @@ if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
   FLOWPILOT_LAUNCH_PLIST="$HOME/Library/LaunchAgents/$FLOWPILOT_LAUNCH_LABEL.plist"
   launchctl bootout "gui/$(id -u)/$FLOWPILOT_LAUNCH_LABEL" >/dev/null 2>&1 || true
   launchctl bootout "gui/$(id -u)" "$FLOWPILOT_LAUNCH_PLIST" >/dev/null 2>&1 || true
-  rm -f "$FLOWPILOT_LAUNCH_PLIST"
+  rm -f "$FLOWPILOT_LAUNCH_PLIST" 2>/dev/null || true
 fi
 
 SHELL_HELPER="$STATE_DIR/shell/manage-shell.py"

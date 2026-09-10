@@ -36,16 +36,19 @@ The first four strategies form the controlled same-effort comparison. `codex-flo
 
 ## Balanced Corpus
 
-The corpus contains six deterministic engineering tasks, balanced across the three classes:
+The corpus contains nine deterministic engineering tasks, balanced across the three classes:
 
 | Task | Class | Focus |
 | :--- | :--- | :--- |
 | `routine-query-normalization` | routine | localized Unicode and whitespace behavior |
 | `routine-env-precedence` | routine | configuration precedence and edge cases |
+| `routine-header-sanitization` | routine | HTTP header normalization, type safety, and CRLF injection defense |
 | `complex-renew-provider-refactor` | complex | reusable provider registry, validation, and legacy compatibility |
 | `complex-config-migration` | complex | deep-copy-safe old/new configuration migration and idempotency |
+| `complex-dag-resolver` | complex | topological dependency resolution, cycle/missing detection, tie-breaking, and batching |
 | `critical-resumable-migration` | critical | validated, journaled, resumable, idempotent migration |
 | `critical-atomic-state-write` | critical | durable atomic replacement, permissions, symlink safety, and cleanup |
+| `critical-audit-event-wal` | critical | checksum-protected, torn-write-resilient, crash-durable append-only write-ahead log |
 
 Generate the corpus without calling a model:
 
@@ -56,8 +59,8 @@ codex-flow benchmark-corpus quick
 Profiles are defined in `benchmark/profiles.json`:
 
 ```text
-quick: 6 tasks × 5 strategies × 1 repetition = 30 runs
-full:  6 tasks × 5 strategies × 3 repetitions = 90 runs
+quick: 9 tasks × 5 strategies × 1 repetition = 45 runs
+full:  9 tasks × 5 strategies × 3 repetitions = 135 runs
 ```
 
 ---

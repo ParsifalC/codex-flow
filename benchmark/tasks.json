@@ -1,23 +1,50 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "tasks": [
     {
-      "id": "routine-local-fix",
+      "id": "routine-query-normalization",
       "class": "routine",
-      "description": "Localized implementation change with explicit acceptance criteria and targeted tests.",
-      "weight": 1.0
+      "description": "Localized bug fix with edge-case normalization and no API change."
     },
     {
-      "id": "complex-multifile-refactor",
+      "id": "routine-env-precedence",
+      "class": "routine",
+      "description": "Configuration precedence bug requiring exact fallback semantics."
+    },
+    {
+      "id": "routine-header-sanitization",
+      "class": "routine",
+      "description": "HTTP header sanitization, case normalization, and injection protection."
+    },
+    {
+      "id": "complex-renew-provider-refactor",
       "class": "complex",
-      "description": "Multi-file refactor requiring compatibility preservation, test updates, and bounded debugging.",
-      "weight": 1.5
+      "description": "Multi-file registry refactor with isolation, validation, normalization, and legacy compatibility."
     },
     {
-      "id": "critical-infra-change",
+      "id": "complex-config-migration",
+      "class": "complex",
+      "description": "Idempotent, alias-safe configuration migration with per-key precedence and validation."
+    },
+    {
+      "id": "complex-dag-resolver",
+      "class": "complex",
+      "description": "Topological dependency graph resolver with cycle detection, tie-breaking, and batch scheduling."
+    },
+    {
+      "id": "critical-resumable-migration",
       "class": "critical",
-      "description": "High-risk infrastructure or migration-style change with strict regression evidence.",
-      "weight": 2.0
+      "description": "Crash-resumable record migration with preflight validation and durable progress tracking."
+    },
+    {
+      "id": "critical-atomic-state-write",
+      "class": "critical",
+      "description": "Crash-durable atomic replacement with permission preservation, directory fsync, and failure cleanup."
+    },
+    {
+      "id": "critical-audit-event-wal",
+      "class": "critical",
+      "description": "Crash-durable Write-Ahead Log with record framing, CRC32 integrity, and torn-write recovery."
     }
   ]
 }

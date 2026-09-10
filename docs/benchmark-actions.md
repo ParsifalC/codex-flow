@@ -6,7 +6,7 @@
 
 </div>
 
-本项目包含可选的 GitHub Actions 工作流，用于在云端自动化执行内置的 30 轮 `quick` 基准评测。该工作流绝不在 `push` 或 `pull_request` 时自动触发，必须由管理员在 GitHub 网页上手动派发并输入严格的确认口令。
+本项目包含可选的 GitHub Actions 工作流，用于在云端自动化执行内置的 45 轮 `quick` 基准评测。该工作流绝不在 `push` 或 `pull_request` 时自动触发，必须由管理员在 GitHub 网页上手动派发并输入严格的确认口令。
 
 ---
 
@@ -27,7 +27,7 @@ OPENAI_API_KEY
 1. 进入 GitHub 仓库的 **Actions** 选项卡；
 2. 选择 **benchmark quick** 工作流并点击 **Run workflow**；
 3. 输入必填参数：
-   - `confirm`: `RUN QUICK 30`
+   - `confirm`: `RUN QUICK 45`
    - `codex_npm_version`: `latest`（或指定 npm 版本号）
 
 ---
@@ -35,7 +35,7 @@ OPENAI_API_KEY
 ## 评测矩阵构成
 
 ```text
-6 任务 × 5 策略 × 1 次重复 = 30 轮运行
+9 任务 × 5 策略 × 1 次重复 = 45 轮运行
 
 1. Luna direct (high)
 2. Terra direct (high)
