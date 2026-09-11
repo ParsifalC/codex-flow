@@ -146,7 +146,13 @@ STRATEGY = StrategySpec(
     worker_budget=worker_budget,
     independent_review=never,
     lifecycle=lifecycle,
-    quota_sensitive=True,
+    # Efficient workers are deliberately cheap enough that proven parallel
+    # implementation should not require an aggressive fan-out override.
+    allow_parallel_write=True,
+    # Keep quota pressure focused on expensive Parent usage. The strategy's own
+    # low-speculation WorkerBudget remains the hard envelope (2 implementers,
+    # 5 total Workers at the largest task classes).
+    quota_sensitive=False,
     task_budget=task_budget,
     reasoning_rollout=reasoning_rollout,
 )

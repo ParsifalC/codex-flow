@@ -53,6 +53,25 @@ assert s['repetitions']==3, s
 assert s['planned_runs']==135, s
 PY
 
+# Agentic is the real FlowPilot comparison surface. Keep both efficient and
+# balanced runtime profiles paired with the same three direct baselines.
+python3 "$ROOT/scripts/materialize-corpus.py" \
+  --corpus "$ROOT/benchmark/corpus.json" \
+  --profiles "$ROOT/benchmark/profiles.json" \
+  --profile agentic \
+  --output-dir "$TMP/agentic" \
+  --manifest "$TMP/agentic.json" > "$TMP/agentic-summary.json"
+python3 - "$TMP/agentic-summary.json" "$TMP/agentic.json" <<'PY'
+import json,sys
+s=json.load(open(sys.argv[1])); m=json.load(open(sys.argv[2]))
+expected=['luna-direct','terra-direct','sol-direct','codex-flow-runtime-efficient','codex-flow-runtime-balanced']
+assert s['tasks']==9 and s['configurations']==5 and s['repetitions']==1, s
+assert s['planned_runs']==45 and s['strategies']==expected, s
+assert [entry['id'] for entry in m['matrix']] == expected, m['matrix']
+profiles={entry['id']:entry.get('profile') for entry in m['matrix'] if entry['strategy']=='runtime'}
+assert profiles == {'codex-flow-runtime-efficient':'efficient','codex-flow-runtime-balanced':'balanced'}, profiles
+PY
+
 python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/quick-a.json" --output "$TMP/unused.jsonl" --dry-run > "$TMP/runner-plan.json"
 python3 - "$TMP/runner-plan.json" <<'PY'
 import json,sys
