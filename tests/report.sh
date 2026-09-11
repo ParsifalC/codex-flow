@@ -62,7 +62,7 @@ PY
 printf '{}\n' > "$TMP/empty-analysis.json"
 python3 "$ROOT/scripts/render-benchmark-report.py" \
   --results "$TMP/token-results.jsonl" \
-  --prices "$ROOT/tests/fixtures/benchmark-prices.json" \
+  --prices "$ROOT/benchmark/prices/gpt-5.6-2026-08-30.json" \
   --analysis "$TMP/empty-analysis.json" \
   --output "$TMP/token-report.md" \
   --title 'Token attribution fixture'
