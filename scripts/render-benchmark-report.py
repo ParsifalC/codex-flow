@@ -77,6 +77,42 @@ def composition(row: dict[str, Any]) -> str:
     return f"{row['model']} parent → {row['worker_model']} worker / {row['reasoning_effort']}"
 
 
+def token_metrics(items: list[dict[str, Any]]) -> dict[str, float]:
+    count = len(items)
+    total_input = sum(item["input_tokens"] for item in items)
+    total_cached = sum(item["cached_input_tokens"] for item in items)
+    total_output = sum(item["output_tokens"] for item in items)
+    parent_tokens = 0
+    worker_tokens = 0
+    for item in items:
+        for usage in item.get("model_usage", []):
+            tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            if usage.get("role") == "parent":
+                parent_tokens += tokens
+            elif usage.get("role") == "worker":
+                worker_tokens += tokens
+    return {
+        "total_tokens": (total_input + total_output) / count,
+        "parent_tokens": parent_tokens / count,
+        "worker_tokens": worker_tokens / count,
+        "cached_input_tokens": total_cached / count,
+        "net_new_input_tokens": (total_input - total_cached) / count,
+        "cache_rate": total_cached / total_input if total_input else 0.0,
+    }
+
+
+def relative_change(value: float, reference: float) -> float | None:
+    return value / reference - 1 if reference else None
+
+
+def fmt_avg_tokens(value: float) -> str:
+    return f"{round(value):,}"
+
+
+def fmt_change(value: float | None) -> str:
+    return signed_pct(value) if value is not None else "n/a"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
@@ -94,6 +130,8 @@ def main() -> int:
     total_input = sum(row["input_tokens"] for row in rows)
     total_cached = sum(row["cached_input_tokens"] for row in rows)
     total_output = sum(row["output_tokens"] for row in rows)
+    total_tokens = total_input + total_output
+    net_new_input = total_input - total_cached
     passed = sum(1 for row in rows if row["passed"])
     first_passed = sum(1 for row in rows if row["first_passed"])
     infra_failures = sum(1 for row in rows if row.get("codex_exit_code", 0) != 0)
@@ -103,6 +141,8 @@ def main() -> int:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[row["strategy_id"]].append(row)
+    strategy_tokens = {strategy_id: token_metrics(items) for strategy_id, items in grouped.items()}
+    sol_tokens = strategy_tokens.get("sol-direct")
 
     lines = [
         f"# {args.title}",
@@ -118,7 +158,9 @@ def main() -> int:
         f"- Repair cycles: **{repairs}**",
         f"- Parent review cycles: **{reviews}**",
         f"- API-equivalent reference cost: **${total_cost:.6f}**",
-        f"- Tokens: input **{total_input:,}**, cached input **{total_cached:,}**, output **{total_output:,}**",
+        f"- Total tokens: **{total_tokens:,}**",
+        f"- Input tokens: **{total_input:,}** — cached **{total_cached:,}**, net-new **{net_new_input:,}**",
+        f"- Output tokens: **{total_output:,}**",
         "",
         "## Strategy results",
         "",
@@ -136,6 +178,33 @@ def main() -> int:
         lines.append(
             f"| {strategy_id} | {composition(items[0])} | {len(items)} | {pct(item_passed, len(items))} | "
             f"{pct(item_first, len(items))} | {item_repairs} | {item_reviews} | {item_wall:.1f}s | ${item_cost / len(items):.6f} |"
+        )
+
+    lines.extend([
+        "",
+        "## Token efficiency",
+        "",
+        "This table separates raw token volume from where the work ran. Runtime Parent/Worker values come from FlowPilot role-attributed telemetry; net-new input excludes cached input. Deltas use `sol-direct` as the paired high-capability baseline when present.",
+        "",
+        "| Strategy | Avg total tokens | Avg Parent tokens | Avg Worker tokens | Avg cached input | Avg net-new input | Cache rate | Total Δ vs Sol | Net-new Δ vs Sol | Parent reduction vs Sol |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ])
+    for strategy_id, items in sorted(grouped.items()):
+        metrics = strategy_tokens[strategy_id]
+        if sol_tokens is not None:
+            total_delta = relative_change(metrics["total_tokens"], sol_tokens["total_tokens"])
+            net_new_delta = relative_change(metrics["net_new_input_tokens"], sol_tokens["net_new_input_tokens"])
+        else:
+            total_delta = net_new_delta = None
+        if items[0]["strategy"] != "direct" and sol_tokens is not None:
+            parent_reduction = 1 - metrics["parent_tokens"] / sol_tokens["total_tokens"] if sol_tokens["total_tokens"] else None
+        else:
+            parent_reduction = None
+        lines.append(
+            f"| {strategy_id} | {fmt_avg_tokens(metrics['total_tokens'])} | {fmt_avg_tokens(metrics['parent_tokens'])} | "
+            f"{fmt_avg_tokens(metrics['worker_tokens'])} | {fmt_avg_tokens(metrics['cached_input_tokens'])} | "
+            f"{fmt_avg_tokens(metrics['net_new_input_tokens'])} | {metrics['cache_rate']:.1%} | "
+            f"{fmt_change(total_delta)} | {fmt_change(net_new_delta)} | {fmt_change(parent_reduction)} |"
         )
 
     lines.extend([
