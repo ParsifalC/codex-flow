@@ -309,6 +309,12 @@ public struct FlowPilotUpdateView: View {
 
     private var restartExplanation: String {
         if service.isFlowPilotRestartRequired && service.isCodexRestartRequired {
+            if let reason = service.codexRestartReason, !reason.isEmpty {
+                return L(
+                    "The new files are installed (\(reason)). Restart FlowPilot to load the new app binary, and fully restart Codex to activate updated configurations.",
+                    "新文件已经安装（\(reason)）。请重启 FlowPilot 载入新的 App 程序，并完整重启 Codex 以激活新配置。"
+                )
+            }
             return L(
                 "The new files are installed. Restart FlowPilot to load the new app binary, and fully restart Codex to activate updated FlowPilot policy and hook snapshots.",
                 "新文件已经安装。请重启 FlowPilot 载入新的 App 程序，并完整重启 Codex 以激活新的 FlowPilot 策略和 Hook 快照。"
@@ -318,6 +324,12 @@ public struct FlowPilotUpdateView: View {
             return L(
                 "The updated FlowPilot binary is installed. Restart FlowPilot to load it.",
                 "新的 FlowPilot 程序已经安装。请重启 FlowPilot 以载入新版本。"
+            )
+        }
+        if let reason = service.codexRestartReason, !reason.isEmpty {
+            return L(
+                "Components updated (\(reason)). Fully restart Codex to activate updated configurations.",
+                "组件已更新（\(reason)）。请完整重启 Codex 以激活新配置。"
             )
         }
         return L(

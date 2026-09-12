@@ -482,6 +482,102 @@ class UpdaterTest(unittest.TestCase):
                 mock_check.assert_called_once()
                 mock_perform.assert_called_once()
 
+    def test_codex_managed_files_diff_detects_changes(self) -> None:
+        skill_live = self.codex_home / "skills" / "flow-pilot" / "SKILL.md"
+        skill_live.parent.mkdir(parents=True, exist_ok=True)
+        skill_live.write_text("live skill content", encoding="utf-8")
+        backup = updater._snapshot("1.7.0")
+
+        differs, names = updater._codex_managed_files_diff(backup)
+        self.assertFalse(differs)
+        self.assertEqual(names, [])
+
+        skill_live.write_text("updated skill content", encoding="utf-8")
+        differs, names = updater._codex_managed_files_diff(backup)
+        self.assertTrue(differs)
+        self.assertIn("flow-pilot/SKILL.md", names)
+
+    def test_resolve_codex_restart_logic(self) -> None:
+        skill_live = self.codex_home / "skills" / "flow-pilot" / "SKILL.md"
+        skill_live.parent.mkdir(parents=True, exist_ok=True)
+        skill_live.write_text("live", encoding="utf-8")
+        backup = updater._snapshot("1.7.0")
+
+        # 1. Manifest explicitly says False -> False
+        req, pids, reason = updater._resolve_codex_restart_requirement(backup, {"restart_required": False})
+        self.assertFalse(req)
+        self.assertEqual(pids, [])
+
+        # 2. No file changes -> False
+        req, pids, reason = updater._resolve_codex_restart_requirement(backup, {"restart_required": True})
+        self.assertFalse(req)
+        self.assertEqual(pids, [])
+
+        # 3. File changed but no running processes -> False
+        skill_live.write_text("changed", encoding="utf-8")
+        with patch.object(updater, "_find_running_codex_pids", return_value=[]):
+            req, pids, reason = updater._resolve_codex_restart_requirement(backup, {"restart_required": True})
+            self.assertFalse(req)
+            self.assertEqual(pids, [])
+            self.assertIsNone(reason)
+
+        # 4. File changed AND running processes found -> True with PIDs and reason
+        with patch.object(updater, "_find_running_codex_pids", return_value=[4242, 4243]):
+            req, pids, reason = updater._resolve_codex_restart_requirement(backup, {"restart_required": True})
+            self.assertTrue(req)
+            self.assertEqual(pids, [4242, 4243])
+            self.assertIn("flow-pilot/SKILL.md", reason or "")
+
+    def test_auto_ack_clears_when_tracked_pids_terminate(self) -> None:
+        state = updater.load_state()
+        state.restart_required = True
+        state.pending_codex_pids = [999998, 999999]
+        state.restart_reason = "Changed: SKILL.md"
+        updater.save_state(state)
+
+        with patch.object(updater, "_pid_is_alive", return_value=False):
+            loaded = updater.load_state()
+            self.assertFalse(loaded.restart_required)
+            self.assertEqual(loaded.pending_codex_pids, [])
+            self.assertIsNone(loaded.restart_reason)
+
+    def test_auto_ack_keeps_alive_when_pid_still_running(self) -> None:
+        state = updater.load_state()
+        state.restart_required = True
+        state.pending_codex_pids = [12345]
+        state.restart_reason = "Changed: SKILL.md"
+        updater.save_state(state)
+
+        with patch.object(updater, "_pid_is_alive", return_value=True):
+            loaded = updater.load_state()
+            self.assertTrue(loaded.restart_required)
+            self.assertEqual(loaded.pending_codex_pids, [12345])
+
+    def test_telemetry_auto_ack_on_hook(self) -> None:
+        SPEC_TEL = importlib.util.spec_from_file_location("codex_flow_telemetry", ROOT / "scripts" / "telemetry.py")
+        assert SPEC_TEL and SPEC_TEL.loader
+        tel = importlib.util.module_from_spec(SPEC_TEL)
+        SPEC_TEL.loader.exec_module(tel)
+
+        state = updater.load_state()
+        state.restart_required = True
+        my_pid = os.getpid()
+        state.pending_codex_pids = [my_pid]
+        updater.save_state(state)
+
+        # 1. Stale caller PID (in pending_codex_pids) does NOT clear
+        with patch("os.getppid", return_value=my_pid):
+            tel._check_auto_ack_restart_on_hook()
+            loaded = updater.load_state()
+            self.assertTrue(loaded.restart_required)
+
+        # 2. Fresh caller PID (not in pending_codex_pids) auto-clears
+        with patch("os.getppid", return_value=my_pid + 99999):
+            tel._check_auto_ack_restart_on_hook()
+            loaded = updater.load_state()
+            self.assertFalse(loaded.restart_required)
+            self.assertEqual(loaded.pending_codex_pids, [])
+
 
 if __name__ == "__main__":
     unittest.main()

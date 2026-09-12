@@ -300,6 +300,8 @@ class UpdateState:
     previous_version: str | None = None
     installed_at: str | None = None
     progress: float | None = None
+    pending_codex_pids: list[int] = field(default_factory=list)
+    restart_reason: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -308,6 +310,11 @@ class UpdateState:
         known = {field_name for field_name in cls.__dataclass_fields__}
         kwargs = {key: value for key, value in payload.items() if key in known and key != "extra"}
         extra = {key: value for key, value in payload.items() if key not in known}
+        if "pending_codex_pids" in kwargs and isinstance(kwargs["pending_codex_pids"], list):
+            kwargs["pending_codex_pids"] = [
+                int(p) for p in kwargs["pending_codex_pids"]
+                if isinstance(p, (int, str)) and str(p).isdigit()
+            ]
         state = cls(**kwargs)
         if isinstance(payload.get("extra"), dict):
             extra.update(payload["extra"])
@@ -319,6 +326,24 @@ class UpdateState:
         extra = payload.pop("extra", {})
         payload.update(extra)
         return payload
+
+
+def _evaluate_auto_ack_restart(state: UpdateState) -> UpdateState:
+    if not state.restart_required:
+        return state
+    if state.pending_codex_pids:
+        alive_pids = [pid for pid in state.pending_codex_pids if _pid_is_alive(pid)]
+        if not alive_pids:
+            state.restart_required = False
+            state.pending_codex_pids = []
+            state.restart_reason = None
+            with contextlib.suppress(OSError):
+                save_state(state)
+        elif len(alive_pids) != len(state.pending_codex_pids):
+            state.pending_codex_pids = alive_pids
+            with contextlib.suppress(OSError):
+                save_state(state)
+    return state
 
 
 def load_state() -> UpdateState:
@@ -333,6 +358,7 @@ def load_state() -> UpdateState:
         state.update_available = is_newer(state.latest_version, state.current_version)
         if not state.update_available and state.status in {"available", "downloading", "installing"}:
             state.status = "latest"
+    state = _evaluate_auto_ack_restart(state)
     return state
 
 
@@ -587,6 +613,107 @@ def _pid_is_alive(pid: int) -> bool:
         return True
     except OSError:
         return True
+
+
+def _find_running_codex_pids() -> list[int]:
+    """Find running Codex or ChatGPT host process PIDs across platforms."""
+    pids: set[int] = set()
+    my_pid = os.getpid()
+    target_names = ("ChatGPT", "Codex", "codex", "chatgpt")
+
+    if os.name == "nt":
+        for name in target_names:
+            try:
+                proc = subprocess.run(
+                    ["tasklist", "/FI", f"IMAGENAME eq {name}.exe", "/FO", "CSV", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                for line in proc.stdout.splitlines():
+                    parts = line.strip().split('","')
+                    if len(parts) >= 2:
+                        pid_str = parts[1].replace('"', "").strip()
+                        if pid_str.isdigit():
+                            pid = int(pid_str)
+                            if pid != my_pid:
+                                pids.add(pid)
+            except Exception:
+                pass
+        return sorted(pids)
+
+    for name in target_names:
+        try:
+            proc = subprocess.run(
+                ["pgrep", "-x", name],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            for line in proc.stdout.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    pid = int(line)
+                    if pid != my_pid:
+                        pids.add(pid)
+        except Exception:
+            pass
+
+    return sorted(pids)
+
+
+def _file_content_hash(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return None
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _codex_managed_files_diff(backup: Path) -> tuple[bool, list[str]]:
+    """Compare managed assets that affect Codex before and after the update."""
+    pairs: list[tuple[str, Path, Path]] = [
+        ("config.toml", backup / "config", _codex_home() / "config.toml"),
+        ("hooks.json", backup / "user-managed" / "hooks.json", _codex_home() / "hooks.json"),
+        ("worker-explorer.toml", backup / "user-managed" / "worker-explorer.toml", _codex_home() / "agents" / "worker-explorer.toml"),
+        ("worker-implementer.toml", backup / "user-managed" / "worker-implementer.toml", _codex_home() / "agents" / "worker-implementer.toml"),
+        ("worker-reviewer.toml", backup / "user-managed" / "worker-reviewer.toml", _codex_home() / "agents" / "worker-reviewer.toml"),
+        ("flow-pilot/SKILL.md", backup / "user-managed" / "SKILL.md", _codex_home() / "skills" / "flow-pilot" / "SKILL.md"),
+        ("AGENTS.md", backup / "user-managed" / "AGENTS.md", _codex_home() / "AGENTS.md"),
+        ("AGENTS.override.md", backup / "user-managed" / "AGENTS.override.md", _codex_home() / "AGENTS.override.md"),
+        ("flow-pilot-instructions.md", backup / "managed" / "flow-pilot-instructions.md", _state_dir() / "flow-pilot-instructions.md"),
+        ("codex-flow.toml", backup / "policy", _policy_path()),
+    ]
+    changed: list[str] = []
+    for label, pre_path, post_path in pairs:
+        pre_hash = _file_content_hash(pre_path)
+        post_hash = _file_content_hash(post_path)
+        if pre_hash != post_hash:
+            changed.append(label)
+    return bool(changed), changed
+
+
+def _resolve_codex_restart_requirement(
+    backup: Path,
+    manifest: dict[str, Any] | None = None,
+) -> tuple[bool, list[int], str | None]:
+    """Intelligently determine whether Codex needs a restart after update/rollback."""
+    if manifest is not None and manifest.get("restart_required") is False:
+        return False, [], None
+
+    files_changed, changed_names = _codex_managed_files_diff(backup)
+    if not files_changed:
+        return False, [], None
+
+    running_pids = _find_running_codex_pids()
+    if not running_pids:
+        return False, [], None
+
+    reason = f"Changed: {', '.join(changed_names)}"
+    return True, running_pids, reason
 
 
 @contextlib.contextmanager
@@ -1230,7 +1357,10 @@ def _install_package(package_root: Path, version: str, manifest: dict[str, Any])
         state.previous_version = current
         state.update_available = is_newer(state.latest_version, version)
         state.status = "available" if state.update_available else "latest"
-        state.restart_required = bool(manifest.get("restart_required", True))
+        restart_req, pending_pids, restart_reason = _resolve_codex_restart_requirement(backup, manifest)
+        state.restart_required = restart_req
+        state.pending_codex_pids = pending_pids
+        state.restart_reason = restart_reason
         state.flowpilot_restart_required = (
             platform.system().lower() == "darwin"
             and any((target_version / "apps" / "macos-overlay" / "bin" / name).exists() for name in ("FlowPilot", "codex-flow-overlay"))
@@ -1338,7 +1468,10 @@ def _rollback_unlocked() -> UpdateState:
         state.previous_version = current
         state.update_available = bool(state.latest_version and is_newer(state.latest_version, previous))
         state.status = "available" if state.update_available else "latest"
-        state.restart_required = True
+        restart_req, pending_pids, restart_reason = _resolve_codex_restart_requirement(backup)
+        state.restart_required = restart_req
+        state.pending_codex_pids = pending_pids
+        state.restart_reason = restart_reason
         state.flowpilot_restart_required = (
             platform.system().lower() == "darwin"
             and any((_state_dir() / "bin" / name).exists() for name in ("FlowPilot", "codex-flow-overlay"))
@@ -1414,7 +1547,8 @@ def _print_status(state: UpdateState, as_json: bool = False) -> None:
     elif state.flowpilot_restart_required:
         print(f"✓ codex-flow v{state.current_version} installed; restart FlowPilot to load the updated app binary.")
     elif state.restart_required:
-        print(f"✓ codex-flow v{state.current_version} installed; restart Codex to activate updated policy/hooks snapshots.")
+        suffix = f" ({state.restart_reason})" if state.restart_reason else ""
+        print(f"✓ codex-flow v{state.current_version} installed; restart Codex to activate updated policy/hooks snapshots.{suffix}")
     elif state.update_available and state.latest_version:
         suffix = "" if state.artifact_available else " (release package not available yet)"
         print(f"↑ codex-flow v{state.latest_version} is available; current v{state.current_version}{suffix}")
@@ -1461,6 +1595,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     if args.ack_restart:
         state = load_state()
         state.restart_required = False
+        state.pending_codex_pids = []
+        state.restart_reason = None
         save_state(state)
         if not args.quiet:
             print("✓ Codex restart reminder cleared.")

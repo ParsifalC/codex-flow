@@ -292,6 +292,23 @@ def _latency_cli(args: list[str]) -> int:
         return 2
 
 
+def _check_auto_ack_restart_on_hook() -> None:
+    try:
+        import updater
+        state = updater.load_state()
+        if not state.restart_required:
+            return
+        parent_pid = os.getppid()
+        if state.pending_codex_pids:
+            if parent_pid not in state.pending_codex_pids:
+                state.restart_required = False
+                state.pending_codex_pids = []
+                state.restart_reason = None
+                updater.save_state(state)
+    except Exception:
+        pass
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args:
@@ -373,6 +390,7 @@ def main() -> int:
     if isinstance(event, dict):
         try:
             collect_hook(event)
+            _check_auto_ack_restart_on_hook()
         except Exception:
             return 0
     return 0

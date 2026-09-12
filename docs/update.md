@@ -25,7 +25,7 @@ codex-flow update auto-install disable
 
 终端交互菜单会直接在“更新”选项中显示“已是最新”或“vX.Y.Z 可用”。FlowPilot 顶栏提供更新按钮；有更新或已安装但仍需要重启 Codex / FlowPilot 时显示角标。App 与 CLI 都读取 `~/.codex/codex-flow/state/update.json`。
 
-更新安装完成后会自动触发 FlowPilot 重启交接，并通过新进程自动执行 `codex-flow update --ack-flowpilot-restart` 清除 FlowPilot 重启标记。若同时存在策略/Hook等全局变更，会写入 `restart_required=true`。用户完整重启 Codex 后，可在 FlowPilot 更新面板点击“我已重启 Codex”，或使用 `codex-flow update --ack-restart` 清除 Codex 提醒。Updater 无法可靠跨平台证明 Codex 宿主进程是否已经完整重启，因此 Codex 仍要求用户主动确认。
+更新安装完成后会自动触发 FlowPilot 重启交接，并通过新进程自动执行 `codex-flow update --ack-flowpilot-restart` 清除 FlowPilot 重启标记。若同时存在策略/Hook/Skill/Agent等核心资产实质变更，且检测到 Codex/ChatGPT 宿主正处于运行状态，才会写入 `restart_required=true` 并记录旧进程 PID。若无文件变更或更新时宿主未运行，则无需重启；当旧进程退出、检测到新进程启动或由新实例触发 Hook 时，系统会自动清除提醒，用户亦可在 FlowPilot 更新面板点击“我已重启 Codex”，或使用 `codex-flow update --ack-restart` 手动确认。
 
 ## 默认配置
 
@@ -122,4 +122,4 @@ Git tag 必须严格等于 `v$VERSION`。beta / nightly GitHub Release 会被标
 
 ## 重启语义
 
-新的 CLI、updater、telemetry 和 FlowPilot binary 在 OTA 成功后已经落盘。macOS 上 `flowpilot_restart_required` 只表示需要重启 FlowPilot 进程来载入新 App binary，并由新进程自动清除；`restart_required` 则只表示 Codex 对 Skill / Agent / Hook / policy snapshot 的加载需要完整重启 Codex，并由用户完成重启后主动确认。两个状态互不代替；UI 的通用更新角标只要其中任一状态仍为 true，就会显示橙色重启提示。
+新的 CLI、updater、telemetry 和 FlowPilot binary 在 OTA 成功后已经落盘。macOS 上 `flowpilot_restart_required` 只表示需要重启 FlowPilot 进程来载入新 App binary，并由新进程自动清除；`restart_required` 则根据更新前后受管资产哈希比对与宿主进程存活状态智能判断，仅当核心文件发生实质变更且 Codex 在运行时才提示重启，并在旧进程退出或新实例激活时自动完成生命周期闭环清除。两个状态互不代替；UI 的通用更新角标只要其中任一状态仍为 true，就会显示橙色重启提示。

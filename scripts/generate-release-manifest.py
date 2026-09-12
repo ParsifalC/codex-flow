@@ -21,6 +21,7 @@ def main() -> int:
     parser.add_argument("--channel", default="stable", choices=("stable", "beta", "nightly"))
     parser.add_argument("--release-notes-file", type=Path)
     parser.add_argument("--output", type=Path, default=Path("dist/codex-flow-update.json"))
+    parser.add_argument("--no-restart-required", action="store_true", help="declare that Codex restart is not required")
     args = parser.parse_args()
 
     version = (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip().lstrip("v")
@@ -57,7 +58,7 @@ def main() -> int:
         "channel": args.channel,
         "published_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "minimum_updater_version": MINIMUM_UPDATER_VERSION,
-        "restart_required": True,
+        "restart_required": not args.no_restart_required,
         "mandatory": False,
         "release_url": f"https://github.com/{REPO}/releases/tag/{tag}",
         "release_notes": notes,

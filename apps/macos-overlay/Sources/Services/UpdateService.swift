@@ -22,6 +22,8 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
     public var artifactAvailable: Bool?
     public var lastError: String?
     public var progress: Double?
+    public var pendingCodexPids: [Int]?
+    public var restartReason: String?
 
     enum CodingKeys: String, CodingKey {
         case schema, status, channel, mandatory, progress
@@ -34,6 +36,8 @@ public struct FlowPilotUpdateSnapshot: Codable, Equatable, Sendable {
         case checkedAt = "checked_at"
         case restartRequired = "restart_required"
         case flowPilotRestartRequired = "flowpilot_restart_required"
+        case pendingCodexPids = "pending_codex_pids"
+        case restartReason = "restart_reason"
         case releaseURL = "release_url"
         case releaseNotes = "release_notes"
         case artifactAvailable = "artifact_available"
@@ -96,6 +100,10 @@ public final class FlowPilotUpdateService: ObservableObject {
         snapshot.restartRequired ?? false
     }
 
+    public var codexRestartReason: String? {
+        snapshot.restartReason
+    }
+
     public var isFlowPilotRestartRequired: Bool {
         snapshot.flowPilotRestartRequired ?? false
     }
@@ -152,6 +160,7 @@ public final class FlowPilotUpdateService: ObservableObject {
             snapshot = decoded
         }
         checkPendingRestartHandoff()
+        evaluateAutoCodexRestartAcknowledgement()
     }
 
     public func scheduleAutoRestart(reason: String, delay: TimeInterval = 1.2) {
@@ -363,6 +372,42 @@ public final class FlowPilotUpdateService: ObservableObject {
             }
         }
         lifecycleObservers.append(wakeObserver)
+
+        let termObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            Task { @MainActor in
+                FlowPilotUpdateService.shared.handleAppTermination(notification: notification)
+            }
+        }
+        lifecycleObservers.append(termObserver)
+    }
+
+    private func handleAppTermination(notification: Notification) {
+        guard snapshot.restartRequired == true else { return }
+        if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+            let name = app.localizedName?.lowercased() ?? ""
+            let bundle = app.bundleIdentifier?.lowercased() ?? ""
+            if name.contains("codex") || name.contains("chatgpt") || bundle.contains("codex") || bundle.contains("chatgpt") {
+                refreshFromDisk()
+            }
+        }
+    }
+
+    public func evaluateAutoCodexRestartAcknowledgement() {
+        guard snapshot.restartRequired == true else { return }
+        guard !isAcknowledgingRestart && !isInstalling && !isChecking else { return }
+
+        if let pids = snapshot.pendingCodexPids, !pids.isEmpty {
+            let anyAlive = pids.contains { pid in
+                kill(pid_t(pid), 0) == 0 || errno == EPERM
+            }
+            if !anyAlive {
+                acknowledgeRestart()
+            }
+        }
     }
 
     private func requestLifecycleRefresh() {
