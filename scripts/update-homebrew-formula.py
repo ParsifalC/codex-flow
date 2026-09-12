@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FORMULA_PATH = ROOT / "Formula" / "codex-flow.rb"
+FORMULA_PATH = ROOT / "packaging" / "homebrew" / "codex-flow.rb"
 
 TEMPLATE = """class CodexFlow < Formula
   desc "Intelligent, Efficient, Adaptive Multi-Agent Strategy Orchestration for Codex"

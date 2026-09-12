@@ -171,10 +171,10 @@ jobs:
           set -euo pipefail
           python3 scripts/update-homebrew-formula.py \
             --manifest dist/codex-flow-update.json \
-            --output Formula/codex-flow.rb \
+            --output packaging/homebrew/codex-flow.rb \
             --tap-repo ParsifalC/homebrew-tap \
             --tap-token "$HOMEBREW_TAP_TOKEN"
-          gh release upload '${{ steps.release.outputs.tag }}' Formula/codex-flow.rb --clobber
+          gh release upload '${{ steps.release.outputs.tag }}' packaging/homebrew/codex-flow.rb --clobber
       - name: Build Python distribution
         if: steps.release.outputs.channel == 'stable'
         shell: bash
