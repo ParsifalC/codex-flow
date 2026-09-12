@@ -161,3 +161,16 @@ jobs:
             echo "release $tag publication state did not match requested draft/prerelease flags" >&2
             exit 2
           fi
+      - name: Sync Homebrew Tap Formula
+        if: steps.release.outputs.channel == 'stable'
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.TAP_GITHUB_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/update-homebrew-formula.py \
+            --manifest dist/codex-flow-update.json \
+            --output Formula/codex-flow.rb \
+            --tap-repo ParsifalC/homebrew-tap \
+            --tap-token "$HOMEBREW_TAP_TOKEN"
+          gh release upload '${{ steps.release.outputs.tag }}' Formula/codex-flow.rb --clobber
