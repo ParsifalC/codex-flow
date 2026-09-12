@@ -53,11 +53,8 @@ codex-flow = "codex_flow.cli:main"
 codex-flow-mcp = "codex_flow.mcp:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["codex_flow*"]
+package-dir = {"codex_flow" = "packaging/pypi"}
+packages = ["codex_flow"]
 
 [tool.setuptools.package-data]
 codex_flow = ["data/**/*", "data/*"]

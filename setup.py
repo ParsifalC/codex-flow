@@ -98,7 +98,7 @@ if __name__ == "__main__":
             "Documentation": "https://github.com/ParsifalC/codex-flow#readme",
         },
         license="MIT",
-        package_dir={"": "src"},
+        package_dir={"codex_flow": "packaging/pypi"},
         packages=["codex_flow"],
         package_data={"codex_flow": ["data/**/*", "data/*"]},
         cmdclass={"build_py": CustomBuildPy},

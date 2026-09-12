@@ -23,9 +23,9 @@ def get_resource_root() -> Path:
         return bundled
 
     # 2. Check if running from a git checkout / source tree
-    repo_root = Path(__file__).resolve().parents[2]
-    if (repo_root / "VERSION").exists() and (repo_root / "scripts").exists():
-        return repo_root
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "VERSION").exists() and (parent / "scripts").exists():
+            return parent
 
     # 3. Check installed state source file
     if SOURCE_FILE.exists():

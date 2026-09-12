@@ -15,6 +15,7 @@ recursive-include completions *
 recursive-include benchmark *.json
 recursive-include apps/chatgpt-mcp *
 recursive-include apps/macos-overlay *
+recursive-include packaging/pypi *.py
 recursive-exclude * __pycache__
 recursive-exclude * *.py[cod]
 recursive-exclude * .DS_Store
