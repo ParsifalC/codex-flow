@@ -244,4 +244,10 @@ assert unknown_tool.get("code") in (-32601, -32602), unknown_tool
 print("chatgpt MCP smoke test passed")
 PY
 
+# Verify stdio transport mode
+STDIO_INIT="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 "$ROOT_DIR/apps/chatgpt-mcp/server.py" --stdio)"
+printf '%s\n' "$STDIO_INIT" | grep -Fq '"serverInfo"' || { echo "stdio initialize test failed" >&2; exit 1; }
+STDIO_TOOLS="$(printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | python3 "$ROOT_DIR/apps/chatgpt-mcp/server.py" --stdio)"
+printf '%s\n' "$STDIO_TOOLS" | grep -Fq 'flowpilot_get_telemetry' || { echo "stdio tools test failed" >&2; exit 1; }
+
 printf 'chatgpt-mcp test passed (CODEX_HOME isolated at %s)\n' "$CODEX_HOME"

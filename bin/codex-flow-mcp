@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+TARGET="${BASH_SOURCE[0]}"
+while [ -h "$TARGET" ]; do
+  DIR="$(cd -P "$(dirname "$TARGET")" && pwd)"
+  TARGET="$(readlink "$TARGET")"
+  [[ $TARGET != /* ]] && TARGET="$DIR/$TARGET"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$TARGET")" && pwd)"
+ROOT_DIR="$(cd -P "$SCRIPT_DIR/.." && pwd)"
 
 exec python3 "$ROOT_DIR/apps/chatgpt-mcp/server.py" "$@"

@@ -1,0 +1,18 @@
+# Smithery configuration for FlowPilot telemetry MCP server
+# https://smithery.ai/docs/config
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      codexHome:
+        type: string
+        description: "Path to CODEX_HOME directory (default: ~/.codex)"
+    required: []
+  commandFunction: |
+    (config) => ({
+      command: 'python3',
+      args: ['apps/chatgpt-mcp/server.py', '--stdio'],
+      env: config.codexHome ? { CODEX_HOME: config.codexHome } : {}
+    })

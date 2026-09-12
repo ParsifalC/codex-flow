@@ -9,9 +9,12 @@
 **Intelligent, Efficient, Adaptive Multi-Agent Strategy Orchestration for Codex**
 
 [![Version](https://img.shields.io/badge/version-2.1.11-blue.svg?style=flat-square)](VERSION)
+[![Homebrew](https://img.shields.io/badge/Homebrew-ParsifalC%2Ftap-orange.svg?style=flat-square&logo=homebrew)](https://github.com/ParsifalC/homebrew-tap)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-quick-start)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.en.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.en.md)
+[![Smithery](https://img.shields.io/badge/Smithery-FlowPilot-black.svg?style=flat-square)](https://smithery.ai)
+[![Glama](https://img.shields.io/badge/Glama-MCP-5046e6.svg?style=flat-square)](https://glama.ai/mcp/servers)
 [![LinuxDo](https://img.shields.io/badge/LinuxDo-Public%20Beta-5046e6.svg?style=flat-square)](https://linux.do)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
@@ -105,7 +108,16 @@ npm install -g @openai/codex
 brew install codex
 ```
 
-### One-Line Installation
+### Quick Installation
+
+#### Option 1: Homebrew (Recommended for macOS & Linux)
+
+```bash
+brew install ParsifalC/tap/codex-flow
+codex-flow install
+```
+
+#### Option 2: Automated Bootstrap Script
 
 Fresh installs use the matching GitHub Release artifact directly; cloning the repository is not required.
 
@@ -216,6 +228,25 @@ codex-flow usage stats -d 30
 codex-flow doctor
 codex-flow update
 ```
+
+### 6. MCP Clients & Registry Integration (Claude Desktop / Cursor / Smithery / Glama)
+
+`codex-flow` bundles a standard Model Context Protocol (MCP) server for feeding deterministic FlowPilot telemetry into any MCP-compatible client:
+
+* **Claude Desktop / Cursor (`stdio` mode)**:
+  Add to your `claude_desktop_config.json` or Cursor MCP settings:
+  ```json
+  {
+    "mcpServers": {
+      "flowpilot": {
+        "command": "codex-flow-mcp",
+        "args": ["--stdio"]
+      }
+    }
+  }
+  ```
+* **Smithery.ai**: Configured via `smithery.yaml` in the repo root for one-click discovery and agent mounting.
+* **Glama**: Authenticated via `glama.json` in the repo root and indexed in the Glama MCP registry.
 
 ---
 

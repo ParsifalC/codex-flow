@@ -289,11 +289,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FlowPilot telemetry MCP server")
     parser.add_argument("--host", default="127.0.0.1", help="loopback bind address")
     parser.add_argument("--port", default=8787, type=int, help="TCP port (default: 8787)")
+    parser.add_argument("--stdio", action="store_true", help="run MCP server over standard I/O (JSON-RPC lines)")
     return parser
+
+
+def run_stdio() -> int:
+    """Run standard JSON-RPC loop over stdin/stdout."""
+    for line in sys.stdin:
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            value = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            resp = _response(None, error=_error(-32700, "Parse error"))
+            sys.stdout.write(json.dumps(resp) + "\n")
+            sys.stdout.flush()
+            continue
+        try:
+            result = dispatch_json(value)
+        except Exception:
+            result = _response(None, error=_error(-32603, "Internal error"))
+        if result is not None:
+            sys.stdout.write(json.dumps(result) + "\n")
+            sys.stdout.flush()
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.stdio:
+        return run_stdio()
     if args.port < 0 or args.port > 65535:
         print("--port must be between 0 and 65535", file=sys.stderr)
         return 2

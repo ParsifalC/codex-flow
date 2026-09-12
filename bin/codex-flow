@@ -5,14 +5,28 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 STATE_DIR="$CODEX_HOME/codex-flow"
 SOURCE_FILE="$STATE_DIR/source"
 POLICY="$CODEX_HOME/codex-flow.toml"
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
+TARGET="${BASH_SOURCE[0]}"
+while [ -h "$TARGET" ]; do
+  DIR="$(cd -P "$(dirname "$TARGET")" && pwd)"
+  TARGET="$(readlink "$TARGET")"
+  [[ $TARGET != /* ]] && TARGET="$DIR/$TARGET"
+done
+SELF_DIR="$(cd -P "$(dirname "$TARGET")" && pwd)"
+REPO_ROOT="$(cd -P "$SELF_DIR/.." && pwd)"
 
 source_dir() {
-  [[ -f "$SOURCE_FILE" ]] || { printf 'codex-flow: missing source metadata; reinstall codex-flow\n' >&2; exit 1; }
-  local dir; dir="$(cat "$SOURCE_FILE")"
-  [[ -d "$dir" ]] || { printf 'codex-flow: source checkout no longer exists: %s\n' "$dir" >&2; exit 1; }
-  printf '%s\n' "$dir"
+  if [[ -f "$SOURCE_FILE" ]]; then
+    local dir; dir="$(cat "$SOURCE_FILE")"
+    if [[ -d "$dir" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  fi
+  if [[ -f "$REPO_ROOT/VERSION" && -d "$REPO_ROOT/scripts" ]]; then
+    printf '%s\n' "$REPO_ROOT"
+    return 0
+  fi
+  printf 'codex-flow: missing source metadata; reinstall codex-flow\n' >&2; exit 1;
 }
 
 script_path() {
@@ -58,6 +72,10 @@ fi
 
 cmd="${1:-help}"
 case "$cmd" in
+  install|init)
+    shift
+    exec bash "$(source_dir)/install.sh" "$@"
+    ;;
   status|help|-h|--help)
     ui_script="$(script_path ui.py 2>/dev/null || true)"
     [[ -f "$ui_script" ]] || fail "$(cf_t 'localized UI helper is missing; reinstall codex-flow' '本地化 UI 组件缺失，请重新安装 codex-flow')"

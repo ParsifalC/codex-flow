@@ -9,9 +9,12 @@
 **智能、高效、自适应的 Codex 多 Agent 策略编排引擎**
 
 [![Version](https://img.shields.io/badge/version-2.1.11-blue.svg?style=flat-square)](VERSION)
+[![Homebrew](https://img.shields.io/badge/Homebrew-ParsifalC%2Ftap-orange.svg?style=flat-square&logo=homebrew)](https://github.com/ParsifalC/homebrew-tap)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-快速安装)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.md)
+[![Smithery](https://img.shields.io/badge/Smithery-FlowPilot-black.svg?style=flat-square)](https://smithery.ai)
+[![Glama](https://img.shields.io/badge/Glama-MCP-5046e6.svg?style=flat-square)](https://glama.ai/mcp/servers)
 [![LinuxDo](https://img.shields.io/badge/LinuxDo-公测中-5046e6.svg?style=flat-square)](https://linux.do)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
@@ -105,7 +108,16 @@ npm install -g @openai/codex
 brew install codex
 ```
 
-### 一键安装
+### 快速安装
+
+#### 方式一：Homebrew 安装（macOS / Linux 推荐）
+
+```bash
+brew install ParsifalC/tap/codex-flow
+codex-flow install
+```
+
+#### 方式二：一键发布安装脚本
 
 首次安装统一使用 GitHub Release 中与你的系统和 CPU 架构匹配的正式 artifact，不需要 clone 仓库。
 
@@ -218,6 +230,25 @@ codex-flow usage stats -d 30
 codex-flow doctor
 codex-flow update
 ```
+
+### 6. MCP 客户端与平台集成 (Claude Desktop / Cursor / Smithery / Glama)
+
+`codex-flow` 内置标准的 Model Context Protocol (MCP) 服务端，支持将 FlowPilot 确定性遥测注入任意支持 MCP 的宿主：
+
+* **Claude Desktop / Cursor (`stdio` 模式)**：
+  在 `claude_desktop_config.json` 中配置：
+  ```json
+  {
+    "mcpServers": {
+      "flowpilot": {
+        "command": "codex-flow-mcp",
+        "args": ["--stdio"]
+      }
+    }
+  }
+  ```
+* **Smithery.ai**：配置文件见根目录 `smithery.yaml`，已支持一键发现与客户端挂载。
+* **Glama**：认证元数据见根目录 `glama.json`，已入驻 Glama MCP 注册目录。
 
 ---
 
