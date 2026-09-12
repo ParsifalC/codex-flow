@@ -8,7 +8,7 @@
 
 **Intelligent, Efficient, Adaptive Multi-Agent Strategy Orchestration for Codex**
 
-[![Version](https://img.shields.io/badge/version-2.1.12-blue.svg?style=flat-square)](VERSION)
+[![Version](https://img.shields.io/badge/version-2.1.13-blue.svg?style=flat-square)](VERSION)
 [![Homebrew](https://img.shields.io/badge/Homebrew-ParsifalC%2Ftap-orange.svg?style=flat-square&logo=homebrew)](https://github.com/ParsifalC/homebrew-tap)
 [![PyPI](https://img.shields.io/pypi/v/codex-flow.svg?style=flat-square&logo=pypi)](https://pypi.org/project/codex-flow/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-quick-start)
@@ -217,7 +217,7 @@ The latest console also integrates Overlay build/start management, effective pol
 
 ```text
 ╭────────────────────────────────────────────────────────────────────╮
-│                  🚀 codex-flow Console (v2.1.12)                   │
+│                  🚀 codex-flow Console (v2.1.13)                   │
 │   FlowPilot orchestration · deterministic telemetry · validation   │
 ╰────────────────────────────────────────────────────────────────────╯
   [1] 🪟 macOS native floating widget (overlay widget)

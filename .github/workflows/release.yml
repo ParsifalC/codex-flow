@@ -181,11 +181,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --upgrade pip build twine
-          python3 -m build
-          python3 -m twine check dist/*.whl dist/*.tar.gz
-          gh release upload '${{ steps.release.outputs.tag }}' dist/*.whl dist/*.tar.gz --clobber
+          python3 -m build --outdir dist-pypi
+          python3 -m twine check dist-pypi/*
+          gh release upload '${{ steps.release.outputs.tag }}' dist-pypi/* --clobber
       - name: Publish to PyPI
         if: steps.release.outputs.channel == 'stable'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist-pypi/
