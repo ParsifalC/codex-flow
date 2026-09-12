@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-flow"
+dynamic = ["version"]
+description = "Intelligent, Efficient, Adaptive Multi-Agent Strategy Orchestration for Codex"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Parsifal", email = "zmw@izmw.me" }
+]
+keywords = [
+    "codex",
+    "agent",
+    "multi-agent",
+    "orchestration",
+    "llm",
+    "workflow",
+    "mcp",
+    "telemetry",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ParsifalC/codex-flow"
+Repository = "https://github.com/ParsifalC/codex-flow"
+Issues = "https://github.com/ParsifalC/codex-flow/issues"
+Documentation = "https://github.com/ParsifalC/codex-flow#readme"
+
+[project.scripts]
+codex-flow = "codex_flow.cli:main"
+codex-flow-mcp = "codex_flow.mcp:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["codex_flow*"]
+
+[tool.setuptools.package-data]
+codex_flow = ["data/**/*", "data/*"]
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}

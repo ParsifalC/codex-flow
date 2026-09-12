@@ -10,6 +10,7 @@
 
 [![Version](https://img.shields.io/badge/version-2.1.11-blue.svg?style=flat-square)](VERSION)
 [![Homebrew](https://img.shields.io/badge/Homebrew-ParsifalC%2Ftap-orange.svg?style=flat-square&logo=homebrew)](https://github.com/ParsifalC/homebrew-tap)
+[![PyPI](https://img.shields.io/pypi/v/codex-flow.svg?style=flat-square&logo=pypi)](https://pypi.org/project/codex-flow/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-快速安装)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.md)
@@ -110,14 +111,27 @@ brew install codex
 
 ### 快速安装
 
-#### 方式一：Homebrew 安装（macOS / Linux 推荐）
+#### 方式一：PyPI 安装（全平台推荐，支持 Windows / macOS / Linux）
+
+```bash
+# 推荐使用 pipx（独立隔离环境）
+pipx install codex-flow
+
+# 或使用标准 pip
+pip install codex-flow
+
+# 初始化配置与环境
+codex-flow install
+```
+
+#### 方式二：Homebrew 安装（macOS / Linux）
 
 ```bash
 brew install ParsifalC/tap/codex-flow
 codex-flow install
 ```
 
-#### 方式二：一键发布安装脚本
+#### 方式三：一键发布安装脚本
 
 首次安装统一使用 GitHub Release 中与你的系统和 CPU 架构匹配的正式 artifact，不需要 clone 仓库。
 

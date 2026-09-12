@@ -9,3 +9,7 @@ bin/generate_showcase
 apps/macos-overlay/bin/
 apps/macos-overlay/.build/
 .DS_Store
+build/
+dist/
+*.egg-info/
+

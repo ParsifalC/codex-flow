@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   package:
@@ -174,3 +175,17 @@ jobs:
             --tap-repo ParsifalC/homebrew-tap \
             --tap-token "$HOMEBREW_TAP_TOKEN"
           gh release upload '${{ steps.release.outputs.tag }}' Formula/codex-flow.rb --clobber
+      - name: Build Python distribution
+        if: steps.release.outputs.channel == 'stable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip build twine
+          python3 -m build
+          python3 -m twine check dist/*.whl dist/*.tar.gz
+          gh release upload '${{ steps.release.outputs.tag }}' dist/*.whl dist/*.tar.gz --clobber
+      - name: Publish to PyPI
+        if: steps.release.outputs.channel == 'stable'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}

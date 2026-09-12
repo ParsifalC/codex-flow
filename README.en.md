@@ -10,6 +10,7 @@
 
 [![Version](https://img.shields.io/badge/version-2.1.11-blue.svg?style=flat-square)](VERSION)
 [![Homebrew](https://img.shields.io/badge/Homebrew-ParsifalC%2Ftap-orange.svg?style=flat-square&logo=homebrew)](https://github.com/ParsifalC/homebrew-tap)
+[![PyPI](https://img.shields.io/pypi/v/codex-flow.svg?style=flat-square&logo=pypi)](https://pypi.org/project/codex-flow/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-brightgreen.svg?style=flat-square)](#-quick-start)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-orange.svg?style=flat-square)](docs/overlay.en.md)
 [![Telemetry](https://img.shields.io/badge/telemetry-deterministic%200--cost-purple.svg?style=flat-square)](docs/telemetry.en.md)
@@ -110,14 +111,27 @@ brew install codex
 
 ### Quick Installation
 
-#### Option 1: Homebrew (Recommended for macOS & Linux)
+#### Option 1: PyPI Installation (Recommended across Windows / macOS / Linux)
+
+```bash
+# Recommended using pipx (isolated environment)
+pipx install codex-flow
+
+# Or using standard pip
+pip install codex-flow
+
+# Initialize configuration and environment
+codex-flow install
+```
+
+#### Option 2: Homebrew (macOS & Linux)
 
 ```bash
 brew install ParsifalC/tap/codex-flow
 codex-flow install
 ```
 
-#### Option 2: Automated Bootstrap Script
+#### Option 3: Automated Bootstrap Script
 
 Fresh installs use the matching GitHub Release artifact directly; cloning the repository is not required.
 
