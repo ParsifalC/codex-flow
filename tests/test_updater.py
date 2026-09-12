@@ -182,11 +182,14 @@ class UpdaterTest(unittest.TestCase):
         manifest_path = self.root / "manifest-install.json"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-        with patch.dict(os.environ, {"CODEX_FLOW_UPDATE_MANIFEST_URL": str(manifest_path)}, clear=False):
-            state = updater.perform_update(force_check=True)
+        with patch.object(updater, "_find_running_codex_pids", return_value=[99999]):
+            with patch.dict(os.environ, {"CODEX_FLOW_UPDATE_MANIFEST_URL": str(manifest_path)}, clear=False):
+                state = updater.perform_update(force_check=True)
 
         self.assertEqual(state.current_version, "1.8.0")
         self.assertTrue(state.restart_required)
+        self.assertEqual(state.pending_codex_pids, [99999])
+        self.assertIsNotNone(state.restart_reason)
         self.assertEqual((self.state / "version").read_text(encoding="utf-8").strip(), "1.8.0")
         self.assertEqual((self.state / "previous-version").read_text(encoding="utf-8").strip(), "1.7.0")
         self.assertTrue((self.state / "versions" / "1.8.0" / "VERSION").exists())
