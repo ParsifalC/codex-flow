@@ -14,13 +14,13 @@ The benchmark is designed to answer three distinct questions without mixing thei
 
 Results are advisory. Real model runs must accumulate enough evidence before routing changes are considered, and `policy/benchmark.toml` keeps `auto_apply = false`.
 
-The built-in benchmark passes each experimental `reasoning_effort` directly to `codex exec`; it does not traverse the FlowPilot planner. It therefore cannot prove that an `ExecutionPlan.reasoning_rollout` proposed/selected value was actually applied to a delegated Worker. Validate rollout decisions separately with runtime-observed effort, completed/censored sample counts, and p50/p95 latency evidence.
+The built-in `direct` / `flow` benchmark passes each experimental `reasoning_effort` directly to `codex exec`; it does not traverse the FlowPilot planner. It therefore cannot prove that an `ExecutionPlan.reasoning_rollout` proposed/selected value was actually applied to a delegated Worker. Validate rollout decisions separately with runtime-observed effort, completed/censored sample counts, and p50/p95 latency evidence.
 
 ---
 
-## Five Pre-Registered Strategies
+## Pre-Registered Strategies
 
-Both `quick` and `full` use the same matrix:
+`quick` uses the first five strategies; `full` adds the Astra High real FlowPilot runtime control:
 
 | Strategy ID | Execution | Reasoning |
 | :--- | :--- | :--- |
@@ -29,6 +29,9 @@ Both `quick` and `full` use the same matrix:
 | `sol-direct` | Sol implements and repairs | `high` |
 | `codex-flow-high` | Sol parent + Luna worker | both `high` |
 | `codex-flow-adaptive` | Sol parent + Luna worker | routine `high`, complex `xhigh`, critical `max` |
+| `codex-flow-runtime-astra-high` | Astra parent with real FlowPilot efficient / delegate, Luna worker | parent `high`, configured worker `high` |
+
+The new runtime group also belongs to `agentic`, alongside the existing Sol efficient / balanced runtime groups. Actual worker models, effort, and delegation require runtime evidence. Comparing runtime with scripted `flow` also changes orchestration, so differences cannot be attributed solely to the parent model.
 
 The first four strategies form the controlled same-effort comparison. `codex-flow-adaptive` is deliberately excluded from the Sol and fixed-flow advantage claims; it is compared only with `codex-flow-high`.
 
@@ -60,7 +63,8 @@ Profiles are defined in `benchmark/profiles.json`:
 
 ```text
 quick: 9 tasks × 5 strategies × 1 repetition = 45 runs
-full:  9 tasks × 5 strategies × 3 repetitions = 135 runs
+full:  9 tasks × 6 strategies × 3 repetitions = 162 runs
+agentic: 9 tasks × 6 strategies × 1 repetition = 54 runs
 ```
 
 ---
@@ -89,3 +93,13 @@ For each class, Sol/high is compared with the strongest Luna/high or Terra/high 
 
 ### 3. Adaptive Reasoning Value
 `codex-flow-adaptive` is compared only with `codex-flow-high`. It must materially improve final pass rate, first-pass rate, or repairs while remaining inside the configured cost-increase ceiling.
+
+Run the complete local matrix:
+
+```bash
+python3 scripts/benchmark-local.py full --yes
+```
+
+The default `benchmark/prices/gpt-6-astra-2026-09-12.json` preserves the historical GPT-5.6 reference prices and adds [official Astra standard pricing](https://developers.openai.com/api/docs/models/gpt-6-astra): $10 input, $1 cached input, and $50 output per million tokens. These are standard short-context token reference costs, not ChatGPT subscription charges; long-context multipliers, cache writes, and Fast mode fees are excluded.
+
+Local Astra runs require a compatible Codex CLI (0.154.0 for this run). Runtime groups install FlowPilot in a temporary directory, reuse file-backed local login and the model catalog cache, and add the temporary configuration directory to the writable scope. Session files are removed with the temporary directory. Failed preflights are not formal matrix samples.

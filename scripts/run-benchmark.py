@@ -196,6 +196,20 @@ def parse_usage(jsonl: str) -> dict[str, int]:
     return usage
 
 
+def seed_local_login(destination: Path) -> None:
+    """Seed a private run home without importing global instructions/config."""
+    destination.mkdir(parents=True, exist_ok=True)
+    login_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    login_file = login_home / "auth.json"
+    credential = destination / "auth.json"
+    if login_file.is_file() and not credential.exists():
+        with open(credential, "x", encoding="utf-8", opener=lambda path, flags: os.open(path, flags, 0o600)) as sink:
+            sink.write(login_file.read_text(encoding="utf-8"))
+    model_cache = login_home / "models_cache.json"
+    if model_cache.is_file() and not (destination / "models_cache.json").exists():
+        shutil.copyfile(model_cache, destination / "models_cache.json")
+
+
 def run_codex(
     workdir: Path,
     model: str,
@@ -208,16 +222,19 @@ def run_codex(
     output_schema_path: Path | None = None,
     ignore_user_config: bool = True,
     env: dict[str, str] | None = None,
+    writable_dirs: tuple[Path, ...] = (),
 ) -> tuple[int, dict[str, int], str, float, str]:
     cmd = [
-        "codex", "exec", "--ephemeral", "--json",
+        "codex", "exec", "--json",
     ]
     if ignore_user_config:
-        cmd.append("--ignore-user-config")
+        cmd.extend(["--ephemeral", "--ignore-user-config"])
     cmd.extend([
         "--sandbox", sandbox, "--model", model,
         "-c", f'model_reasoning_effort="{effort}"',
     ])
+    for directory in writable_dirs:
+        cmd.extend(["--add-dir", str(directory)])
     if output_schema_path is not None:
         cmd.extend(["--output-schema", str(output_schema_path)])
     if last_message_path is not None:
@@ -225,20 +242,32 @@ def run_codex(
     cmd.extend(["--cd", str(workdir), prompt])
     started = time.monotonic()
     run_env = os.environ.copy()
+    if ignore_user_config:
+        baseline_home = workdir.parent / ".codex-baseline"
+        seed_local_login(baseline_home)
+        run_env["CODEX_HOME"] = str(baseline_home)
     if env:
         run_env.update(env)
     try:
-        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=run_env)
+        proc = subprocess.run(cmd, cwd=workdir, text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=run_env)
         elapsed = time.monotonic() - started
         last_message = ""
         if last_message_path is not None and last_message_path.exists():
             last_message = last_message_path.read_text()[-MAX_CAPTURE:]
-        return proc.returncode, parse_usage(proc.stdout), (proc.stderr or proc.stdout)[-MAX_CAPTURE:], elapsed, last_message
+        diagnostic = (
+            proc.stderr[-MAX_CAPTURE // 4:] + "\n" + proc.stdout[-3 * MAX_CAPTURE // 4:]
+            if proc.stderr and proc.stdout else (proc.stderr or proc.stdout)[-MAX_CAPTURE:]
+        )
+        return proc.returncode, parse_usage(proc.stdout), diagnostic, elapsed, last_message
     except subprocess.TimeoutExpired as exc:
         elapsed = time.monotonic() - started
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-        return 124, parse_usage(stdout), (stderr or stdout)[-MAX_CAPTURE:], elapsed, ""
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        diagnostic = (
+            stderr[-MAX_CAPTURE // 4:] + "\n" + stdout[-3 * MAX_CAPTURE // 4:]
+            if stderr and stdout else (stderr or stdout)[-MAX_CAPTURE:]
+        )
+        return 124, parse_usage(stdout), diagnostic, elapsed, ""
 
 
 def run_verify(workdir: Path, argv: list[str], timeout: int) -> tuple[bool, str, float]:
@@ -335,7 +364,7 @@ def build_row(
         "repetition": repetition,
         "codex_exit_code": codex_exit,
         "verification_excerpt": verification[-2000:] if not passed else "",
-        "diagnostic_excerpt": diagnostic[-2000:] if codex_exit != 0 else "",
+        "diagnostic_excerpt": diagnostic[-MAX_CAPTURE:] if not passed or codex_exit != 0 else "",
     }
 
 
@@ -639,6 +668,11 @@ def execute_runtime(
     # Pre-authorize hooks for headless non-interactive execution
     authorize_hooks(codex_home)
 
+    # Reuse file-backed local login without importing the user's routing or
+    # plugin configuration. Keep the temporary credential private; the run's
+    # TemporaryDirectory removes it together with the isolated runtime.
+    seed_local_login(codex_home)
+
     runtime_env = {
         "CODEX_HOME": str(codex_home),
         "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
@@ -653,7 +687,7 @@ def execute_runtime(
 
     codex_exit, usage, diagnostic, elapsed, _ = run_codex(
         workdir, parent_model, parent_effort, runtime_prompt, timeout,
-        ignore_user_config=False, env=runtime_env,
+        ignore_user_config=False, env=runtime_env, writable_dirs=(codex_home,),
     )
     total_wall += elapsed
     cumulative_codex_usage = empty_usage()
@@ -677,7 +711,7 @@ def execute_runtime(
         )
         codex_exit, usage, diagnostic, elapsed, _ = run_codex(
             workdir, parent_model, parent_effort, repair_prompt, timeout,
-            ignore_user_config=False, env=runtime_env,
+            ignore_user_config=False, env=runtime_env, writable_dirs=(codex_home,),
         )
         total_wall += elapsed
         add_usage(cumulative_codex_usage, usage)
@@ -705,15 +739,20 @@ def execute_runtime(
             workers = run_data.get("workers")
             if isinstance(workers, dict):
                 for w_name, w in workers.items():
-                    if "review" in w_name.lower():
+                    if not isinstance(w, dict):
+                        continue
+                    if "review" in str(w.get("agent_type", w_name)).lower():
                         review_cycles += 1
                     if isinstance(w, dict) and isinstance(w.get("usage"), dict):
                         w_u = w["usage"]
                         if any(w_u.get(k, 0) > 0 for k in ("input_tokens", "cached_input_tokens", "output_tokens")):
-                            add_model_usage(usage_by_model, "worker", worker_model, worker_effort, w_u)
+                            add_model_usage(
+                                usage_by_model, "worker", w.get("model") or worker_model,
+                                w.get("reasoning_effort") or worker_effort, w_u,
+                            )
 
     # Fallback to top-level codex exec usage attributed to parent if telemetry was not populated
-    if not usage_by_model:
+    if not any(role == "parent" for role, _, _ in usage_by_model):
         add_model_usage(usage_by_model, "parent", parent_model, parent_effort, cumulative_codex_usage)
 
     return build_row(
@@ -799,7 +838,7 @@ def main() -> int:
                 for repetition in range(1, manifest.get("repetitions", 1) + 1):
                     with tempfile.TemporaryDirectory(prefix="codex-flow-bench-") as tmp:
                         row = execute_run(
-                            task, config, Path(tmp), repetition,
+                            task, config, Path(tmp).resolve(), repetition,
                             manifest.get("timeout_seconds", 1800),
                             task.get("max_repair_cycles", manifest.get("max_repair_cycles", 2)),
                         )

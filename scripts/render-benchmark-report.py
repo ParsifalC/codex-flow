@@ -71,6 +71,8 @@ def yes_no(value: bool) -> str:
 def composition(row: dict[str, Any]) -> str:
     if row["strategy"] == "direct":
         return f"{row['model']} / {row['reasoning_effort']}"
+    if row["strategy"] == "runtime":
+        return f"{row['model']} / {row['reasoning_effort']} parent → runtime-selected workers"
     policy = row.get("reasoning_policy", "fixed")
     if policy == "adaptive":
         return f"{row['model']} parent → {row['worker_model']} worker / adaptive"
@@ -179,6 +181,22 @@ def main() -> int:
             f"| {strategy_id} | {composition(items[0])} | {len(items)} | {pct(item_passed, len(items))} | "
             f"{pct(item_first, len(items))} | {item_repairs} | {item_reviews} | {item_wall:.1f}s | ${item_cost / len(items):.6f} |"
         )
+
+    runtime_actors: dict[tuple[str, str, str, str], int] = defaultdict(int)
+    for row in rows:
+        if row["strategy"] == "runtime":
+            for usage in row["model_usage"]:
+                key = (row["strategy_id"], usage["role"], usage["model"], usage["reasoning_effort"])
+                runtime_actors[key] += usage["calls"]
+    if runtime_actors:
+        lines.extend([
+            "", "## Runtime actor usage", "",
+            "Runtime worker configuration may differ from planner-selected actors. The following model/effort values come from recorded usage attribution.",
+            "", "| Strategy | Role | Model | Effort | Calls |",
+            "| --- | --- | --- | --- | ---: |",
+        ])
+        for (strategy_id, role, model, effort), calls in sorted(runtime_actors.items()):
+            lines.append(f"| {strategy_id} | {role} | {model} | {effort} | {calls} |")
 
     lines.extend([
         "",

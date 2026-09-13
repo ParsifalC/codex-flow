@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PRICE = ROOT / "benchmark/prices/gpt-5.6-2026-08-30.json"
+DEFAULT_PRICE = ROOT / "benchmark/prices/gpt-6-astra-2026-09-12.json"
 
 
 def run(cmd: list[str], *, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
@@ -35,7 +35,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Run the built-in codex-flow benchmark using the local Codex login session."
     )
-    ap.add_argument("profile", nargs="?", choices=["quick", "full"], default="quick")
+    ap.add_argument("profile", nargs="?", choices=["quick", "full", "agentic"], default="quick")
     ap.add_argument("--workspace", default=".codex-flow-benchmark")
     ap.add_argument("--output")
     ap.add_argument("--prices", default=str(DEFAULT_PRICE))
@@ -79,7 +79,7 @@ def main() -> int:
     if disp_output.startswith(home_str):
         disp_output = "~" + disp_output[len(home_str):]
 
-    budget = "~15M tokens (planning + repairs may increase)" if args.profile == "quick" else "high (90 runs, substantial Codex quota)"
+    budget = "~15M tokens (planning + repairs may increase)" if args.profile == "quick" else f"{planned} runs; usage depends on task execution and repairs"
 
     def pad_line(content: str, width: int = 68) -> str:
         pad = max(0, width - len(content))

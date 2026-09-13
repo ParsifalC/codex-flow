@@ -52,7 +52,7 @@ rows=[
         'worker_reasoning_effort':'high','passed':True,'first_passed':True,'input_tokens':110,'cached_input_tokens':65,
         'output_tokens':20,'model_usage':[
             {'role':'parent','model':'gpt-5.6-sol','reasoning_effort':'high','calls':1,'input_tokens':20,'cached_input_tokens':5,'output_tokens':5},
-            {'role':'worker','model':'gpt-5.6-luna','reasoning_effort':'high','calls':1,'input_tokens':90,'cached_input_tokens':60,'output_tokens':15}
+            {'role':'worker','model':'gpt-5.6-luna','reasoning_effort':'xhigh','calls':1,'input_tokens':90,'cached_input_tokens':60,'output_tokens':15}
         ],'repair_cycles':0,'review_cycles':0,'wall_time_seconds':1.0,'codex_exit_code':0
     },
 ]
@@ -68,5 +68,7 @@ python3 "$ROOT/scripts/render-benchmark-report.py" \
   --title 'Token attribution fixture'
 grep -Fq '| codex-flow-runtime-efficient | 130 | 25 | 105 | 65 | 45 | 59.1% | +8.3% | -25.0% | +79.2% |' "$TMP/token-report.md"
 grep -Fq '| sol-direct | 120 | 0 | 0 | 40 | 60 | 40.0% | +0.0% | +0.0% | n/a |' "$TMP/token-report.md"
+
+grep -Fq '| codex-flow-runtime-efficient | worker | gpt-5.6-luna | xhigh | 1 |' "$TMP/token-report.md"
 
 printf 'report smoke test passed\n'

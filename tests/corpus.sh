@@ -48,9 +48,9 @@ python3 - "$TMP/full-summary.json" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))
 assert s['tasks']==9, s
-assert s['configurations']==5, s
+assert s['configurations']==6, s
 assert s['repetitions']==3, s
-assert s['planned_runs']==135, s
+assert s['planned_runs']==162, s
 PY
 
 # Agentic is the real FlowPilot comparison surface. Keep both efficient and
@@ -64,12 +64,15 @@ python3 "$ROOT/scripts/materialize-corpus.py" \
 python3 - "$TMP/agentic-summary.json" "$TMP/agentic.json" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1])); m=json.load(open(sys.argv[2]))
-expected=['luna-direct','terra-direct','sol-direct','codex-flow-runtime-efficient','codex-flow-runtime-balanced']
-assert s['tasks']==9 and s['configurations']==5 and s['repetitions']==1, s
-assert s['planned_runs']==45 and s['strategies']==expected, s
+expected=['luna-direct','terra-direct','sol-direct','codex-flow-runtime-efficient','codex-flow-runtime-balanced','codex-flow-runtime-astra-high']
+assert s['tasks']==9 and s['configurations']==6 and s['repetitions']==1, s
+assert s['planned_runs']==54 and s['strategies']==expected, s
 assert [entry['id'] for entry in m['matrix']] == expected, m['matrix']
 profiles={entry['id']:entry.get('profile') for entry in m['matrix'] if entry['strategy']=='runtime'}
-assert profiles == {'codex-flow-runtime-efficient':'efficient','codex-flow-runtime-balanced':'balanced'}, profiles
+astra=next(entry for entry in m['matrix'] if entry['id']=='codex-flow-runtime-astra-high')
+assert astra['parent']=={'model':'gpt-6-astra','reasoning_effort':'high'}, astra
+assert astra['routing_mode']=='delegate' and astra['worker']=={'model':'gpt-5.6-luna','reasoning_effort':'high'}, astra
+assert profiles == {'codex-flow-runtime-efficient':'efficient','codex-flow-runtime-balanced':'balanced','codex-flow-runtime-astra-high':'efficient'}, profiles
 PY
 
 python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/quick-a.json" --output "$TMP/unused.jsonl" --dry-run > "$TMP/runner-plan.json"

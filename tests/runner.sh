@@ -5,6 +5,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+mkdir -p "$TMP/login"
+printf '%s\n' '{"fixture":"local-login"}' > "$TMP/login/auth.json"
+printf '%s\n' 'Global instructions must not leak into baselines' > "$TMP/login/AGENTS.md"
+export CODEX_HOME="$TMP/login"
+
 REPO="$TMP/source"
 BIN="$TMP/bin"
 mkdir -p "$REPO" "$BIN"
@@ -38,6 +43,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$workdir" ]]
+if [[ "$CODEX_HOME" == *".codex-baseline" ]]; then
+  [[ -f "$CODEX_HOME/auth.json" && ! -e "$CODEX_HOME/AGENTS.md" ]]
+fi
 if [[ "$model" == "gpt-test-fail" ]]; then
   printf '%s\n' 'simulated infrastructure failure' >&2
   exit 2
@@ -54,11 +62,18 @@ if [[ "$model" == "gpt-test-parent" ]]; then
       printf '%s\n' 'Implement answer.txt exactly as required and verify it.' > "$last_message"
     fi
   elif [[ "$prompt" == *"FlowPilot"* ]]; then
+    python3 - "$CODEX_HOME/auth.json" <<'AUTH'
+import json, stat, sys
+from pathlib import Path
+p=Path(sys.argv[1])
+assert json.loads(p.read_text()) == {"fixture": "local-login"}
+assert stat.S_IMODE(p.stat().st_mode) == 0o600
+AUTH
     printf 'correct\n' > "$workdir/answer.txt"
     if [[ -n "${CODEX_HOME:-}" ]]; then
       mkdir -p "$CODEX_HOME/codex-flow/telemetry/runs"
       cat > "$CODEX_HOME/codex-flow/telemetry/runs/simulated-run.json" <<'TELEM'
-{"parent":{"model":"gpt-test-parent","usage":{"input_tokens":80,"cached_input_tokens":15,"output_tokens":8}},"workers":{"worker-1":{"name":"worker-implementer","model":"gpt-test-worker","usage":{"input_tokens":120,"cached_input_tokens":25,"output_tokens":12}}}}
+{"parent":{"model":"gpt-test-parent","usage":{"input_tokens":80,"cached_input_tokens":15,"output_tokens":8}},"workers":{"worker-1":{"name":"worker-implementer","model":"gpt-test-worker","reasoning_effort":"xhigh","usage":{"input_tokens":120,"cached_input_tokens":25,"output_tokens":12}}}}
 TELEM
     fi
   fi
@@ -203,7 +218,9 @@ cat > "$TMP/runtime-manifest.json" <<EOF
 }
 EOF
 
-python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/runtime-manifest.json" --output "$TMP/runtime-results.jsonl"
+mkdir -p "$TMP/login"
+printf '%s\n' '{"fixture":"local-login"}' > "$TMP/login/auth.json"
+CODEX_HOME="$TMP/login" python3 "$ROOT/scripts/run-benchmark.py" --manifest "$TMP/runtime-manifest.json" --output "$TMP/runtime-results.jsonl"
 python3 - "$TMP/runtime-results.jsonl" <<'PY'
 import json, sys
 row=json.loads(open(sys.argv[1]).read())
@@ -216,6 +233,8 @@ assert row['input_tokens']==200 and row['cached_input_tokens']==40 and row['outp
 usage={item['role']:item for item in row['model_usage']}
 assert usage['parent']['calls']==1 and usage['parent']['input_tokens']==80,usage
 assert usage['worker']['calls']==1 and usage['worker']['input_tokens']==120,usage
+assert usage['worker']['reasoning_effort']=='xhigh',usage
+assert row['worker_reasoning_effort']=='high',row
 PY
 
 cat > "$TMP/prices.json" <<'EOF'
@@ -273,6 +292,26 @@ rows=[json.loads(x) for x in open(sys.argv[1]) if x.strip()]
 assert len(rows) == 1, rows
 assert rows[0]['model'] == 'gpt-test-fail', rows
 assert rows[0]['codex_exit_code'] == 2, rows
+PY
+
+python3 - "$ROOT/scripts/run-benchmark.py" "$TMP/timeout-repo" <<'PY'
+import importlib.util, subprocess, sys
+from pathlib import Path
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('runner', sys.argv[1])
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+timeout = subprocess.TimeoutExpired(
+    ['codex'], 1,
+    output=b'{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3}}\n',
+    stderr=b'startup diagnostic',
+)
+workdir=Path(sys.argv[2]); workdir.mkdir()
+with patch.object(runner.subprocess, 'run', side_effect=timeout) as run:
+    result = runner.run_codex(workdir, 'fixture', 'high', 'fixture', 1)
+assert result[0] == 124 and result[1]['input_tokens'] == 10, result
+assert 'startup diagnostic' in result[2] and 'turn.completed' in result[2], result
+assert run.call_args.kwargs['stdin'] == subprocess.DEVNULL
 PY
 
 printf 'runner smoke test passed\n'

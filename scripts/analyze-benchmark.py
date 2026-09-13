@@ -176,6 +176,10 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
                 for usage in row["model_usage"]:
                     if usage["role"] == "direct":
                         raise ValueError(f"{path}:{n}: {row['strategy']} model_usage cannot use direct role")
+                    # Runtime workers are selected by the planner. The top-level
+                    # worker fields describe configuration, not observed actors.
+                    if row["strategy"] == "runtime" and usage["role"] == "worker":
+                        continue
                     expected_model = row["model"] if usage["role"] == "parent" else row["worker_model"]
                     expected_effort = row["reasoning_effort"] if usage["role"] == "parent" else row["worker_reasoning_effort"]
                     if usage["model"] != expected_model or usage["reasoning_effort"] != expected_effort:
