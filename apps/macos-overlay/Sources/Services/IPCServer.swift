@@ -196,23 +196,23 @@ public class IPCService {
                        var run = try? JSONDecoder().decode(TaskRun.self, from: data) {
                         TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
                         state.update(run: run)
-                        state.expand()
+                        state.expand(notificationTriggered: true)
                         return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
                     }
-                    state.expand()
+                    state.expand(notificationTriggered: true)
                     return "{\"ok\": true, \"action\": \"expanded\"}\n"
                 } else {
                     if let fileData = try? Data(contentsOf: URL(fileURLWithPath: payload)),
                        var run = try? JSONDecoder().decode(TaskRun.self, from: fileData) {
                         TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
                         state.update(run: run)
-                        state.expand()
+                        state.expand(notificationTriggered: true)
                         return "{\"ok\": true, \"updatedFrom\": \"file\"}\n"
                     } else if let json = payload.data(using: .utf8),
                               var run = try? JSONDecoder().decode(TaskRun.self, from: json) {
                         TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
                         state.update(run: run)
-                        state.expand()
+                        state.expand(notificationTriggered: true)
                         return "{\"ok\": true, \"updatedFrom\": \"json\"}\n"
                     }
                 }

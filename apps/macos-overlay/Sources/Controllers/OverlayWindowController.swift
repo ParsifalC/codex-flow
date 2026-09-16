@@ -11,7 +11,13 @@ public enum DockEdge: String, Codable {
 // MARK: - Shared Observable State
 public class OverlayState: ObservableObject {
     @Published public var isExpanded: Bool = false
-    @Published public var isPinned: Bool = false
+    @Published public var isPinned: Bool = false {
+        didSet {
+            if isPinned {
+                windowController?.cancelNotificationAutoCollapseTimer()
+            }
+        }
+    }
     @Published public var isTaskRunning: Bool = false
     @Published public var isDocked: Bool = false
     @Published public var dockEdge: DockEdge = .right
@@ -55,14 +61,24 @@ public class OverlayState: ObservableObject {
         }
     }
 
-    public func expand() {
-        guard !isExpanded else { return }
+    public func expand(notificationTriggered: Bool = false) {
+        if isExpanded {
+            if notificationTriggered {
+                DispatchQueue.main.async {
+                    self.windowController?.scheduleNotificationAutoCollapse()
+                }
+            }
+            return
+        }
         loadMenuData()
         DispatchQueue.main.async {
             self.windowController?.prepareForPresentationChange()
             self.isDocked = false
             self.isExpanded = true
             self.windowController?.updateWindowFrame(animated: true)
+            if notificationTriggered {
+                self.windowController?.scheduleNotificationAutoCollapse()
+            }
         }
     }
 
@@ -354,6 +370,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         isDragging = false
         windowController.cancelDwellTimer()
         windowController.cancelTuckTimer()
+        windowController.cancelNotificationAutoCollapseTimer()
         super.mouseDown(with: event)
     }
 
@@ -529,6 +546,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
     private var hoverDwellTimer: Timer?
     private var collapseTimer: Timer?
+    private var notificationCollapseTimer: Timer?
+    private let notificationAutoCollapseDuration: TimeInterval = 5.0
     private var tuckTimer: Timer?
     private let edgeTuckIdleInterval: TimeInterval = 30.0
 
@@ -612,6 +631,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     public func prepareForPresentationChange() {
         cancelDwellTimer()
         cancelTuckTimer()
+        cancelNotificationAutoCollapseTimer()
         collapseTimer?.invalidate()
         collapseTimer = nil
     }
@@ -719,6 +739,9 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             return true
         }
         reconcilePointerAfterGeometryIfNeeded()
+        if state.isExpanded && isPointerInAppWindowOrPopover() {
+            cancelNotificationAutoCollapseTimer()
+        }
         return false
     }
 
@@ -813,6 +836,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseEntered(at point: NSPoint) {
+        cancelNotificationAutoCollapseTimer()
         if isGeometryTransitioning {
             needsPointerReconciliationAfterGeometry = true
             return
@@ -833,6 +857,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     public func handleMouseMoved(at point: NSPoint) {
+        cancelNotificationAutoCollapseTimer()
         if isGeometryTransitioning {
             needsPointerReconciliationAfterGeometry = true
             return
@@ -892,7 +917,41 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func isPointerInAppWindowOrPopover() -> Bool {
+    public func scheduleNotificationAutoCollapse(duration: TimeInterval? = nil) {
+        cancelNotificationAutoCollapseTimer()
+        let interval = duration ?? notificationAutoCollapseDuration
+        guard state.isExpanded,
+              !state.isPinned,
+              !isInteractingOrDragging else { return }
+
+        if isPointerInAppWindowOrPopover() {
+            return
+        }
+
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            guard let self,
+                  self.state.isExpanded,
+                  !self.state.isPinned,
+                  !self.isInteractingOrDragging,
+                  !self.isGeometryTransitioning else { return }
+
+            if self.isPointerInAppWindowOrPopover() {
+                self.cancelNotificationAutoCollapseTimer()
+                return
+            }
+
+            self.state.collapse()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        notificationCollapseTimer = timer
+    }
+
+    public func cancelNotificationAutoCollapseTimer() {
+        notificationCollapseTimer?.invalidate()
+        notificationCollapseTimer = nil
+    }
+
+    public func isPointerInAppWindowOrPopover() -> Bool {
         let mouseLocation = NSEvent.mouseLocation
         for appWindow in NSApp.windows {
             guard appWindow.isVisible,
