@@ -11,7 +11,7 @@
 | Task 3：精确父 final | `turn_result.py` 与指定轮次提取测试；提交 `872d84d` | 已实现并通过本机测试 |
 | Task 4：Stop 发布、revision、排序与恢复 | publication/并发/崩溃测试；原生 reducer 与 watcher 集成可执行测试通过 | 本机数据链路通过；真实宿主链路仍缺证据 |
 | Task 5：四 tab 仿真与确认 | `flowpilot-overlay-navigation.html`、三个 fixture；用户确认“布局确认，按这版实现” | 用户确认已满足；自动浏览器交互验证受阻，未宣称通过 |
-| Task 6：原生 UI | `676e7c4`；四 tab、更多、毛玻璃、目标/结果优先、完整计划默认折叠、五小时展示过滤 | 已实现；独立复审进行中 |
+| Task 6：原生 UI | `676e7c4`；四 tab、更多、毛玻璃、目标/结果优先、完整计划默认折叠、五小时展示过滤 | 已实现；原生修复独立复审通过 |
 | Task 6：模型和刷新 | model/query 与 watcher 可执行测试通过；历史排除未发布和旧 running；原样保留结果空白 | 本机验证通过 |
 | Task 6：真机交互与无障碍 | 已有任务/历史/统计截图；当前安装版历史截图及 IPC 收起/展开通过；账户、更多、键盘、VoiceOver、多屏和系统减少透明度尚无完整操作证据 | 未完成 |
 | Task 7：安装、打包与平台 | POSIX 隔离安装通过；目录递归打包保留；Windows 脚本与 CI 已接入 | Windows 执行未完成，本机无 PowerShell/Windows |
@@ -52,4 +52,10 @@ CGWindowList 确认 PID 61152 的窗口为 384×590。第一次捕获是裁切�
 
 原生交互环境检查：`AXIsProcessTrusted()` 返回 false；当前界面工具也未枚举未打包 FlowPilot。因此自动原生点击/VoiceOver 验收缺少访问条件，未请求改变系统设置，也未把无效点击算作通过。
 
-修复复审确认 3e00488 的四项 delta 为 Spec Accepted / Quality Approved。父级随后发现并移除 OverlayState 构造时绕过恢复的旧快照读取；新的实际 OverlayState 启动测试先失败后通过，完整源码重新构建并安装（PID 98966，哈希见上）。此最后增量复审进行中。
+修复复审确认 3e00488 的四项 delta 为 Spec Accepted / Quality Approved。父级随后发现并移除 OverlayState 构造时绕过恢复的旧快照读取；新的实际 OverlayState 启动测试先失败后通过，完整源码重新构建并安装（PID 98966，哈希见上）。此最后增量独立复审为 Spec Accepted / Quality Approved。
+
+## 当前交接状态：受阻，非完成
+
+源码实现修复已保存于 1d744d8、3e00488、fa1631c，本机 binary 与最新源码构建一致。独立复审已结束并接受最终增量。此前连续多轮相同的外部验收条件仍缺失：实际用户消息触发的 Desktop receipt 写入链路、可操作的原生辅助功能/人工验收、Windows runner。当前无运行中的实现或审查工作可继续等待；不启用未验证宿主的自动写入，不将这些条件改写为已通过。
+
+最小解阻动作：在当前对话实际发送“验证本轮目标写入”，触发已准备的单轮探针（30 分钟有效）；随后核对同轮 goal/plan/Stop。另外提供 Windows 执行环境及原生交互验收条件。
