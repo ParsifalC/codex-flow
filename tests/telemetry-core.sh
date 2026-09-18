@@ -337,14 +337,24 @@ printf 'telemetry unavailable/zero regression test passed\n'
 
 # A lock timeout must skip the event rather than entering an unlocked
 # critical section or creating a run file.
-mkdir -p "$CODEX_HOME/codex-flow/telemetry"
-mkdir "$CODEX_HOME/codex-flow/telemetry/.locked--turn.lock"
-export CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT=0.01
-locked_output="$(hook '{"hook_event_name":"UserPromptSubmit","session_id":"locked","turn_id":"turn","cwd":"/tmp/work","model":"gpt-parent"}')"
-[[ -z "$locked_output" ]]
-[[ ! -e "$CODEX_HOME/codex-flow/telemetry/runs/locked--turn.json" ]]
-rmdir "$CODEX_HOME/codex-flow/telemetry/.locked--turn.lock"
-unset CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT
+python3 - "$ROOT_DIR/scripts" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from telemetry_core.common import STATE_ROOT, state_lock
+from telemetry_core.turn_context import receipt_digest
+event = {"hook_event_name": "UserPromptSubmit", "session_id": "locked", "turn_id": "turn", "cwd": "/tmp/work"}
+with state_lock("turn-" + receipt_digest("locked", "turn")) as acquired:
+    assert acquired
+    result = subprocess.run(
+        [sys.executable, str(Path(sys.argv[1]) / "telemetry.py")],
+        input=json.dumps(event), text=True, capture_output=True,
+        env={**os.environ, "CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT": "0.01"},
+    )
+    assert result.returncode == 0 and not result.stdout, result
+    assert not (STATE_ROOT / "runs" / "locked--turn.json").exists()
+    assert not (STATE_ROOT / "turn-receipts" / (receipt_digest("locked", "turn") + ".json")).exists()
+PY
 printf 'telemetry lock-timeout regression test passed\n'
 
 # Usage deltas require both snapshots. Group deltas use stable identity and
@@ -459,3 +469,72 @@ stats_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats --project work --js
 python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["project_filter"] == "work" and s["total_runs"] >= 1' <<<"$stats_json"
 printf 'telemetry CLI query and project stats tests passed\n'
 
+# Deterministic binding tests use synthetic events only to exercise the local
+# API. They are not evidence that a real host delivers receipts to its parent.
+python3 - "$ROOT_DIR/scripts" "$TMP" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from strategy_runtime import TaskProfile, compile_plan
+from telemetry_core.common import STATE_ROOT
+from telemetry_core.turn_context import context_path, receipt_digest
+script = str(Path(sys.argv[1]) / "telemetry.py")
+base = Path(sys.argv[2])
+def cli(*args, event=None, env=None):
+    return subprocess.run([sys.executable, script, *args], input=json.dumps(event) if event else None,
+                          env=env, text=True, capture_output=True)
+event = {"hook_event_name": "UserPromptSubmit", "session_id": "context-chat", "turn_id": "context-turn", "cwd": "/tmp/work"}
+started = cli(event=event)
+assert started.returncode == 0 and not started.stdout, started
+registry = STATE_ROOT / "turn-receipts" / (receipt_digest("context-chat", "context-turn") + ".json")
+original = json.loads(registry.read_text(encoding="utf-8"))
+assert original["state"] == "active"
+receipt = base / "context-receipt.json"
+receipt.write_text(json.dumps(original), encoding="utf-8")
+text = base / "context-goal.txt"
+text.write_text("本轮目标：保留引号 '$HOME' 和\n换行 🌏", encoding="utf-8")
+plan = base / "context-plan.json"
+plan.write_text(json.dumps(compile_plan(TaskProfile(), routing_mode="delegate").to_dict()), encoding="utf-8")
+goal_args = ("context", "write-goal", "--receipt-file", str(receipt), "--text-file", str(text))
+plan_args = ("context", "write-plan", "--receipt-file", str(receipt), "--plan-file", str(plan), "--origin", "compiled")
+for args in (goal_args, plan_args):
+    result = cli(*args)
+    assert result.returncode == 0, result.stderr
+sidecar = context_path("context-chat", "context-turn")
+before = (sidecar.read_bytes(), sidecar.stat().st_mtime_ns)
+for args in (goal_args, plan_args):
+    assert cli(*args).returncode == 0
+assert before == (sidecar.read_bytes(), sidecar.stat().st_mtime_ns)
+text.write_text("冲突目标", encoding="utf-8")
+result = cli(*goal_args)
+assert result.returncode == 2 and json.loads(result.stderr)["error"] == "goal_conflict", result
+for field, bad, code in (("session_id", "wrong-chat", "receipt_expired"), ("turn_id", "wrong-turn", "receipt_expired"), ("role", "worker", "receipt_role_forbidden")):
+    receipt.write_text(json.dumps({**original, field: bad}), encoding="utf-8")
+    result = cli(*goal_args)
+    assert result.returncode == 2 and json.loads(result.stderr)["error"] == code, result
+receipt.unlink()
+result = cli(*goal_args)
+assert result.returncode == 2 and json.loads(result.stderr)["error"] == "receipt_missing"
+receipt.write_text(json.dumps(original), encoding="utf-8")
+stopped = cli(event={**event, "hook_event_name": "Stop"})
+assert stopped.returncode == 0
+assert json.loads(registry.read_text())["state"] == "sealed"
+result = cli(*plan_args)
+assert result.returncode == 2 and json.loads(result.stderr)["error"] == "receipt_expired"
+run = json.loads((STATE_ROOT / "runs" / "context-chat--context-turn.json").read_text())
+assert run["publication_required"] is True
+assert "receipt_id" not in json.dumps(run)
+assert original["receipt_id"] not in stopped.stdout
+
+disabled_home = base / "disabled-home"
+disabled_home.mkdir()
+(disabled_home / "codex-flow.toml").write_text("[telemetry]\nenabled=false\n", encoding="utf-8")
+env = {**os.environ, "CODEX_HOME": str(disabled_home)}
+for kind in ("UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop"):
+    result = cli(event={**event, "hook_event_name": kind}, env=env)
+    assert result.returncode == 0 and not result.stdout
+result = cli(*goal_args, env=env)
+assert result.returncode == 0 and json.loads(result.stdout)["status"] == "disabled"
+assert list(disabled_home.iterdir()) == [disabled_home / "codex-flow.toml"]
+PY
+printf 'telemetry receipt/sidecar/disabled-write tests passed\n'

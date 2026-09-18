@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "unverified",
+  "target_host": "codex-desktop",
+  "probe_entry": "codex-cli-in-isolated-home",
+  "validated_on": "2026-09-18",
+  "reason": "temporary_home_not_authenticated",
+  "observed_hook_fields": [],
+  "same_turn_receipt_delivery_verified": false,
+  "goal_plan_stop_chain_verified": false,
+  "automatic_writes_enabled": false
+}

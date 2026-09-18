@@ -7,9 +7,11 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from . import common as _common
 from .app_server import (
     AppServer,
     apply_participant_metadata,
@@ -43,8 +45,10 @@ from .common import (
     state_lock,
     telemetry_notifications_enabled,
     telemetry_retention_days,
+    telemetry_writes_enabled,
     worker_index_entry,
 )
+from .turn_context import ReceiptError, load_receipt, receipt_digest, register_receipt, seal_receipt, validate_receipt
 from .render import (
     aggregate_usage_value,
     render_summary,
@@ -720,6 +724,33 @@ def run_maintenance() -> None:
             timestamp = run_age_timestamp_ms(path, run)
             if timestamp is None or timestamp >= cutoff:
                 continue
+            digest = None
+            if isinstance(run, dict):
+                try:
+                    digest = receipt_digest(run.get("session_id"), run.get("turn_id"))
+                except ReceiptError:
+                    pass
+            if digest is not None:
+                with state_lock("turn-" + digest) as turn_acquired:
+                    if not turn_acquired:
+                        continue
+                    # Recheck age after acquiring the same lock as sidecars/Stop.
+                    current = read_json_object(path)
+                    timestamp = run_age_timestamp_ms(path, current)
+                    if timestamp is None or timestamp >= cutoff:
+                        continue
+                    try:
+                        receipt = load_receipt(_common.STATE_ROOT / "turn-receipts" / (digest + ".json"))
+                        if (receipt.session_id, receipt.turn_id) == (run.get("session_id"), run.get("turn_id")):
+                            # Keep a sealed tombstone so a replay cannot reopen it.
+                            seal_receipt(receipt, state_root=_common.STATE_ROOT)
+                    except ReceiptError:
+                        pass
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                continue
             try:
                 path.unlink()
             except OSError:
@@ -784,6 +815,8 @@ def notification_body(run: dict[str, Any]) -> str:
 
 
 def send_system_notification(run: dict[str, Any]) -> None:
+    if not telemetry_writes_enabled():
+        return
     notify_overlay_if_active(run)
     telemetry_mod = sys.modules.get("telemetry")
     sub_mod = getattr(telemetry_mod, "subprocess", subprocess) if telemetry_mod else subprocess
@@ -813,6 +846,8 @@ def send_system_notification(run: dict[str, Any]) -> None:
 
 def notify_overlay_if_active(run: dict[str, Any]) -> None:
     """Send immediate update event to macos-overlay daemon if running."""
+    if not telemetry_writes_enabled():
+        return
     import socket
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
     sock_path = os.path.join(codex_home, "codex-flow", "overlay.sock")
@@ -847,15 +882,56 @@ def write_stop_output(text: str) -> None:
     )
 
 
+@contextmanager
+def _parent_turn_lock(event: dict[str, Any], key: str, digest: str):
+    # Transition order is always legacy run_key -> turn digest. Existing worker,
+    # reconciliation, and repair writers still use the legacy lock; sidecars
+    # use only the turn lock. Never acquire a legacy lock while holding a turn
+    # lock. A later publication unit can consolidate this compatibility bridge.
+    with state_lock(key) as legacy_acquired:
+        if not legacy_acquired:
+            yield False
+            return
+        receipt = None
+        if event.get("hook_event_name") == "UserPromptSubmit":
+            try:
+                # Registration proves only local association. No receipt is
+                # emitted until a supported host context transport is verified.
+                receipt = register_receipt(event, state_root=_common.STATE_ROOT)
+            except ReceiptError:
+                yield False
+                return
+        with state_lock("turn-" + digest) as acquired:
+            if not acquired:
+                yield False
+                return
+            if event.get("hook_event_name") == "UserPromptSubmit":
+                try:
+                    validate_receipt(receipt, state_root=_common.STATE_ROOT)
+                except ReceiptError:
+                    yield False
+                    return
+            yield True
+
+
 def collect_hook(event: dict[str, Any]) -> None:
+    if not telemetry_writes_enabled():
+        return
     kind = event.get("hook_event_name")
     if kind not in {"UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"}:
         return
 
     key = worker_run_key(event) if kind in {"SubagentStart", "SubagentStop"} else run_key(event)
+    if kind in {"UserPromptSubmit", "Stop"}:
+        if event.get("agent_id") or event.get("role", "parent") != "parent":
+            return
+        try:
+            digest = receipt_digest(event.get("session_id"), event.get("turn_id"))
+        except ReceiptError:
+            return
 
     if kind == "UserPromptSubmit":
-        with state_lock(key) as acquired:
+        with _parent_turn_lock(event, key, digest) as acquired:
             if not acquired:
                 return
             run = load_run(event, key)
@@ -1098,9 +1174,17 @@ def collect_hook(event: dict[str, Any]) -> None:
         )
         return
 
-    with state_lock(key) as acquired:
+    with _parent_turn_lock(event, key, digest) as acquired:
         if not acquired:
             return
+        try:
+            receipt = load_receipt(_common.STATE_ROOT / "turn-receipts" / (digest + ".json"))
+            if (receipt.session_id, receipt.turn_id) != (event.get("session_id"), event.get("turn_id")):
+                raise ReceiptError("receipt_mismatch")
+            seal_receipt(receipt, state_root=_common.STATE_ROOT)
+        except ReceiptError:
+            # Missing metadata must not prevent an otherwise valid parent Stop.
+            pass
         run = load_run(event, key)
         path = run_path_for_key(key)
         run["finished_at_ms"] = now_ms()

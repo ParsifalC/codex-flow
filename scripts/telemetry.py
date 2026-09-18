@@ -42,6 +42,8 @@ from telemetry_core import (
     telemetry_retention_days,
 )
 from telemetry_core.latency import LatencyError
+from telemetry_core.common import telemetry_writes_enabled
+from telemetry_core.turn_context import ReceiptError, write_goal, write_plan
 import telemetry_core.collector as _collector
 from localization import resolve_language, tr
 
@@ -63,6 +65,8 @@ def _same_run(left: dict | None, right: dict) -> bool:
 
 def _persist_enriched_run(run: dict) -> None:
     """Make the persisted run self-contained before UI/CLI consumers reload it."""
+    if not telemetry_writes_enabled():
+        return
     insights = extract_transcript_insights(run.get("transcript_path"), run.get("turn_id"))
     if insights:
         for key, value in insights.items():
@@ -104,6 +108,8 @@ def _localized_notification_body(run: dict) -> str:
 
 def _notify_overlay_safely() -> None:
     """Push an update and wait for the daemon response before closing the socket."""
+    if not telemetry_writes_enabled():
+        return
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
     sock_path = os.path.join(codex_home, "codex-flow", "overlay.sock")
     if not os.path.exists(sock_path):
@@ -122,6 +128,8 @@ def _notify_overlay_safely() -> None:
 
 
 def _localized_send_system_notification(run: dict) -> None:
+    if not telemetry_writes_enabled():
+        return
     _persist_enriched_run(run)
     _notify_overlay_safely()
     telemetry_mod = sys.modules.get("telemetry")
@@ -193,6 +201,43 @@ def _render_summary_with_enrichment(run: dict) -> str:
 _collector.render_summary = _render_summary_with_enrichment
 _collector.notification_body = _localized_notification_body
 _collector.send_system_notification = _localized_send_system_notification
+
+
+def _context_cli(args: list[str]) -> int:
+    """Accept explicit UTF-8 file paths only; never infer a session or turn."""
+    if not telemetry_writes_enabled():
+        print(json.dumps({"status": "disabled"}))
+        return 0
+    try:
+        if len(args) < 2 or args[1] not in {"write-goal", "write-plan"}:
+            raise ReceiptError("invalid_arguments")
+        action = args[1]
+        required = {"--receipt-file", "--text-file"} if action == "write-goal" else {
+            "--receipt-file", "--plan-file", "--origin",
+        }
+        values: dict[str, str] = {}
+        index = 2
+        while index < len(args):
+            option = args[index]
+            if (option not in required or option in values or index + 1 >= len(args)
+                    or args[index + 1].startswith("--") or not args[index + 1]):
+                raise ReceiptError("invalid_arguments")
+            values[option] = args[index + 1]
+            index += 2
+        if set(values) != required:
+            raise ReceiptError("invalid_arguments")
+        if action == "write-goal":
+            result = write_goal(receipt_file=Path(values["--receipt-file"]), text_file=Path(values["--text-file"]))
+        else:
+            result = write_plan(
+                receipt_file=Path(values["--receipt-file"]), plan_file=Path(values["--plan-file"]),
+                origin=values["--origin"],
+            )
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+    except (ReceiptError, OSError) as exc:
+        print(json.dumps({"error": exc.code if isinstance(exc, ReceiptError) else "file_write_error"}), file=sys.stderr)
+        return 2
 
 
 def _latency_option(args: list[str], name: str) -> str | None:
@@ -313,6 +358,8 @@ def main() -> int:
     args = sys.argv[1:]
     if args:
         cmd = args[0]
+        if cmd == "context":
+            return _context_cli(args)
         if cmd == "latency":
             return _latency_cli(args)
         if cmd == "last":
@@ -387,7 +434,7 @@ def main() -> int:
         event = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError:
         return 0
-    if isinstance(event, dict):
+    if isinstance(event, dict) and telemetry_writes_enabled():
         try:
             collect_hook(event)
             _check_auto_ack_restart_on_hook()
