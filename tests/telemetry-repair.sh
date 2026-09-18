@@ -55,9 +55,8 @@ assert run1["skills_used"] == [{"name": "my-skill", "count": 1}], run1
 assert len(run1["tools_used"]) == 1 and run1["tools_used"][0]["name"] == "mcp__github_search", run1
 assert len(run1["trajectory"]) == 1 and run1["trajectory"][0]["name"] == "mcp__github_search", run1
 assert len(run1["logs"]) >= 1, run1
-assert run1["summary_info"]["goal"] == "Fix bug", run1
-assert run1["summary_info"]["conclusion"] == "Bug fixed successfully.", run1
-assert rep1["task_summaries_restored"] is True, rep1
+assert "summary_info" not in run1 and "result" not in run1, run1
+assert rep1["task_summaries_restored"] is False, rep1
 assert rep1["skills_tools_restored"] is True, rep1
 assert rep1["trajectories_restored"] is True, rep1
 assert rep1["logs_restored"] is True, rep1
@@ -176,7 +175,7 @@ assert_metric "$repair_out" repaired 2
 assert_metric "$repair_out" "quota deltas restored" 1
 assert_metric "$repair_out" "quota deltas impossible" 1
 python3 -c "import json; d=json.load(open('$CODEX_HOME/codex-flow/telemetry/runs/sess-a--turn-1.json')); assert d['skills_used'] == [{'name': 'my-skill', 'count': 1}]; assert d['quota_change_during_run'][0]['delta_percentage_points'] == 5"
-python3 -c "import json; d=json.load(open('$CODEX_HOME/codex-flow/telemetry/last.json')); assert d['skills_used'] == [{'name': 'my-skill', 'count': 1}]"
+python3 -c "import json; d=json.load(open('$CODEX_HOME/codex-flow/telemetry/last.json')); assert 'publication' not in d; assert 'skills_used' not in d"
 
 repeat_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" repair --dry-run)"
 assert_metric "$repeat_out" repaired 0

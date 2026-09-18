@@ -5,6 +5,9 @@ import copy
 from pathlib import Path
 from typing import Any
 
+from . import common as _common
+from .publication import recover_last, update_run
+
 from .app_server import (
     enrich_run_metadata,
     extract_transcript_insights,
@@ -178,8 +181,6 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
             print("Telemetry is disabled; no files changed.")
         return stats
 
-    last = read_json_object(LAST_FILE)
-
     for path in iter_run_files():
         run = read_json_object(path)
         if not isinstance(run, dict):
@@ -191,8 +192,15 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
         original = copy.deepcopy(run)
 
         repair_run(run, report=run_report)
-
         changed = (run != original)
+        if changed and not dry_run:
+            publication = update_run(run_key=path.stem, identity=original,
+                transform=lambda current: _apply_repair_delta(current, original, run),
+                state_root=_common.STATE_ROOT)
+            changed = publication.changed
+            if publication.last_updated:
+                from .collector import notify_overlay_if_active
+                notify_overlay_if_active(publication.snapshot)
 
         if run_report.get("task_summaries_restored"):
             stats["task_summaries_restored"] += 1
@@ -209,21 +217,33 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
 
         if changed:
             stats["repaired"] += 1
-            if not dry_run:
-                atomic_json(path, run)
-                if (
-                    isinstance(last, dict)
-                    and last.get("session_id") == run.get("session_id")
-                    and last.get("turn_id") == run.get("turn_id")
-                ):
-                    atomic_json(LAST_FILE, run)
         else:
             if run_report.get("transcript_missing"):
                 stats["transcript_missing"] += 1
             else:
                 stats["unchanged"] += 1
 
+    if not dry_run:
+        recovered = recover_last(state_root=_common.STATE_ROOT)
+        if recovered.last_updated:
+            from .collector import notify_overlay_if_active
+            notify_overlay_if_active(recovered.snapshot)
     if verbose:
         print(format_repair_summary(stats))
 
     return stats
+
+
+def _apply_repair_delta(current: dict[str, Any], before: dict[str, Any], repaired: dict[str, Any]) -> dict[str, Any]:
+    """Apply only still-missing evidence after the shared lock reload.
+
+    A concurrently added worker or parent fact is never replaced by the stale
+    read used for expensive transcript repair.
+    """
+    for key, value in repaired.items():
+        if key not in before or before[key] != value:
+            if key not in current or current[key] == before.get(key):
+                current[key] = copy.deepcopy(value)
+            elif isinstance(value, dict) and isinstance(current[key], dict):
+                _apply_repair_delta(current[key], before.get(key) or {}, value)
+    return current

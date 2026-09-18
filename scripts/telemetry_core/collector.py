@@ -15,6 +15,7 @@ from . import common as _common
 from .app_server import (
     AppServer,
     apply_participant_metadata,
+    enrich_run_metadata,
     find_session_transcript,
     merge_thread_metadata,
     merge_usage,
@@ -49,6 +50,8 @@ from .common import (
     worker_index_entry,
 )
 from .turn_context import ReceiptError, load_receipt, receipt_digest, register_receipt, seal_receipt, validate_receipt
+from .turn_result import extract_parent_final, parent_turn_completed_at
+from .publication import GLOBAL_LOCK, PublicationResult, publish_late_worker, publish_parent_stop, update_run
 from .render import (
     aggregate_usage_value,
     render_summary,
@@ -204,13 +207,17 @@ def _merge_execution_usage(
     return dict(incoming)
 
 
+def _record_time(record: dict[str, Any]) -> int:
+    return max((numeric_ms(record.get(field)) or 0 for field in ("updated_at_ms", "finished_at_ms", "started_at_ms")), default=0)
+
+
 def _merge_execution_values(
     existing: dict[str, Any] | None, incoming: dict[str, Any]
 ) -> dict[str, Any]:
     previous = dict(existing) if isinstance(existing, dict) else {}
     result = dict(previous)
     for key, value in incoming.items():
-        if value is not None:
+        if value is not None and (previous.get(key) is None or _record_time(incoming) >= _record_time(previous)):
             result[key] = value
     for field, reducer in (
         ("started_at_ms", min),
@@ -232,6 +239,8 @@ def _merge_execution_values(
         existing.get("usage") if isinstance(existing, dict) else None,
         incoming.get("usage"),
     )
+    if previous.get("service_usage_finalized") is True:
+        result["service_usage_finalized"] = True
     if result.get("service_usage_cumulative") is None and incoming.get("service_usage_cumulative") is not None:
         result["service_usage_cumulative"] = incoming["service_usage_cumulative"]
     return result
@@ -543,8 +552,10 @@ def merge_worker_values(
 ) -> dict[str, Any]:
     previous = dict(existing) if isinstance(existing, dict) else {}
     result = dict(previous)
+    previous_time = max([_record_time(previous), *(_record_time(item) for item in _worker_execution_records(previous).values())])
+    incoming_time = max([_record_time(incoming), *(_record_time(item) for item in _worker_execution_records(incoming).values())])
     for key, value in incoming.items():
-        if value is not None:
+        if value is not None and (previous.get(key) is None or incoming_time >= previous_time):
             result[key] = value
     started_values = [
         numeric_ms(previous.get("started_at_ms")),
@@ -577,8 +588,9 @@ def merge_worker_values(
             )
         result["executions"] = merged_executions
         _rebuild_worker_usage(result)
-    elif result.get("usage") is None and incoming.get("usage") is not None:
-        result["usage"] = incoming["usage"]
+        _refresh_worker_lifecycle(result)
+    else:
+        result["usage"] = _merge_execution_usage(previous.get("usage"), incoming.get("usage"))
     return result
 
 
@@ -615,7 +627,23 @@ def absorb_worker_source(
             source_run["merged_into"] = target_key
     source_run["merged_at_ms"] = now_ms()
     source_run["merge_reason"] = "agent-index"
-    atomic_json(source_path, source_run)
+    _mark_worker_source(source_key, source_run)
+
+
+def _mark_worker_source(key: str, observed: dict[str, Any]) -> None:
+    def mark(current):
+        merged = current.setdefault("merged_workers", {})
+        merged.update(observed.get("merged_workers") or {})
+        worker_ids = set((current.get("workers") or {}).keys())
+        if worker_ids and worker_ids.issubset(merged):
+            targets = {merged[agent_id] for agent_id in worker_ids}
+            if len(targets) == 1:
+                current["merged_into"] = next(iter(targets))
+        current.setdefault("merged_at_ms", observed.get("merged_at_ms"))
+        current["merge_reason"] = observed.get("merge_reason")
+        return current
+    publication = update_run(run_key=key, identity=observed, transform=mark, state_root=_common.STATE_ROOT)
+    _emit_publication(publication)
 
 
 def reconcile_orphan_workers() -> set[str]:
@@ -652,30 +680,30 @@ def reconcile_orphan_workers() -> set[str]:
                     continue
                 target_path = run_path_for_key(target_key)
                 target_turn_id = None
-                with state_lock(target_key) as target_acquired:
-                    if not target_acquired:
-                        continue
-                    target_run = read_json_object(target_path)
-                    if target_run is None or target_run.get("prompt_seen") is not True:
-                        continue
-                    target_turn_id = target_run.get("turn_id")
-                    target_workers = target_run.setdefault("workers", {})
-                    target_workers[agent_id] = merge_worker_values(
-                        target_workers.get(agent_id), source_worker
-                    )
-                    if target_workers[agent_id].get("status") == "running":
-                        target_workers[agent_id]["status"] = "observed"
-                    provenance = target_run.setdefault("worker_sources", {})
-                    if not isinstance(provenance, dict):
-                        provenance = {}
-                        target_run["worker_sources"] = provenance
-                    sources = provenance.setdefault(agent_id, [])
-                    if not isinstance(sources, list):
-                        sources = []
-                        provenance[agent_id] = sources
-                    if source_key not in sources:
-                        sources.append(source_key)
-                    atomic_json(target_path, target_run)
+                target_run = read_json_object(target_path)
+                if target_run is None or target_run.get("prompt_seen") is not True:
+                    continue
+                target_turn_id = target_run.get("turn_id")
+                target_workers = target_run.setdefault("workers", {})
+                target_workers[agent_id] = merge_worker_values(
+                    target_workers.get(agent_id), source_worker
+                )
+                if target_workers[agent_id].get("status") == "running":
+                    target_workers[agent_id]["status"] = "observed"
+                provenance = target_run.setdefault("worker_sources", {})
+                if not isinstance(provenance, dict):
+                    provenance = {}
+                    target_run["worker_sources"] = provenance
+                sources = provenance.setdefault(agent_id, [])
+                if not isinstance(sources, list):
+                    sources = []
+                    provenance[agent_id] = sources
+                if source_key not in sources:
+                    sources.append(source_key)
+                publication = publish_late_worker(run_key=target_key, observed=target_run, state_root=_common.STATE_ROOT)
+                if publication.snapshot is None:
+                    continue
+                _emit_publication(publication)
                 merged_workers[agent_id] = target_key
                 source_changed = True
                 changed.add(target_key)
@@ -698,7 +726,7 @@ def reconcile_orphan_workers() -> set[str]:
                 source_run["merge_reason"] = "parent-time-window"
                 source_changed = True
             if source_changed:
-                atomic_json(source_path, source_run)
+                _mark_worker_source(source_key, source_run)
     return changed
 
 
@@ -734,35 +762,40 @@ def run_maintenance() -> None:
                 with state_lock("turn-" + digest) as turn_acquired:
                     if not turn_acquired:
                         continue
-                    # Recheck age after acquiring the same lock as sidecars/Stop.
-                    current = read_json_object(path)
-                    timestamp = run_age_timestamp_ms(path, current)
-                    if timestamp is None or timestamp >= cutoff:
-                        continue
-                    try:
-                        receipt = load_receipt(_common.STATE_ROOT / "turn-receipts" / (digest + ".json"))
-                        if (receipt.session_id, receipt.turn_id) == (run.get("session_id"), run.get("turn_id")):
-                            # Keep a sealed tombstone so a replay cannot reopen it.
-                            seal_receipt(receipt, state_root=_common.STATE_ROOT)
-                    except ReceiptError:
-                        pass
-                    try:
-                        path.unlink()
-                    except OSError:
-                        pass
+                    with state_lock(GLOBAL_LOCK) as global_acquired:
+                        if not global_acquired:
+                            continue
+                        # Recheck under both locks so recovery cannot select a
+                        # run while retention removes that publication.
+                        current = read_json_object(path)
+                        timestamp = run_age_timestamp_ms(path, current)
+                        if timestamp is None or timestamp >= cutoff:
+                            continue
+                        try:
+                            receipt = load_receipt(_common.STATE_ROOT / "turn-receipts" / (digest + ".json"))
+                            if (receipt.session_id, receipt.turn_id) == (run.get("session_id"), run.get("turn_id")):
+                                seal_receipt(receipt, state_root=_common.STATE_ROOT)
+                        except ReceiptError:
+                            pass
+                        try:
+                            path.unlink()
+                        except OSError:
+                            pass
                 continue
             try:
                 path.unlink()
             except OSError:
                 pass
 
-        last = read_json_object(LAST_FILE)
-        last_timestamp = run_age_timestamp_ms(LAST_FILE, last)
-        if last_timestamp is not None and last_timestamp < cutoff:
-            try:
-                LAST_FILE.unlink()
-            except OSError:
-                pass
+        with state_lock(GLOBAL_LOCK) as global_acquired:
+            if global_acquired:
+                last = read_json_object(LAST_FILE)
+                last_timestamp = run_age_timestamp_ms(LAST_FILE, last)
+                if last_timestamp is not None and last_timestamp < cutoff:
+                    try:
+                        LAST_FILE.unlink()
+                    except OSError:
+                        pass
 
         if not WORKER_INDEX_FILE.exists():
             return
@@ -817,7 +850,6 @@ def notification_body(run: dict[str, Any]) -> str:
 def send_system_notification(run: dict[str, Any]) -> None:
     if not telemetry_writes_enabled():
         return
-    notify_overlay_if_active(run)
     telemetry_mod = sys.modules.get("telemetry")
     sub_mod = getattr(telemetry_mod, "subprocess", subprocess) if telemetry_mod else subprocess
     shutil_mod = getattr(telemetry_mod, "shutil", shutil) if telemetry_mod else shutil
@@ -884,34 +916,36 @@ def write_stop_output(text: str) -> None:
 
 @contextmanager
 def _parent_turn_lock(event: dict[str, Any], key: str, digest: str):
-    # Transition order is always legacy run_key -> turn digest. Existing worker,
-    # reconciliation, and repair writers still use the legacy lock; sidecars
-    # use only the turn lock. Never acquire a legacy lock while holding a turn
-    # lock. A later publication unit can consolidate this compatibility bridge.
-    with state_lock(key) as legacy_acquired:
-        if not legacy_acquired:
+    receipt = None
+    if event.get("hook_event_name") == "UserPromptSubmit":
+        try:
+            # register_receipt takes and releases this same turn lock itself.
+            receipt = register_receipt(event, state_root=_common.STATE_ROOT)
+        except ReceiptError:
             yield False
             return
-        receipt = None
+    with state_lock("turn-" + digest) as acquired:
+        if not acquired:
+            yield False
+            return
         if event.get("hook_event_name") == "UserPromptSubmit":
             try:
-                # Registration proves only local association. No receipt is
-                # emitted until a supported host context transport is verified.
-                receipt = register_receipt(event, state_root=_common.STATE_ROOT)
+                validate_receipt(receipt, state_root=_common.STATE_ROOT)
             except ReceiptError:
                 yield False
                 return
-        with state_lock("turn-" + digest) as acquired:
-            if not acquired:
-                yield False
-                return
-            if event.get("hook_event_name") == "UserPromptSubmit":
-                try:
-                    validate_receipt(receipt, state_root=_common.STATE_ROOT)
-                except ReceiptError:
-                    yield False
-                    return
-            yield True
+        yield True
+
+
+def _emit_publication(publication: PublicationResult, *, summary=False) -> None:
+    if publication.snapshot is None:
+        return
+    if publication.last_updated:
+        notify_overlay_if_active(publication.snapshot)
+    if publication.notify:
+        send_system_notification(publication.snapshot)
+    if summary and publication.published and policy_bool("telemetry", "summary", True):
+        write_stop_output(render_summary(publication.snapshot))
 
 
 def collect_hook(event: dict[str, Any]) -> None:
@@ -935,6 +969,12 @@ def collect_hook(event: dict[str, Any]) -> None:
             if not acquired:
                 return
             run = load_run(event, key)
+            if (run.get("session_id"), run.get("turn_id")) != (event.get("session_id"), event.get("turn_id")):
+                return
+            if run.get("prompt_seen"):
+                # Supplemental user input in the same host turn preserves its
+                # original start and quota baseline rather than creating a turn.
+                return
             path = run_path_for_key(key)
             transcript_path = event.get("transcript_path")
             if not transcript_path:
@@ -1023,145 +1063,145 @@ def collect_hook(event: dict[str, Any]) -> None:
 
     if kind in {"SubagentStart", "SubagentStop"}:
         agent_id = str(event.get("agent_id") or "unknown")
-        with state_lock(key) as acquired:
-            if not acquired:
-                return
-            run = load_run(event, key)
-            path = run_path_for_key(key)
-            if kind == "SubagentStop":
-                absorb_worker_source(run, key, event.get("session_id"), agent_id)
-            workers = run.setdefault("workers", {})
-            worker = workers.setdefault(agent_id, {"agent_id": agent_id})
-            executions = _ensure_worker_execution_map(worker)
-            worker_turn_id = event.get("turn_id")
-            execution = None
-            if worker_turn_id is not None:
-                execution_id = str(worker_turn_id)
-                execution = executions.setdefault(
-                    execution_id, {"turn_id": worker_turn_id}
-                )
-            elif kind == "SubagentStop" and len(executions) == 1:
-                execution = next(iter(executions.values()))
-            worker["agent_id"] = agent_id
-            if event.get("agent_type") is not None:
-                worker["agent_type"] = event.get("agent_type")
-            if event.get("model") is not None:
-                worker["model"] = event.get("model")
-            if event.get("turn_id") is not None:
-                worker["turn_id"] = event.get("turn_id")
-            if kind == "SubagentStart":
-                started_at_ms = _transcript_worker_started_at(event) or now_ms()
-                previous_started = numeric_ms(worker.get("started_at_ms"))
-                worker["started_at_ms"] = (
-                    started_at_ms
-                    if previous_started is None
-                    else min(previous_started, started_at_ms)
-                )
-                if worker.get("status") != "completed":
-                    worker["status"] = "running"
-                if execution is not None:
-                    execution["agent_id"] = agent_id
-                    execution["started_at_ms"] = min(
-                        value
-                        for value in (
-                            numeric_ms(execution.get("started_at_ms")),
-                            started_at_ms,
-                        )
-                        if value is not None
-                    )
-                    execution["status"] = (
-                        "completed"
-                        if execution.get("status") == "completed"
-                        else "running"
-                    )
-                if event.get("agent_transcript_path") is not None:
-                    worker["transcript_path"] = event.get("agent_transcript_path")
-                    if execution is not None:
-                        execution["transcript_path"] = event.get("agent_transcript_path")
-            else:
-                agent_transcript_path = event.get("agent_transcript_path")
-                finished_at_ms = now_ms()
-                worker["finished_at_ms"] = max(
+        # Observe outside the write lock; publication merges fresh disk workers.
+        run = load_run(event, key)
+        path = run_path_for_key(key)
+        if kind == "SubagentStop":
+            absorb_worker_source(run, key, event.get("session_id"), agent_id)
+        workers = run.setdefault("workers", {})
+        worker = workers.setdefault(agent_id, {"agent_id": agent_id})
+        executions = _ensure_worker_execution_map(worker)
+        worker_turn_id = event.get("turn_id")
+        execution = None
+        if worker_turn_id is not None:
+            execution_id = str(worker_turn_id)
+            execution = executions.setdefault(
+                execution_id, {"turn_id": worker_turn_id}
+            )
+        elif kind == "SubagentStop" and len(executions) == 1:
+            execution = next(iter(executions.values()))
+        worker["agent_id"] = agent_id
+        if event.get("agent_type") is not None:
+            worker["agent_type"] = event.get("agent_type")
+        if event.get("model") is not None:
+            worker["model"] = event.get("model")
+        if event.get("turn_id") is not None:
+            worker["turn_id"] = event.get("turn_id")
+        if kind == "SubagentStart":
+            started_at_ms = _transcript_worker_started_at(event) or now_ms()
+            previous_started = numeric_ms(worker.get("started_at_ms"))
+            worker["started_at_ms"] = (
+                started_at_ms
+                if previous_started is None
+                else min(previous_started, started_at_ms)
+            )
+            if worker.get("status") != "completed":
+                worker["status"] = "running"
+            if execution is not None:
+                execution["agent_id"] = agent_id
+                execution["started_at_ms"] = min(
                     value
                     for value in (
-                        numeric_ms(worker.get("finished_at_ms")),
+                        numeric_ms(execution.get("started_at_ms")),
+                        started_at_ms,
+                    )
+                    if value is not None
+                )
+                execution["status"] = (
+                    "completed"
+                    if execution.get("status") == "completed"
+                    else "running"
+                )
+            if event.get("agent_transcript_path") is not None:
+                worker["transcript_path"] = event.get("agent_transcript_path")
+                if execution is not None:
+                    execution["transcript_path"] = event.get("agent_transcript_path")
+        else:
+            agent_transcript_path = event.get("agent_transcript_path")
+            finished_at_ms = numeric_ms(execution.get("finished_at_ms")) if execution is not None else numeric_ms(worker.get("finished_at_ms"))
+            finished_at_ms = finished_at_ms or now_ms()
+            worker["finished_at_ms"] = max(
+                value
+                for value in (
+                    numeric_ms(worker.get("finished_at_ms")),
+                    finished_at_ms,
+                )
+                if value is not None
+            )
+            worker["status"] = "completed"
+            if agent_transcript_path is not None:
+                worker["transcript_path"] = agent_transcript_path
+            if execution is not None:
+                execution["agent_id"] = agent_id
+                execution_started = _transcript_worker_started_at(event)
+                if execution_started is None:
+                    execution_started = numeric_ms(execution.get("started_at_ms"))
+                if execution_started is None:
+                    execution_started = finished_at_ms
+                execution["started_at_ms"] = execution_started
+                execution["finished_at_ms"] = max(
+                    value
+                    for value in (
+                        numeric_ms(execution.get("finished_at_ms")),
                         finished_at_ms,
                     )
                     if value is not None
                 )
-                worker["status"] = "completed"
+                execution["status"] = "completed"
                 if agent_transcript_path is not None:
-                    worker["transcript_path"] = agent_transcript_path
-                if execution is not None:
-                    execution["agent_id"] = agent_id
-                    execution_started = _transcript_worker_started_at(event)
-                    if execution_started is None:
-                        execution_started = numeric_ms(execution.get("started_at_ms"))
-                    if execution_started is None:
-                        execution_started = finished_at_ms
-                    execution["started_at_ms"] = execution_started
-                    execution["finished_at_ms"] = max(
-                        value
-                        for value in (
-                            numeric_ms(execution.get("finished_at_ms")),
-                            finished_at_ms,
-                        )
-                        if value is not None
-                    )
-                    execution["status"] = "completed"
-                    if agent_transcript_path is not None:
-                        execution["transcript_path"] = agent_transcript_path
-                last_message = event.get("last_assistant_message")
-                if isinstance(last_message, str):
-                    last_message = last_message.strip()
-                    if last_message:
-                        worker["conclusion"] = last_message[:4000]
-                transcript_usage = transcript_turn_usage(
-                    agent_transcript_path, event.get("turn_id")
-                )
-                with AppServer() as server:
-                    service_usage = (
-                        usage_summary(server.thread_usage(agent_id))
-                        if server.available
-                        else None
-                    )
-                if execution is not None:
-                    service_delta = _service_usage_delta(
-                        worker,
-                        execution,
-                        service_usage,
-                        len(executions),
-                        event.get("session_id"),
-                        agent_id,
-                    )
-                    if service_usage is not None and not execution.get("service_usage_finalized"):
-                        execution["service_usage_cumulative"] = service_usage
-                    merged_usage = merge_usage(transcript_usage, service_delta)
-                    if service_usage is not None:
-                        execution["service_usage_finalized"] = True
-                    execution["usage"] = _merge_execution_usage(
-                        execution.get("usage"), merged_usage
-                    )
-                else:
-                    merged_usage = merge_usage(transcript_usage, service_usage)
-                    if merged_usage is not None or worker.get("usage") is None:
-                        worker["usage"] = merged_usage
-                _rebuild_worker_usage(worker)
-                if not run.get("prompt_seen"):
-                    run["worker_correlation"] = "unresolved"
-            _refresh_worker_lifecycle(worker)
-            apply_participant_metadata(
-                worker,
-                event=event,
-                transcript_path=worker.get("transcript_path"),
-                turn_id=worker.get("turn_id"),
-                usage=worker.get("usage"),
+                    execution["transcript_path"] = agent_transcript_path
+            last_message = event.get("last_assistant_message")
+            if isinstance(last_message, str):
+                last_message = last_message.strip()
+                if last_message:
+                    worker["conclusion"] = last_message[:4000]
+            transcript_usage = transcript_turn_usage(
+                agent_transcript_path, event.get("turn_id")
             )
-            atomic_json(path, run)
-
-            last = read_json_object(LAST_FILE)
-            if kind == "SubagentStop" and is_same_run(last, run):
-                atomic_json(LAST_FILE, run)
+            with AppServer() as server:
+                service_usage = (
+                    usage_summary(server.thread_usage(agent_id))
+                    if server.available
+                    else None
+                )
+            if execution is not None:
+                service_delta = _service_usage_delta(
+                    worker,
+                    execution,
+                    service_usage,
+                    len(executions),
+                    event.get("session_id"),
+                    agent_id,
+                )
+                if service_usage is not None and not execution.get("service_usage_finalized"):
+                    execution["service_usage_cumulative"] = service_usage
+                merged_usage = merge_usage(transcript_usage, service_delta)
+                if service_usage is not None:
+                    execution["service_usage_finalized"] = True
+                execution["usage"] = _merge_execution_usage(
+                    execution.get("usage"), merged_usage
+                )
+            else:
+                merged_usage = merge_usage(transcript_usage, service_usage)
+                if merged_usage is not None or worker.get("usage") is None:
+                    worker["usage"] = merged_usage
+            _rebuild_worker_usage(worker)
+            if not run.get("prompt_seen"):
+                run["worker_correlation"] = "unresolved"
+        _refresh_worker_lifecycle(worker)
+        apply_participant_metadata(
+            worker,
+            event=event,
+            transcript_path=worker.get("transcript_path"),
+            turn_id=worker.get("turn_id"),
+            usage=worker.get("usage"),
+        )
+        publication = publish_late_worker(run_key=key, observed=run, state_root=_common.STATE_ROOT)
+        if publication.snapshot is None:
+            return
+        run = publication.snapshot
+        worker = run["workers"][agent_id]
+        _emit_publication(publication)
         remember_worker_parent(
             agent_id,
             event.get("session_id"),
@@ -1174,20 +1214,18 @@ def collect_hook(event: dict[str, Any]) -> None:
         )
         return
 
-    with _parent_turn_lock(event, key, digest) as acquired:
-        if not acquired:
-            return
-        try:
-            receipt = load_receipt(_common.STATE_ROOT / "turn-receipts" / (digest + ".json"))
-            if (receipt.session_id, receipt.turn_id) != (event.get("session_id"), event.get("turn_id")):
-                raise ReceiptError("receipt_mismatch")
-            seal_receipt(receipt, state_root=_common.STATE_ROOT)
-        except ReceiptError:
-            # Missing metadata must not prevent an otherwise valid parent Stop.
-            pass
+    if kind == "Stop":
         run = load_run(event, key)
-        path = run_path_for_key(key)
-        run["finished_at_ms"] = now_ms()
+        if (run.get("session_id"), run.get("turn_id")) != (event.get("session_id"), event.get("turn_id")):
+            return
+        if isinstance(run.get("publication"), dict):
+            # A replay must not charge a later turn's cumulative usage or quota
+            # to this already completed parent. Exact final evidence may arrive later.
+            publication = publish_parent_stop(run_key=key, observed=run,
+                result=extract_parent_final(run.get("transcript_path"), run.get("turn_id"), session_id=run["session_id"]),
+                completed_at_ms=run["publication"]["completed_at_ms"], state_root=_common.STATE_ROOT)
+            _emit_publication(publication, summary=True)
+            return
         if event.get("model") is not None:
             run.setdefault("parent", {})["model"] = event.get("model")
         with AppServer() as server:
@@ -1316,16 +1354,11 @@ def collect_hook(event: dict[str, Any]) -> None:
                     turn_id=worker.get("turn_id") or event.get("turn_id"),
                     usage=worker.get("usage"),
                 )
-        atomic_json(path, run)
-        atomic_json(LAST_FILE, run)
-
-    reconciled = reconcile_orphan_workers()
-    if key in reconciled:
-        refreshed = read_json_object(run_path_for_key(key))
-        if refreshed is not None:
-            run = refreshed
-            atomic_json(LAST_FILE, run)
+        enrich_run_metadata(run)
+        result = extract_parent_final(run.get("transcript_path"), run.get("turn_id"), session_id=run["session_id"])
+        completed = parent_turn_completed_at(run.get("transcript_path"), run.get("turn_id"), session_id=run["session_id"])
+        reconcile_orphan_workers()
+        publication = publish_parent_stop(run_key=key, observed=run, result=result,
+            completed_at_ms=completed if completed is not None else now_ms(), state_root=_common.STATE_ROOT)
     run_maintenance()
-    if policy_bool("telemetry", "summary", True):
-        write_stop_output(render_summary(run))
-    send_system_notification(run)
+    _emit_publication(publication, summary=True)

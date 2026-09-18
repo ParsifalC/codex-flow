@@ -967,7 +967,7 @@ def apply_participant_metadata(
 def extract_transcript_insights(
     transcript_path: Any, turn_id: Any = None
 ) -> dict[str, Any] | None:
-    """Extract skills used, tools/MCP calls, trajectory steps, logs, and summary from a session transcript."""
+    """Extract operational evidence; goals and finals have separate proven sources."""
     if not isinstance(transcript_path, str) or not transcript_path:
         return None
     path = Path(transcript_path)
@@ -978,8 +978,6 @@ def extract_transcript_insights(
     tools: dict[str, dict[str, Any]] = {}
     trajectory: list[dict[str, Any]] = []
     logs: list[dict[str, Any]] = []
-    goal: str | None = None
-    conclusion: str | None = None
 
     try:
         with path.open("r", encoding="utf-8") as stream:
@@ -1056,32 +1054,6 @@ def extract_transcript_insights(
                                 "message": f"[{tool_name}] {inp_summary}",
                             }
                         )
-                    elif p_type == "message":
-                        role = payload.get("role")
-                        content = payload.get("content", [])
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict):
-                                text_parts.append(
-                                    item.get("text") or item.get("output_text") or ""
-                                )
-                        msg_text = "".join(text_parts).strip()
-                        if role == "user" and msg_text:
-                            clean_prompt = msg_text
-                            if "<USER_REQUEST>" in clean_prompt:
-                                m = re.search(
-                                    r"<USER_REQUEST>(.*?)</USER_REQUEST>",
-                                    clean_prompt,
-                                    re.DOTALL,
-                                )
-                                if m:
-                                    clean_prompt = m.group(1).strip()
-                            if "## My request:" in clean_prompt:
-                                clean_prompt = clean_prompt.split("## My request:", 1)[1].strip()
-                            if not clean_prompt.startswith("<") or not goal:
-                                goal = clean_prompt
-                        elif role == "assistant" and msg_text:
-                            conclusion = msg_text
                 elif (
                     record_type == "event_msg"
                     and payload.get("type") == "item_completed"
@@ -1125,10 +1097,6 @@ def extract_transcript_insights(
         "tools_used": tools_list,
         "trajectory": trajectory[-20:],
         "logs": logs[-30:],
-        "summary_info": {
-            "goal": goal[:300] if goal else None,
-            "conclusion": conclusion[:500] if conclusion else None,
-        },
     }
 
 

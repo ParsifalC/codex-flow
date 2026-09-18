@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -44,6 +45,7 @@ from telemetry_core import (
 from telemetry_core.latency import LatencyError
 from telemetry_core.common import telemetry_writes_enabled
 from telemetry_core.turn_context import ReceiptError, write_goal, write_plan
+from telemetry_core.publication import recover_last
 import telemetry_core.collector as _collector
 from localization import resolve_language, tr
 
@@ -52,34 +54,6 @@ LANG = resolve_language(Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"
 
 def T(en: str, zh: str) -> str:
     return tr(en, zh, lang=LANG)
-
-
-def _same_run(left: dict | None, right: dict) -> bool:
-    if not isinstance(left, dict):
-        return False
-    return (
-        str(left.get("session_id") or "") == str(right.get("session_id") or "")
-        and str(left.get("turn_id") or "") == str(right.get("turn_id") or "")
-    )
-
-
-def _persist_enriched_run(run: dict) -> None:
-    """Make the persisted run self-contained before UI/CLI consumers reload it."""
-    if not telemetry_writes_enabled():
-        return
-    insights = extract_transcript_insights(run.get("transcript_path"), run.get("turn_id"))
-    if insights:
-        for key, value in insights.items():
-            if value is not None and not run.get(key):
-                run[key] = value
-    enrich_run_metadata(run)
-
-    atomic_json(LAST_FILE, run)
-    for path in iter_run_files():
-        candidate = read_json_object(path)
-        if _same_run(candidate, run):
-            atomic_json(path, run)
-            break
 
 
 def _localized_notification_body(run: dict) -> str:
@@ -130,8 +104,6 @@ def _notify_overlay_safely() -> None:
 def _localized_send_system_notification(run: dict) -> None:
     if not telemetry_writes_enabled():
         return
-    _persist_enriched_run(run)
-    _notify_overlay_safely()
     telemetry_mod = sys.modules.get("telemetry")
     sub_mod = getattr(telemetry_mod, "subprocess", subprocess) if telemetry_mod else subprocess
     shutil_mod = getattr(telemetry_mod, "shutil", shutil) if telemetry_mod else shutil
@@ -187,20 +159,10 @@ def _rate_limits_with_retry(self: AppServer):
 AppServer.rate_limits = _rate_limits_with_retry
 _collector.AppServer.rate_limits = _rate_limits_with_retry
 
-# Enrich and persist before the Stop summary is rendered. This makes last.json
-# and the per-run file authoritative for live view, restart, history, and CLI.
-_ORIGINAL_RENDER_SUMMARY = _collector.render_summary
-
-
-def _render_summary_with_enrichment(run: dict) -> str:
-    _persist_enriched_run(run)
-    return _ORIGINAL_RENDER_SUMMARY(run)
-
-
 # collect_hook resolves these names from telemetry_core.collector at runtime.
-_collector.render_summary = _render_summary_with_enrichment
 _collector.notification_body = _localized_notification_body
 _collector.send_system_notification = _localized_send_system_notification
+_collector.notify_overlay_if_active = lambda _run: _notify_overlay_safely()
 
 
 def _context_cli(args: list[str]) -> int:
@@ -359,6 +321,12 @@ def _check_auto_ack_restart_on_hook() -> None:
 
 def main() -> int:
     args = sys.argv[1:]
+    if args and args[0] == "recover-last":
+        publication = recover_last()
+        if publication.last_updated:
+            _notify_overlay_safely()
+        print(json.dumps(asdict(publication), ensure_ascii=False, sort_keys=True))
+        return 0
     if args:
         cmd = args[0]
         if cmd == "context":

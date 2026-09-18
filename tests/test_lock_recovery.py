@@ -38,29 +38,35 @@ class LockRecoveryTests(unittest.TestCase):
                 self.assertFalse(second)
 
     def test_process_exit_releases_lock_without_deleting_lock_file(self):
+        self.check_process_exit("turn-a")
+
+    def test_process_exit_releases_global_publication_lock(self):
+        self.check_process_exit("global-publication")
+
+    def check_process_exit(self, key):
         code = """
 import os, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from telemetry_core.common import state_lock
-with state_lock('turn-a', state_root=Path(sys.argv[2])) as acquired:
+with state_lock(sys.argv[3], state_root=Path(sys.argv[2])) as acquired:
     print('ready' if acquired else 'failed', flush=True)
     sys.stdin.readline()
     os._exit(0)
 """
         process = subprocess.Popen(
-            [sys.executable, "-c", code, str(ROOT / "scripts"), str(self.state)],
+            [sys.executable, "-c", code, str(ROOT / "scripts"), str(self.state), key],
             env={**os.environ, "CODEX_HOME": str(self.home)},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
         )
         try:
             self.assertEqual(process.stdout.readline().strip(), "ready")
-            with common.state_lock("turn-a", state_root=self.state) as acquired:
+            with common.state_lock(key, state_root=self.state) as acquired:
                 self.assertFalse(acquired)
             process.communicate("exit\n", timeout=5)
             self.assertEqual(process.returncode, 0)
-            with common.state_lock("turn-a", state_root=self.state) as acquired:
+            with common.state_lock(key, state_root=self.state) as acquired:
                 self.assertTrue(acquired)
         finally:
             if process.poll() is None:

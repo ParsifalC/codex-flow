@@ -538,3 +538,73 @@ assert result.returncode == 0 and json.loads(result.stdout)["status"] == "disabl
 assert list(disabled_home.iterdir()) == [disabled_home / "codex-flow.toml"]
 PY
 printf 'telemetry receipt/sidecar/disabled-write tests passed\n'
+
+# Exercise the public CLI with the observed Desktop format, out-of-order Stops,
+# and two independent context sidecars. No host receipt transport is assumed.
+python3 - "$ROOT_DIR" "$TMP" <<'PY'
+import json, os, subprocess, sys, time
+from pathlib import Path
+root, base = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / "scripts"))
+from telemetry_core.turn_context import receipt_digest
+from strategy_runtime import TaskProfile, compile_plan
+home = base / "publication-home"
+home.mkdir()
+env = {**os.environ, "CODEX_HOME": str(home)}
+state = home / "codex-flow/telemetry"
+fixture = json.loads((root / "tests/fixtures/turn-context/transcript-format.json").read_text())
+records = [fixture["parent_metadata"], *fixture["records"]]
+completed = int(time.time() * 1000) - 2000
+for row in records:
+    payload = row.get("payload", {})
+    if payload.get("type") == "task_complete":
+        row["timestamp"] = completed + (1000 if payload["turn_id"] == "turn-2" else 0)
+transcript = base / "publication-parent.jsonl"
+transcript.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in records) + "\n")
+before = transcript.read_bytes()
+script = ["bash", str(root / "bin/codex-flow"), "telemetry"]
+def call(*args, event=None):
+    command = [sys.executable, str(root / "scripts/telemetry.py")] if event else script + list(args)
+    proc = subprocess.run(command, input=json.dumps(event) if event else None,
+                          env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    return proc
+events = {}
+plan = base / "publication-plan.json"
+plan.write_text(json.dumps(compile_plan(TaskProfile(), routing_mode="delegate").to_dict()))
+for turn in ("turn-1", "turn-2"):
+    event = {"hook_event_name": "UserPromptSubmit", "session_id": "chat-a", "turn_id": turn,
+             "cwd": "/tmp/project", "transcript_path": str(transcript), "user_prompt": "用户原文"}
+    events[turn] = event
+    call(event=event)
+    receipt = state / "turn-receipts" / (receipt_digest("chat-a", turn) + ".json")
+    goal = base / (turn + "-goal.txt")
+    goal.write_text("目标 " + turn)
+    call("context", "write-goal", "--receipt-file", str(receipt), "--text-file", str(goal))
+    call("context", "write-plan", "--receipt-file", str(receipt), "--plan-file", str(plan), "--origin", "compiled")
+    run = json.loads((state / "runs" / ("chat-a--" + turn + ".json")).read_text())
+    assert "result" not in run and "turn_context" not in run and "publication" not in run, run
+assert not (state / "last.json").exists()
+for turn in ("turn-2", "turn-1"):
+    call(event={**events[turn], "hook_event_name": "Stop", "last_assistant_message": "不可使用的替代结果"})
+run1 = json.loads((state / "runs/chat-a--turn-1.json").read_text())
+run2 = json.loads((state / "runs/chat-a--turn-2.json").read_text())
+assert run1["result"]["text"] == "旧轮结果", run1
+assert run2["result"]["text"] == "本轮最终结果", run2
+for turn, run in (("turn-1", run1), ("turn-2", run2)):
+    assert run["turn_context"]["goal"]["text"] == "目标 " + turn, run
+    assert run["turn_context"]["orchestration"]["execution_plan"] == json.loads(plan.read_text()), run
+    assert "receipt_id" not in json.dumps(run), run
+assert json.loads((state / "last.json").read_text())["turn_id"] == "turn-2"
+last_before = (state / "last.json").read_bytes()
+call(event={**events["turn-2"], "hook_event_name": "Stop"})
+assert last_before == (state / "last.json").read_bytes()
+assert json.loads(last_before)["publication"] == {"revision": 1, "completed_at_ms": completed + 1000}
+(state / "last.json").unlink()
+recovered = call("recover-last", "--json")
+assert json.loads(recovered.stdout)["last_updated"] is True
+assert json.loads(recovered.stdout)["notify"] is False
+assert (state / "last.json").read_bytes() == last_before
+assert transcript.read_bytes() == before
+PY
+printf 'telemetry exact-turn publication/replay/recovery CLI tests passed\n'
