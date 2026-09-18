@@ -16,12 +16,12 @@
 | Task 6：真机交互与无障碍 | 已有任务/历史/统计截图；当前安装版历史截图及 IPC 收起/展开通过；账户、更多、键盘、VoiceOver、多屏和系统减少透明度尚无完整操作证据 | 未完成 |
 | Task 7：安装、打包与平台 | POSIX 隔离安装通过；目录递归打包保留；Windows 脚本与 CI 已接入 | Windows 执行未完成，本机无 PowerShell/Windows |
 | Task 8：场景回归 | 两 chat 四 turn fixture、遥测聚合、hook trust、instructions、隔离 smoke 的已有记录 | 不能替代宿主、Windows、真机及独立审查门 |
-| 用户追加：源码编译到本机 | 构建成功，安装和源码 binary SHA-256 一致；进程 87153 的 IPC status 返回 running | 已完成 |
+| 用户追加：源码编译到本机 | 构建成功，安装和源码 binary SHA-256 一致；进程 98966 的 IPC status 返回 running | 已完成 |
 
 ## 本机版本
 
 源码与安装产物 SHA-256：
-`5ee8af35aaaa3398a120958b40ecff166ff8717df777cf0d43670417ac27ef61`。
+`03df78eedf35d9670e0b9877897919d110002efa0882d5cca46df4a71ad2bb2e`。
 安装位置：`~/.codex/codex-flow/bin/FlowPilot`。
 后续若再次编译，以新校验值为准。
 
@@ -51,3 +51,5 @@ CGWindowList 确认 PID 61152 的窗口为 384×590。第一次捕获是裁切�
 新增阻塞恢复期间的文件/手动刷新测试和真实子进程环境断言通过；完整 watcher 可执行测试通过。`tests/overlay-read-only-status.sh` 在旧 binary 失败、修复后通过。全量 Swift 编译通过并安装，PID 87153 正常运行。减少动态效果的代码缺口已修复，系统设置/VoiceOver 操作仍未实测。修复独立复审进行中。
 
 原生交互环境检查：`AXIsProcessTrusted()` 返回 false；当前界面工具也未枚举未打包 FlowPilot。因此自动原生点击/VoiceOver 验收缺少访问条件，未请求改变系统设置，也未把无效点击算作通过。
+
+修复复审确认 3e00488 的四项 delta 为 Spec Accepted / Quality Approved。父级随后发现并移除 OverlayState 构造时绕过恢复的旧快照读取；新的实际 OverlayState 启动测试先失败后通过，完整源码重新构建并安装（PID 98966，哈希见上）。此最后增量复审进行中。

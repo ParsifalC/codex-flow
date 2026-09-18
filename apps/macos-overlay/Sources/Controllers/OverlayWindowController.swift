@@ -44,11 +44,8 @@ public class OverlayState: ObservableObject {
     private var publicationGate = PublishedTurnGate()
 
     public init() {
-        if let latest = TelemetryQueryEngine.shared.loadLatestRun() {
-            latestRun = latest
-            isTaskRunning = latest.isRunning
-            publicationGate.seed(latest)
-        }
+        // TelemetryWatcher owns the initial snapshot after recover-last.
+        // Reading last.json here would expose a stale snapshot before recovery.
         loadMenuData()
     }
 

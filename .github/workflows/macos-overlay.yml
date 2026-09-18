@@ -63,6 +63,8 @@ jobs:
           "$FLOW_BUILD_ROOT/telemetry-turn-context-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
+      - name: Verify startup snapshot recovery ordering
+        run: bash tests/overlay-startup.sh
       - name: Verify status client is read-only
         run: bash tests/overlay-read-only-status.sh
       - name: Smoke test overlay lifecycle
