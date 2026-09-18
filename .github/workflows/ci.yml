@@ -23,6 +23,7 @@ jobs:
           bash -n tests/lifecycle-runtime.sh
           bash -n tests/account-snapshot.sh
           bash -n tests/telemetry.sh
+          bash -n tests/turn-context-install.sh
           bash -n tests/latency-telemetry.sh
           bash -n tests/chatgpt-mcp.sh
           bash -n tests/benchmark.sh
@@ -47,6 +48,9 @@ jobs:
           python3 -m py_compile scripts/telemetry_core/query.py
           python3 -m py_compile scripts/telemetry_core/render.py
           python3 -m py_compile scripts/telemetry_core/latency.py
+          python3 -m py_compile scripts/telemetry_core/turn_context.py
+          python3 -m py_compile scripts/telemetry_core/turn_result.py
+          python3 -m py_compile scripts/telemetry_core/publication.py
           python3 -m py_compile apps/chatgpt-mcp/__init__.py
           python3 -m py_compile apps/chatgpt-mcp/adapter.py
           python3 -m py_compile apps/chatgpt-mcp/server.py
@@ -83,6 +87,8 @@ jobs:
         run: bash tests/chatgpt-mcp.sh
       - name: Installer and CLI smoke test
         run: bash tests/smoke.sh
+      - name: Installed turn context CLI
+        run: bash tests/turn-context-install.sh
 
   windows-smoke:
     runs-on: windows-latest
@@ -97,7 +103,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Parse PowerShell entrypoints
         run: |
-          $files = @('install.ps1','bin/codex-flow.ps1','scripts/doctor.ps1','scripts/uninstall.ps1')
+          $files = @('install.ps1','bin/codex-flow.ps1','scripts/doctor.ps1','scripts/uninstall.ps1','tests/turn-context-install.ps1')
           foreach ($file in $files) {
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$null, [ref]$errors) | Out-Null
@@ -252,3 +258,5 @@ jobs:
           if (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.ps1')) { throw 'custom PowerShell wrapper survived uninstall' }
           $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
           if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after uninstall' }
+      - name: Installed turn context CLI
+        run: ./tests/turn-context-install.ps1

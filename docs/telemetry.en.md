@@ -10,7 +10,41 @@
 
 ---
 
-## Design Principles
+## Store goals, plans, and results per turn
+
+A project uses `cwd`, a chat uses `session_id`, and a turn uses `turn_id`.
+Goals belong to `session_id + turn_id`. New turns never replace earlier goals
+or rewrite the user's messages.
+
+With an explicit receipt delivered by the host to this parent turn, use UTF-8 files:
+
+```bash
+codex-flow telemetry context write-goal --receipt-file receipt.json --text-file goal.txt
+codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file plan.json --origin compiled
+```
+
+Goals accept 1–400 Unicode code points and become immutable after the first write.
+Repeated identical writes are idempotent. Plans retain the complete schema-11
+planner JSON. Use `--origin reused` when continuing the same task's existing plan;
+do not reset its budget. Public run snapshots never contain the receipt secret.
+
+Only parent Stop publishes `turn_context`, the exact parent-turn `result`, and
+`publication`. Its revision identifies a complete snapshot; its completion time
+is fixed on first publication. Replayed Stops do not notify twice, and late
+workers cannot move `last.json` back to an older turn. After a crash between the
+run and last writes, use `codex-flow telemetry recover-last --json`. Recovery
+does not send a completion notification. Disabled telemetry performs no state,
+lock, or IPC writes; historical reads remain available.
+
+**Host receipt delivery is still unverified.** The isolated probe lacked
+authentication; no user credentials were copied and automatic delivery is not
+enabled. Observing the Desktop transcript format does not prove same-turn
+receipt delivery. Missing receipt/final evidence displays “Not recorded” rather
+than guessing from the latest turn, user prompt, or last assistant message.
+Python/CLI retain Windows-compatible code; native Windows locking still needs
+CI or device validation.
+
+## Keep collection independent of the main task
 
 1. **Zero LLM Invocation**: The telemetry collector and formatter are written in pure Python. No secondary LLM calls are made to summarize runs.
 2. **Turn-Based Isolation**: Each user interaction turn is tracked as a single atomic `flow run`.

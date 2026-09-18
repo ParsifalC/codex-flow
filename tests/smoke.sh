@@ -75,6 +75,9 @@ python3 -m py_compile \
   "$CODEX_HOME/codex-flow/strategies/work_unit_runtime.py"
 [[ -d "$CODEX_HOME/codex-flow/telemetry_core" ]]
 [[ -f "$CODEX_HOME/codex-flow/telemetry_core/latency.py" ]]
+[[ -f "$CODEX_HOME/codex-flow/telemetry_core/turn_context.py" ]]
+[[ -f "$CODEX_HOME/codex-flow/telemetry_core/turn_result.py" ]]
+[[ -f "$CODEX_HOME/codex-flow/telemetry_core/publication.py" ]]
 [[ -f "$CODEX_HOME/codex-flow/menu.py" ]]
 [[ -f "$CODEX_HOME/codex-flow/manage-hooks.py" ]]
 [[ -f "$CODEX_HOME/hooks.json" ]]
@@ -307,7 +310,15 @@ grep -Fq 'max_concurrent_threads = 3' "$CODEX_HOME/codex-flow.toml"
 grep -Fq 'retention_days = 17' "$CODEX_HOME/codex-flow.toml"
 codex-flow doctor
 
-env -u CODEX_FLOW_BIN_DIR codex-flow uninstall
+# This CLI smoke test must not run the real macOS LaunchAgent teardown.
+# Native login lifecycle is tested separately on an isolated CI runner.
+mkdir -p "$TMP/no-launchagents"
+cat > "$TMP/no-launchagents/uname" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-s" ]]; then printf 'Linux\n'; else /usr/bin/uname "$@"; fi
+EOF
+chmod +x "$TMP/no-launchagents/uname"
+PATH="$TMP/no-launchagents:$PATH" env -u CODEX_FLOW_BIN_DIR codex-flow uninstall
 [[ ! -e "$CODEX_HOME/codex-flow.toml" ]]
 [[ ! -e "$CODEX_HOME/codex-flow" ]]
 [[ ! -e "$CODEX_FLOW_BIN_DIR/codex-flow" ]]

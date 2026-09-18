@@ -608,3 +608,59 @@ assert (state / "last.json").read_bytes() == last_before
 assert transcript.read_bytes() == before
 PY
 printf 'telemetry exact-turn publication/replay/recovery CLI tests passed\n'
+
+# The acceptance fixture exercises two chats with overlapping turn IDs.
+python3 - "$ROOT_DIR" "$TMP" <<'PY'
+import json, os, subprocess, sys, time
+from pathlib import Path
+root, base = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / "scripts"))
+from telemetry_core.turn_context import receipt_digest
+rows = [json.loads(line) for line in (root / "tests/fixtures/turn-context/e2e-two-chats.jsonl").read_text(encoding="utf-8").splitlines()]
+home = base / "two-chats-home"
+env = {**os.environ, "CODEX_HOME": str(home)}
+state = home / "codex-flow/telemetry"
+completed = int(time.time() * 1000) - 5000
+transcripts = {}
+events = {}
+def call(*args, event=None):
+    proc = subprocess.run([sys.executable, str(root / "scripts/telemetry.py"), *args],
+        input=json.dumps(event) if event else None, env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    return proc
+for session in sorted({row["session_id"] for row in rows}):
+    records = [{"type": "session_meta", "payload": {"id": session, "session_id": session,
+        "source": "vscode", "thread_source": "user", "originator": "Codex Desktop"}}]
+    for row in [r for r in rows if r["session_id"] == session]:
+        records.extend([
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": row["turn_id"]}},
+            {"type": "turn_context", "payload": {"turn_id": row["turn_id"]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "用户原文 '$HOME' 🌏"}]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": row["result"]}]}},
+            {"type": "event_msg", "timestamp": completed + row["completed_offset_ms"], "payload": {"type": "task_complete", "turn_id": row["turn_id"]}},
+        ])
+    path = base / (session + ".jsonl")
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n", encoding="utf-8")
+    transcripts[session] = path, path.read_bytes()
+for row in rows:
+    session, turn = row["session_id"], row["turn_id"]
+    event = {"hook_event_name": "UserPromptSubmit", "session_id": session, "turn_id": turn,
+        "cwd": "/tmp/two-chats", "transcript_path": str(transcripts[session][0]), "user_prompt": "用户原文 '$HOME' 🌏"}
+    events[(session, turn)] = event
+    call(event=event)
+    goal = base / (session + "--" + turn + ".txt")
+    goal.write_text(row["goal"], encoding="utf-8")
+    receipt = state / "turn-receipts" / (receipt_digest(session, turn) + ".json")
+    call("context", "write-goal", "--receipt-file", str(receipt), "--text-file", str(goal))
+assert not (state / "last.json").exists()
+for row in sorted(rows, key=lambda r: r["completed_offset_ms"], reverse=True):
+    call(event={**events[(row["session_id"], row["turn_id"])], "hook_event_name": "Stop"})
+    run = json.loads((state / "runs" / (row["session_id"] + "--" + row["turn_id"] + ".json")).read_text())
+    assert run["turn_context"]["goal"]["text"] == row["goal"], run
+    assert run["result"]["text"] == row["result"], run
+last = json.loads((state / "last.json").read_text())
+assert (last["session_id"], last["turn_id"]) == ("e2e-chat-b", "turn-2"), last
+for path, original in transcripts.values():
+    assert path.read_bytes() == original
+PY
+printf 'telemetry two-chat four-turn acceptance fixture passed\n'

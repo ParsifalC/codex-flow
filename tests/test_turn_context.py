@@ -149,24 +149,30 @@ class TurnContextTests(unittest.TestCase):
             collector.collect_hook(self.event)
         self.assertFalse((self.state / "runs").exists())
 
-    def test_parent_stop_waits_for_legacy_worker_lock_before_sealing(self):
+    def test_parent_stop_waits_for_turn_lock_before_sealing(self):
         receipt = self.receipt_file()
         context.write_goal(receipt_file=receipt, text_file=self.text_file("本轮目标"), state_root=self.state)
         registry = self.state / "turn-receipts" / (context.receipt_digest("chat-a", "turn-2") + ".json")
         sidecar = context.context_path("chat-a", "turn-2", self.state)
         before = registry.read_bytes(), sidecar.read_bytes()
-        with patch.object(common, "STATE_ROOT", self.state), patch.object(common, "LOCK_TIMEOUT", 0.02), \
-                patch.object(collector, "AppServer", side_effect=AssertionError("parent bypassed worker lock")):
-            with common.state_lock("chat-a--turn-2") as acquired:
+        with patch.object(common, "STATE_ROOT", self.state), patch.object(common, "RUNS_DIR", self.state / "runs"), \
+                patch.object(common, "LOCK_TIMEOUT", 0.02), patch.object(collector, "AppServer") as server, \
+                patch.object(collector, "notify_overlay_if_active") as ipc, \
+                patch.object(collector, "send_system_notification") as notify:
+            # Expensive observation is deliberately outside the publication lock.
+            server.return_value.__enter__.return_value.available = False
+            with common.state_lock("turn-" + context.receipt_digest("chat-a", "turn-2")) as acquired:
                 self.assertTrue(acquired)
                 collector.collect_hook({**self.event, "hook_event_name": "Stop"})
+            ipc.assert_not_called()
+            notify.assert_not_called()
         self.assertEqual(before, (registry.read_bytes(), sidecar.read_bytes()))
         self.assertFalse((self.state / "runs").exists())
 
-    def test_parent_submit_waits_for_legacy_worker_lock_before_registering(self):
+    def test_parent_submit_waits_for_turn_lock_before_registering(self):
         with patch.object(common, "STATE_ROOT", self.state), patch.object(common, "LOCK_TIMEOUT", 0.02), \
                 patch.object(collector, "AppServer", side_effect=AssertionError("parent bypassed worker lock")):
-            with common.state_lock("chat-a--turn-2") as acquired:
+            with common.state_lock("turn-" + context.receipt_digest("chat-a", "turn-2")) as acquired:
                 self.assertTrue(acquired)
                 collector.collect_hook(self.event)
         self.assertFalse((self.state / "turn-receipts").exists())

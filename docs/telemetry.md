@@ -10,7 +10,35 @@
 
 ---
 
-## 核心设计原则
+## 按轮次保存目标、计划和结果
+
+项目使用 `cwd`，对话使用 `session_id`，轮次使用 `turn_id`。目标属于
+`session_id + turn_id`，新轮次不会覆盖上一轮目标，也不会改写用户消息。
+
+父 Agent 通过宿主明确传入的本轮凭证调用：
+
+```bash
+codex-flow telemetry context write-goal --receipt-file receipt.json --text-file goal.txt
+codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file plan.json --origin compiled
+```
+
+文件使用 UTF-8。目标允许 1–400 个 Unicode 码点；首次成功后只能幂等重写相同
+文本。计划必须是 planner 的完整 schema 11 JSON；沿用同一任务的计划时使用
+`--origin reused`，不重置任务预算。凭证不进入公开的 run 或复制摘要。
+
+父 Stop 才把 `turn_context`、本轮父 Agent 的 `result` 和 `publication` 一起
+发布。`publication.revision` 表示快照修订，`completed_at_ms` 保留首次完成时间。
+重复 Stop 不重复通知；迟到 worker 只补充对应轮次，不把 `last.json` 回滚。
+若写 run 后进程退出，可运行 `codex-flow telemetry recover-last --json` 恢复 last；
+恢复不发送完成通知。遥测关闭时写入、锁创建和 IPC 均停止，历史仍可读取。
+
+**兼容性状态：宿主凭证传递仍为 unverified。** 临时宿主验证环境缺少认证，
+没有复制用户认证或启用自动传递。桌面 transcript 格式已观察验证，但这不证明
+凭证能传到同一个父 turn。没有可验证凭证或父 final 时显示“未记录”，不能用
+最新轮次、唯一活动轮次、用户原文或最后一条 assistant 消息替代。
+Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证。
+
+## 保持采集与主任务解耦
 
 1. **零 LLM 额外开销**：遥测采集器与格式化器全部由纯 Python 编写，绝不产生二次 LLM Token 浪费。
 2. **轮次级原子隔离**：用户每一次交互轮次均作为单一原子的 `flow run` 独立追踪。
@@ -41,7 +69,7 @@ flowchart LR
 ## 采集指标维度
 
 | 指标分类 | 核心字段 | 数据源 | 详细描述 |
-| **参与角色** | Parent / Worker 数量、模型与交付结论 | Transcript / Hook | 记录参与调度的模型、实际推理强度及 Worker 任务交付信息 |
+| **参与角色** | Parent / Worker 数量、模型与本轮结果 | Transcript / Hook | 记录参与调度的模型、实际推理强度及 Worker 执行信息 |
 | **Token 细分** | Input / Cached / Output / Reasoning | Transcript 差值计算 | 精确归因各阶段的输入、缓存命中、输出与思考 Token |
 | **配额水位** | 5m, 1h, 1d 窗口使用率 (`usedPercent`) | `codex app-server` | 账户实时速率限制百分比及本轮消耗差值 |
 | **费用预估** | Estimated credits / API-equivalent | 计费规则推导 | 官方计费路由可用时自动折算为额度与费用 |

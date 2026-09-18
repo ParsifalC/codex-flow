@@ -18,6 +18,23 @@ The **FlowPilot Overlay** is a 100% native macOS desktop companion built with **
 
 ## Visual Architecture & 3 View Modes
 
+Turn goals, results, and orchestration are keyed by `session_id + turn_id`, not
+a chat-wide goal. New records require `publication` before appearing in details.
+Legacy completed history remains readable without backfilling missing fields.
+Host receipt delivery remains unverified; see [telemetry compatibility](telemetry.en.md#store-goals-plans-and-results-per-turn).
+
+Task, History, Analytics, and Account tabs retain more, pin, collapse, switch,
+and copy actions. Task, History, and Account hide 300-minute (five-hour) quota
+windows while retaining collection and other periods. Native glass uses
+`NSVisualEffectView`, with an opaque fallback for reduced transparency.
+
+This release targets native macOS UI. Windows keeps Python/CLI compatibility;
+its visual specification uses higher-opacity acrylic surfaces, or solid colors
+and clear borders without system material or in high-contrast mode. The
+[HTML preview](../apps/macos-overlay/flowpilot-overlay-navigation.html) does not
+prove a native Windows overlay exists or was verified. Older promotional images
+may still show the previous content model.
+
 ![FlowPilot 3-State Poster](assets/promo/flowpilot_promo_poster.png)
 
 ### 1. 🟢 Micro Capsule (Idle & Ambient State)
@@ -31,15 +48,16 @@ The **FlowPilot Overlay** is a 100% native macOS desktop companion built with **
 
 ---
 
-### 2. ⚡️ Inspector (Live Telemetry & Quota Monitor)
-- **Task Objective & Outcome Card**: Smart extraction and presentation of the current task `Objective` and delivery `Conclusion / Outcome`.
+### 2. Inspector (Completed Turn Details)
+- **Turn Goal and Result**: Read the goal only from `turn_context.goal` and the parent final only from `result`. Missing fields display “Not recorded”. Details appear only after parent Stop publishes the turn.
+- **Orchestration Configuration**: Execution details start collapsed. Show strategy, routing, and review settings, with planned counts separate from observed participants.
 - **3 KPI Ring Gauges**: High-precision circular gauges for **Duration** (`1m 4s`), **Tokens** (`198.2k`), and **Cost Estimation**.
 - **Execution Trajectory & Logs**: Collapsible step trajectory (19+ steps) and detailed log stream.
 - **Account Rate Limits & Quotas**: Real-time 5m / 1h / 1d / 7d quota progression bars (`usedPercent`), per-turn quota deltas (`+1 pp`), and reset countdown timers.
 - **Agent Topology Tree**: Hierarchical display of the Parent Orchestrator model and Worker subagents.
 - **Token Distribution Bar**: Proportional breakdown of Prompt, Cached, Output, and Reasoning tokens.
 - **Skills & MCP Badges**: Automatic discovery and badge labeling of activated skills and MCP server tools.
-- **Historical View Navigation**: Browse any past run with one-click `[⚡️ Jump to Live]` to return to real-time tracking.
+- **Historical View Navigation**: Browse completed turns or return to the latest published snapshot. Each turn retains its own goal and result.
 
 ---
 
@@ -67,7 +85,7 @@ The **FlowPilot Overlay** is a 100% native macOS desktop companion built with **
 FlowPilot includes native privacy protection (`isPrivacyMode`) to prevent internal project names, confidential prompts, or proprietary data from leaking during presentations, recordings, or screenshot captures.
 
 When enabled:
-- Task **Objective** and **Outcome** descriptions are smoothly blurred using native Gaussian filters (`blur(radius: 4.5)`).
+- Turn **Goal** and **Result** use the native privacy display rules.
 - Session **prompts** and **titles** in header bars and history rows are frosted.
 - **Project and repository names** in headers, history, and analytics cards are desensitized.
 

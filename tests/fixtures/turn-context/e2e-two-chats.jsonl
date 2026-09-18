@@ -1,0 +1,4 @@
+{"session_id":"e2e-chat-a","turn_id":"turn-1","goal":"整理项目结构","result":"项目结构已整理","completed_offset_ms":0}
+{"session_id":"e2e-chat-a","turn_id":"turn-2","goal":"补充开发指南的测试步骤","result":"测试步骤已补充","completed_offset_ms":2000}
+{"session_id":"e2e-chat-b","turn_id":"turn-1","goal":"调整浮窗的可读性","result":"浮窗文字层级已调整","completed_offset_ms":1000}
+{"session_id":"e2e-chat-b","turn_id":"turn-2","goal":"保留其他额度并隐藏五小时展示","result":"五小时展示已移除，其他额度保留","completed_offset_ms":3000}
