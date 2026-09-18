@@ -322,6 +322,9 @@ def _latency_cli(args: list[str]) -> int:
         _validate_latency_options(action, options)
         state_file = _latency_state_file(options)
         if action == "record":
+            if not telemetry_writes_enabled():
+                print(json.dumps({"status": "disabled"}))
+                return 0
             event, state_file = _latency_record_args(options)
             result = record_latency_event(event, state_file=state_file)
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
@@ -412,6 +415,11 @@ def main() -> int:
         if cmd == "repair":
             dry_run = "--dry-run" in args[1:]
             as_json = "--json" in args[1:]
+            if not dry_run and not telemetry_writes_enabled():
+                print(json.dumps({"status": "disabled"}) if as_json else T(
+                    "Telemetry is disabled; no files changed.", "遥测已关闭，未修改文件。",
+                ))
+                return 0
             stats = repair_history(dry_run=dry_run, verbose=not as_json)
             if as_json:
                 print(json.dumps(stats, indent=2))

@@ -25,7 +25,32 @@ class TurnContextCLITests(unittest.TestCase):
         self.text.write_text("修复 Unicode 🌏\n保留 '$HOME' 与 `literal`", encoding="utf-8")
 
     def cli(self, *args):
-        return subprocess.run([sys.executable, str(TELEMETRY_SCRIPT), "context", *args], env=self.env, text=True, encoding="utf-8", capture_output=True, check=False)
+        return self.telemetry_cli("context", *args)
+
+    def telemetry_cli(self, *args):
+        return subprocess.run([sys.executable, str(TELEMETRY_SCRIPT), *args], env=self.env, text=True, encoding="utf-8", capture_output=True, check=False)
+
+    def disable_telemetry(self):
+        (self.home / "codex-flow.toml").write_text("[telemetry]\nenabled=false\n", encoding="utf-8")
+
+    def state_snapshot(self, path):
+        if not path.exists():
+            return {}
+        return {
+            str(item.relative_to(path)): (item.read_bytes(), item.stat().st_mtime_ns)
+            for item in path.rglob("*")
+            if item.is_file()
+        }
+
+    def latency_event(self, event_id="guard-event"):
+        return {
+            "event_id": event_id, "task_id": "guard-task", "worker_id": "guard-worker",
+            "strategy": "efficient", "task_class": "routine", "stage": "implementation",
+            "role": "implementer", "model": "gpt-5.6-luna", "rollout_mode": "shadow",
+            "legacy_effort": "xhigh", "proposed_effort": "high", "selected_effort": "xhigh",
+            "observed_effort": None, "boundary": "terminal", "outcome": "completed",
+            "started_at": 1000, "finished_at": 1004, "repair_count": 0, "checkpoint_count": 0,
+        }
 
     def seed(self):
         code = """
@@ -125,6 +150,61 @@ Path(sys.argv[2]).write_text(json.dumps(compile_plan(TaskProfile(),routing_mode=
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["status"], "disabled")
         self.assertFalse((self.home / "codex-flow").exists())
+
+    def test_disabled_repair_preserves_seeded_runs_and_read_only_outputs(self):
+        state = self.home / "codex-flow/telemetry"
+        runs = state / "runs"
+        runs.mkdir(parents=True)
+        original = {
+            "schema_version": 1, "session_id": "saved-chat", "turn_id": "saved-turn",
+            "cwd": "/", "parent": {}, "workers": {}, "started_at_ms": 1000, "finished_at_ms": 2000,
+        }
+        for path in (runs / "saved-chat--saved-turn.json", state / "last.json"):
+            path.write_text(json.dumps(original), encoding="utf-8")
+        before = self.state_snapshot(state)
+        dry_run_before = self.telemetry_cli("repair", "--dry-run", "--json")
+        self.assertEqual(dry_run_before.returncode, 0, dry_run_before.stderr)
+        self.assertEqual(json.loads(dry_run_before.stdout)["repaired"], 1)
+        self.disable_telemetry()
+        result = self.telemetry_cli("repair", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state_snapshot(state), before)
+        self.assertEqual(json.loads(result.stdout)["status"], "disabled")
+        dry_run_after = self.telemetry_cli("repair", "--dry-run", "--json")
+        self.assertEqual(dry_run_after.stdout, dry_run_before.stdout)
+        self.assertEqual(dry_run_after.returncode, 0, dry_run_after.stderr)
+        historical = self.telemetry_cli("last", "--json")
+        self.assertEqual(historical.returncode, 0, historical.stderr)
+        self.assertEqual(json.loads(historical.stdout)["session_id"], "saved-chat")
+        self.assertEqual(self.state_snapshot(state), before)
+
+    def test_disabled_latency_record_does_not_create_state_or_custom_directory(self):
+        self.disable_telemetry()
+        for options in ((), ("--state-file", str(self.home / "custom/latency.jsonl"))):
+            result = self.telemetry_cli("latency", "record", "--event-json", json.dumps(self.latency_event()), *options)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((self.home / "codex-flow").exists())
+            self.assertFalse((self.home / "custom").exists())
+            self.assertEqual(json.loads(result.stdout)["status"], "disabled")
+
+    def test_disabled_latency_preserves_existing_directory_and_report(self):
+        seeded = self.telemetry_cli("latency", "record", "--event-json", json.dumps(self.latency_event()))
+        self.assertEqual(seeded.returncode, 0, seeded.stderr)
+        state = self.home / "codex-flow/telemetry"
+        report_before = self.telemetry_cli("latency", "report", "--json")
+        self.assertEqual(report_before.returncode, 0, report_before.stderr)
+        # latency report obtains its own short-lived read lock; establish the
+        # no-write baseline after that read-only command has completed.
+        before = self.state_snapshot(state)
+        self.disable_telemetry()
+        result = self.telemetry_cli("latency", "record", "--event-json", json.dumps(self.latency_event("blocked-event")))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state_snapshot(state), before)
+        self.assertEqual(json.loads(result.stdout)["status"], "disabled")
+        report_after = self.telemetry_cli("latency", "report", "--json")
+        self.assertEqual(report_after.returncode, 0, report_after.stderr)
+        self.assertEqual(json.loads(report_after.stdout), json.loads(report_before.stdout))
+        self.assertEqual(self.state_snapshot(state), before)
 
 
 if __name__ == "__main__":
