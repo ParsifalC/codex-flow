@@ -41,6 +41,14 @@ jobs:
             apps/macos-overlay/Tests/TelemetryQueryEngineConcurrencyTests.swift \
             -o "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
           "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
+      - name: Test telemetry watcher recovery and filesystem reattachment
+        run: |
+          swiftc \
+            apps/macos-overlay/Sources/Models/TelemetryData.swift \
+            apps/macos-overlay/Sources/Services/TelemetryWatcher.swift \
+            apps/macos-overlay/Tests/TelemetryWatcherTests.swift \
+            -o "$RUNNER_TEMP/telemetry-watcher-tests"
+          "$RUNNER_TEMP/telemetry-watcher-tests"
       - name: Test published turn context model and query
         run: |
           set -euo pipefail
@@ -55,6 +63,8 @@ jobs:
           "$FLOW_BUILD_ROOT/telemetry-turn-context-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
+      - name: Verify status client is read-only
+        run: bash tests/overlay-read-only-status.sh
       - name: Smoke test overlay lifecycle
         shell: bash
         run: |

@@ -31,6 +31,9 @@ struct TelemetryTurnContextTests {
         precondition(run.publication?.revision == 1)
         precondition(run.publishedGoal == "本轮目标")
         precondition(run.publishedConclusion == "结果")
+        let spacedJSON = json.replacingOccurrences(of: "\"结果\"", with: "\"  结果  \"")
+        let spaced = try JSONDecoder().decode(TaskRun.self, from: Data(spacedJSON.utf8))
+        precondition(spaced.publishedConclusion == "  结果  ", "Published result must preserve exact parent text")
 
         guard case let .object(plan)? = run.turnContext?.orchestration?.executionPlan,
               case let .array(notes)? = plan["notes"],

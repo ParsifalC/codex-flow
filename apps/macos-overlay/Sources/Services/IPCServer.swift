@@ -7,7 +7,6 @@ public class IPCService {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
         let dir = URL(fileURLWithPath: codexHome).appendingPathComponent("codex-flow")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("overlay.sock").path
     }
 
@@ -28,6 +27,14 @@ public class IPCService {
 
         public func start() {
             guard serverSource == nil, serverSocket < 0 else { return }
+            // Path lookup and client status are read-only. Only an explicitly
+            // started control server owns creation of its socket directory.
+            do {
+                try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: path).deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+            } catch { return }
             unlink(path)
 
             serverSocket = socket(AF_UNIX, SOCK_STREAM, 0)

@@ -5,6 +5,7 @@ public struct BubbleView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
     @ObservedObject private var updateService = FlowPilotUpdateService.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered: Bool = false
     @State private var breathePhase: CGFloat = 0.0
     @State private var shimmerAngle: Double = 0.0
@@ -31,16 +32,30 @@ public struct BubbleView: View {
             }
         }
         .frame(width: 76, height: 76)
-        .animation(.spring(response: 0.16, dampingFraction: 0.82), value: state.isDocked)
-        .animation(.spring(response: 0.22, dampingFraction: 0.78), value: updateService.hasUpdateBadge)
-        .onAppear {
+        .animation(reduceMotion ? nil : .spring(response: 0.16, dampingFraction: 0.82), value: state.isDocked)
+        .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.78), value: updateService.hasUpdateBadge)
+        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
+        .onAppear { updateMotion() }
+        .onChange(of: reduceMotion) { _, _ in updateMotion() }
+    }
+
+    private func updateMotion() {
+        if reduceMotion {
+            breathePhase = 0
+            shimmerAngle = 0
+        } else {
             withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                breathePhase = 1.0
+                breathePhase = 1
             }
         }
     }
 
     private func handleHover(_ hovered: Bool) {
+        guard !reduceMotion else {
+            isHovered = hovered
+            shimmerAngle = 0
+            return
+        }
         withAnimation(.easeInOut(duration: 0.25)) {
             isHovered = hovered
         }
@@ -195,7 +210,7 @@ public struct BubbleView: View {
                     borderGradient,
                     lineWidth: isHovered ? 2.0 : 1.6
                 )
-                .rotationEffect(.degrees(isHovered ? shimmerAngle : 0))
+                .rotationEffect(.degrees(!reduceMotion && isHovered ? shimmerAngle : 0))
                 .shadow(
                     color: statusGlowColor.opacity(isHovered ? 0.85 : (state.isTaskRunning ? 0.7 : 0.3)),
                     radius: isHovered ? 4 : 2
@@ -204,7 +219,7 @@ public struct BubbleView: View {
 
             VStack(spacing: 2) {
                 ZStack {
-                    if state.isTaskRunning || isHovered {
+                    if !reduceMotion && (state.isTaskRunning || isHovered) {
                         Circle()
                             .stroke(statusColor.opacity(isHovered ? 0.6 : 0.4), lineWidth: 1.2)
                             .frame(width: 28, height: 28)

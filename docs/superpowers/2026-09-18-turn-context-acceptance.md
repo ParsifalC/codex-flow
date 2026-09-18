@@ -16,12 +16,12 @@
 | Task 6：真机交互与无障碍 | 已有任务/历史/统计截图；当前安装版历史截图及 IPC 收起/展开通过；账户、更多、键盘、VoiceOver、多屏和系统减少透明度尚无完整操作证据 | 未完成 |
 | Task 7：安装、打包与平台 | POSIX 隔离安装通过；目录递归打包保留；Windows 脚本与 CI 已接入 | Windows 执行未完成，本机无 PowerShell/Windows |
 | Task 8：场景回归 | 两 chat 四 turn fixture、遥测聚合、hook trust、instructions、隔离 smoke 的已有记录 | 不能替代宿主、Windows、真机及独立审查门 |
-| 用户追加：源码编译到本机 | 构建成功，安装和源码 binary SHA-256 一致；进程 61152 的 IPC status 返回 running | 已完成 |
+| 用户追加：源码编译到本机 | 构建成功，安装和源码 binary SHA-256 一致；进程 87153 的 IPC status 返回 running | 已完成 |
 
 ## 本机版本
 
 源码与安装产物 SHA-256：
-`afc27deba4aacd8b72fcddad7c6fddcadd218d641179fd3d08f85c2b9a209752`。
+`5ee8af35aaaa3398a120958b40ecff166ff8717df777cf0d43670417ac27ef61`。
 安装位置：`~/.codex/codex-flow/bin/FlowPilot`。
 后续若再次编译，以新校验值为准。
 
@@ -43,3 +43,11 @@ CGWindowList 确认 PID 61152 的窗口为 384×590。第一次捕获是裁切�
 本轮修复后的 13 项 CLI 测试与 13 项安装副本测试通过。新增运行时代码通过 Python 3.8 语法解析，这不等于实际 Python 3.8/Windows 运行通过。
 
 当前真实 Desktop Stop 的结果已追加核验：已发布快照 result 与使用快照内明确 session/turn/transcript 路径提取的父 final 完全一致（221 字符）。历史行的“未记录”来自 publishedGoal，不能据此推断 result 缺失。该证据只证明结果归属与发布，不证明 receipt 传递或 goal/plan 写入。
+
+## 原生复审修复
+
+首次复审指出恢复读取竞态、子进程环境不一致、小圆窗减少动态效果缺口，以及只读状态查询创建目录。前三项已修复；IPC 路径计算改为纯读取，目录仅由显式启动的控制服务创建。控制服务供查看历史及启动/停止使用，不等同于遥测发布通知。
+
+新增阻塞恢复期间的文件/手动刷新测试和真实子进程环境断言通过；完整 watcher 可执行测试通过。`tests/overlay-read-only-status.sh` 在旧 binary 失败、修复后通过。全量 Swift 编译通过并安装，PID 87153 正常运行。减少动态效果的代码缺口已修复，系统设置/VoiceOver 操作仍未实测。修复独立复审进行中。
+
+原生交互环境检查：`AXIsProcessTrusted()` 返回 false；当前界面工具也未枚举未打包 FlowPilot。因此自动原生点击/VoiceOver 验收缺少访问条件，未请求改变系统设置，也未把无效点击算作通过。

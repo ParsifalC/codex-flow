@@ -954,14 +954,14 @@ public struct TaskRun: Codable, Identifiable {
     }
 
     public var publishedGoal: String? {
-        guard let text = turnContext?.goal?.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+        guard let text = turnContext?.goal?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return text
     }
 
     public var publishedConclusion: String? {
-        guard let text = result?.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+        guard let text = result?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return text

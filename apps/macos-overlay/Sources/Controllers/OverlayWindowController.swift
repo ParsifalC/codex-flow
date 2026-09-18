@@ -221,9 +221,19 @@ public class OverlayState: ObservableObject {
         }
     }
 
-    public func update(run: TaskRun, notificationTriggered: Bool = false) {
+    public func update(
+        run: TaskRun,
+        notificationTriggered: Bool = false,
+        recovery: Bool = false
+    ) {
         DispatchQueue.main.async {
             let decision = self.publicationGate.accept(run, notify: notificationTriggered)
+            if recovery {
+                // Startup recovery refreshes the restored snapshot silently and
+                // consumes its notification identity. A later IPC hint for the
+                // same revision may refresh, but must not expand the overlay.
+                self.publicationGate.seed(run)
+            }
             if decision.notify { self.expand(notificationTriggered: true) }
             guard decision.refresh else { return }
             self.latestRun = run
