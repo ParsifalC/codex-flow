@@ -167,8 +167,15 @@ _collector.notify_overlay_if_active = lambda _run: _notify_overlay_safely()
 
 def _context_cli(args: list[str]) -> int:
     """Accept explicit UTF-8 file paths only; never infer a session or turn."""
+    if args[1:] in (["--help"], ["-h"]):
+        print("Usage: codex-flow telemetry context <command>\n\n"
+              "  write-goal --receipt-file PATH --text-file PATH\n"
+              "  write-plan --receipt-file PATH --plan-file PATH "
+              "--origin compiled|reused|replanned\n\n"
+              "Use an explicit host receipt and UTF-8 input files.")
+        return 0
     if not telemetry_writes_enabled():
-        print(json.dumps({"status": "disabled"}))
+        print(json.dumps({"ok": False, "status": "disabled", "reason": "telemetry_disabled"}))
         return 0
     try:
         if len(args) < 2 or args[1] not in {"write-goal", "write-plan"}:
@@ -198,7 +205,7 @@ def _context_cli(args: list[str]) -> int:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (ReceiptError, OSError) as exc:
-        print(json.dumps({"error": exc.code if isinstance(exc, ReceiptError) else "file_write_error"}), file=sys.stderr)
+        print(json.dumps({"ok": False, "error": exc.code if isinstance(exc, ReceiptError) else "file_write_error"}), file=sys.stderr)
         return 2
 
 
@@ -323,7 +330,7 @@ def main() -> int:
     args = sys.argv[1:]
     if args and args[0] == "recover-last":
         publication = recover_last()
-        if publication.last_updated:
+        if publication.last_updated and "--quiet" not in args[1:]:
             _notify_overlay_safely()
         print(json.dumps(asdict(publication), ensure_ascii=False, sort_keys=True))
         return 0
@@ -413,6 +420,10 @@ def main() -> int:
     if isinstance(event, dict) and telemetry_writes_enabled():
         try:
             collect_hook(event)
+            from telemetry_core.host_transport import probe_hook_context
+            context = probe_hook_context(event)
+            if context is not None:
+                print(json.dumps(context, ensure_ascii=False))
             _check_auto_ack_restart_on_hook()
         except Exception:
             return 0

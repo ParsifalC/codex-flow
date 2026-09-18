@@ -44,6 +44,15 @@ than guessing from the latest turn, user prompt, or last assistant message.
 Python/CLI retain Windows-compatible code; native Windows locking still needs
 CI or device validation.
 
+The repository includes a one-turn Desktop probe in `tests/turn-context-desktop-probe.py`.
+Explicitly select a chat and working directory with `arm --session-id <id> --cwd <absolute-path>`.
+The next real parent turn can receive its receipt path through
+`UserPromptSubmit.hookSpecificOutput.additionalContext`. A real user message must
+trigger the hook. `status` succeeds only after same-turn goal, full plan, and
+parent Stop publication match. Synthetic hooks and unit tests do not establish
+Desktop support, and the probe never enables global automatic writes.
+Overlay startup uses `recover-last --quiet` to avoid IPC alerts while restoring history.
+
 ## Keep collection independent of the main task
 
 1. **Zero LLM Invocation**: The telemetry collector and formatter are written in pure Python. No secondary LLM calls are made to summarize runs.

@@ -38,6 +38,13 @@ codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file 
 最新轮次、唯一活动轮次、用户原文或最后一条 assistant 消息替代。
 Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证。
 
+仓库提供一次性桌面探针 `tests/turn-context-desktop-probe.py`。显式指定对话 ID
+和工作目录后，`arm --session-id <id> --cwd <绝对路径>` 只允许接下来一个真实
+父轮次通过 `UserPromptSubmit.hookSpecificOutput.additionalContext` 接收凭证路径。
+必须由用户实际发送消息触发；`status` 只有确认同轮目标、完整计划和父 Stop
+发布一致才成功。合成 Hook 和单测不能证明桌面支持，探针也不会打开全局自动写入。
+浮窗启动恢复使用 `recover-last --quiet`，避免恢复历史记录时发送 IPC 提醒。
+
 ## 保持采集与主任务解耦
 
 1. **零 LLM 额外开销**：遥测采集器与格式化器全部由纯 Python 编写，绝不产生二次 LLM Token 浪费。

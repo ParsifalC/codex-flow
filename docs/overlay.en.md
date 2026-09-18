@@ -51,12 +51,9 @@ may still show the previous content model.
 ### 2. Inspector (Completed Turn Details)
 - **Turn Goal and Result**: Read the goal only from `turn_context.goal` and the parent final only from `result`. Missing fields display “Not recorded”. Details appear only after parent Stop publishes the turn.
 - **Orchestration Configuration**: Execution details start collapsed. Show strategy, routing, and review settings, with planned counts separate from observed participants.
-- **3 KPI Ring Gauges**: High-precision circular gauges for **Duration** (`1m 4s`), **Tokens** (`198.2k`), and **Cost Estimation**.
-- **Execution Trajectory & Logs**: Collapsible step trajectory (19+ steps) and detailed log stream.
-- **Account Rate Limits & Quotas**: Real-time 5m / 1h / 1d / 7d quota progression bars (`usedPercent`), per-turn quota deltas (`+1 pp`), and reset countdown timers.
-- **Agent Topology Tree**: Hierarchical display of the Parent Orchestrator model and Worker subagents.
-- **Token Distribution Bar**: Proportional breakdown of Prompt, Cached, Output, and Reasoning tokens.
-- **Skills & MCP Badges**: Automatic discovery and badge labeling of activated skills and MCP server tools.
+- **Run Facts**: Compact duration, token, and actual participant counts appear after the goal and result.
+- **Complete Plan**: Expand the full JSON inside execution details, including plan origin and revision. Long goals and results can be expanded separately.
+- **Account Information**: The Account tab retains other quota windows and reset times. Five-hour windows are filtered only from presentation.
 - **Historical View Navigation**: Browse completed turns or return to the latest published snapshot. Each turn retains its own goal and result.
 
 ---

@@ -73,9 +73,34 @@ Path(sys.argv[2]).write_text(json.dumps(compile_plan(TaskProfile(),routing_mode=
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
         payload = json.loads(result.stderr)
+        self.assertIs(payload["ok"], False)
         self.assertIsInstance(payload["error"], str)
         if code:
             self.assertEqual(payload["error"], code)
+
+    def test_context_help_is_available(self):
+        proc = self.cli("--help")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("write-goal", proc.stdout)
+        self.assertIn("write-plan", proc.stdout)
+
+    def test_quiet_recovery_does_not_notify_overlay(self):
+        code = """
+import sys
+from unittest.mock import patch
+import telemetry
+from telemetry_core.publication import PublicationResult
+result = PublicationResult(True, True, 1, True, False, None, {})
+with patch.object(telemetry, 'recover_last', return_value=result), patch.object(telemetry, '_notify_overlay_safely') as notify:
+    sys.argv = ['telemetry.py', 'recover-last', '--quiet']
+    assert telemetry.main() == 0
+    notify.assert_not_called()
+    sys.argv = ['telemetry.py', 'recover-last']
+    assert telemetry.main() == 0
+    notify.assert_called_once()
+"""
+        result = subprocess.run([sys.executable, "-c", code], env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_invalid_arguments_return_structured_exit_two(self):
         for args in (
@@ -149,6 +174,9 @@ Path(sys.argv[2]).write_text(json.dumps(compile_plan(TaskProfile(),routing_mode=
             result = self.cli(*args)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["status"], "disabled")
+            self.assertEqual(json.loads(result.stdout), {
+                "ok": False, "status": "disabled", "reason": "telemetry_disabled"
+            })
         self.assertFalse((self.home / "codex-flow").exists())
 
     def test_disabled_repair_preserves_seeded_runs_and_read_only_outputs(self):
