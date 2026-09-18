@@ -19,6 +19,7 @@ from .common import (
     now_ms,
     numeric_ms,
     read_json_object,
+    telemetry_writes_enabled,
 )
 
 
@@ -171,6 +172,11 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
         "quota_deltas_restored": 0,
         "quota_deltas_impossible": 0,
     }
+
+    if not dry_run and not telemetry_writes_enabled():
+        if verbose:
+            print("Telemetry is disabled; no files changed.")
+        return stats
 
     last = read_json_object(LAST_FILE)
 
