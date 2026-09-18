@@ -104,6 +104,22 @@ public class IPCService {
             return number.uint64Value
         }
 
+        private func latestPublishedRun() -> TaskRun? {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
+            let lastURL = URL(fileURLWithPath: codexHome)
+                .appendingPathComponent("codex-flow")
+                .appendingPathComponent("telemetry")
+                .appendingPathComponent("last.json")
+            guard let data = try? Data(contentsOf: lastURL),
+                  var run = try? JSONDecoder().decode(TaskRun.self, from: data),
+                  run.publication != nil else {
+                return nil
+            }
+            TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
+            return run
+        }
+
         private func acceptConnection() {
             var clientAddr = sockaddr_un()
             var clientAddrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -188,35 +204,28 @@ public class IPCService {
                 return "{\"ok\": true, \"action\": \"showing_history\"}\n"
             } else if cmd.hasPrefix("update") {
                 let payload = cmd.dropFirst("update".count).trimmingCharacters(in: .whitespacesAndNewlines)
-                if payload.isEmpty {
-                    let home = FileManager.default.homeDirectoryForCurrentUser
-                    let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
-                    let lastUrl = URL(fileURLWithPath: codexHome).appendingPathComponent("codex-flow").appendingPathComponent("telemetry").appendingPathComponent("last.json")
-                    if let data = try? Data(contentsOf: lastUrl),
-                       var run = try? JSONDecoder().decode(TaskRun.self, from: data) {
-                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                        state.update(run: run)
-                        state.expand(notificationTriggered: true)
-                        return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
-                    }
-                    state.expand(notificationTriggered: true)
-                    return "{\"ok\": true, \"action\": \"expanded\"}\n"
-                } else {
-                    if let fileData = try? Data(contentsOf: URL(fileURLWithPath: payload)),
-                       var run = try? JSONDecoder().decode(TaskRun.self, from: fileData) {
-                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                        state.update(run: run)
-                        state.expand(notificationTriggered: true)
-                        return "{\"ok\": true, \"updatedFrom\": \"file\"}\n"
-                    } else if let json = payload.data(using: .utf8),
-                              var run = try? JSONDecoder().decode(TaskRun.self, from: json) {
-                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                        state.update(run: run)
-                        state.expand(notificationTriggered: true)
-                        return "{\"ok\": true, \"updatedFrom\": \"json\"}\n"
-                    }
+                // Publication is authoritative. Always prefer last.json so an
+                // IPC hint cannot display an unfinished or stale payload.
+                if let run = latestPublishedRun() {
+                    state.update(run: run, notificationTriggered: true)
+                    return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
                 }
-                return "{\"ok\": false, \"error\": \"invalid payload\"}\n"
+                if !payload.isEmpty,
+                   let fileData = try? Data(contentsOf: URL(fileURLWithPath: payload)),
+                   var run = try? JSONDecoder().decode(TaskRun.self, from: fileData),
+                   run.publication != nil {
+                    TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
+                    state.update(run: run, notificationTriggered: true)
+                    return "{\"ok\": true, \"updatedFrom\": \"file\"}\n"
+                } else if !payload.isEmpty,
+                          let json = payload.data(using: .utf8),
+                          var run = try? JSONDecoder().decode(TaskRun.self, from: json),
+                          run.publication != nil {
+                    TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
+                    state.update(run: run, notificationTriggered: true)
+                    return "{\"ok\": true, \"updatedFrom\": \"json\"}\n"
+                }
+                return "{\"ok\": false, \"error\": \"no published telemetry snapshot\"}\n"
             } else if cmd == "quit" || cmd == "stop" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     NSApplication.shared.terminate(nil)

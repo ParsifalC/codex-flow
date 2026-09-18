@@ -1,1025 +1,189 @@
 import SwiftUI
 import AppKit
 
-/// Main expanded FlowPilot surface. Account remains a UI-only fourth tab so
-/// existing Inspector/History/Analytics IPC commands stay backward compatible.
+/// Native counterpart of the approved four-tab overlay preview.
 public struct SummaryView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
     @ObservedObject private var updateService = FlowPilotUpdateService.shared
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     public var isFullHeight: Bool = false
-
     @State private var showingAccount = false
-    @State private var copiedSummary = false
-    @State private var showUpdatePopover = false
-    @State private var executionDetailsExpanded = false
-
+    @State private var copied = false
+    @State private var showUpdate = false
+    @State private var showPicker = false
     public init(state: OverlayState, isFullHeight: Bool = false) {
-        self.state = state
-        self.isFullHeight = isFullHeight
+        self.state = state; self.isFullHeight = isFullHeight
     }
-
     private var currentRun: TaskRun? { state.inspectedRun ?? state.latestRun }
-
     public var body: some View {
         VStack(spacing: 0) {
-            topBar
-            Divider().background(Color.white.opacity(0.07))
-            tabBar
-            Divider().background(Color.white.opacity(0.06))
-
+            chrome
+            tabs
+            projectPicker
+            Divider().overlay(Color.white.opacity(0.05))
             Group {
                 if showingAccount {
                     AccountView(state: state, isFullHeight: isFullHeight)
+                        .padding(.horizontal, 16)
                 } else {
                     switch state.activeTab {
-                    case .inspector:
-                        inspectorSurface
-                    case .history:
-                        HistoryView(state: state, isFullHeight: isFullHeight)
-                    case .analytics:
-                        AnalyticsView(state: state, isFullHeight: isFullHeight)
+                    case .inspector: inspector
+                    case .history: HistoryView(state: state, isFullHeight: isFullHeight).padding(.horizontal, 16)
+                    case .analytics: AnalyticsView(state: state, isFullHeight: isFullHeight).padding(.horizontal, 16)
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 9)
+            footer
         }
-        .background(background)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.11), lineWidth: 0.8)
-        )
-        .onChange(of: state.activeTab) { _, _ in
-            if showingAccount { showingAccount = false }
-        }
-        .onChange(of: currentRun?.id) { _, _ in
-            executionDetailsExpanded = false
-        }
-    }
-
-    // MARK: - Chrome
-
-    private var topBar: some View {
-        HStack(spacing: 7) {
-            FlowPilotLogoView(size: 29, showGlow: true, withBolt: false, text: "FP")
-                .frame(width: 29, height: 29)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text("FlowPilot")
-                    .font(.system(size: 11.5, weight: .heavy, design: .rounded))
-                    .foregroundColor(.white)
-                Text(statusText)
-                    .font(.system(size: 7.8, weight: .medium, design: .rounded))
-                    .foregroundColor(statusColor.opacity(0.85))
+        .foregroundStyle(.white.opacity(0.9))
+        .background {
+            if reduceTransparency { Color(red: 0.08, green: 0.10, blue: 0.13) }
+            else {
+                VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow)
+                LinearGradient(colors: [Color(red: 0.11, green: 0.16, blue: 0.20).opacity(0.78), Color(red: 0.055, green: 0.065, blue: 0.09).opacity(0.88)], startPoint: .topLeading, endPoint: .bottomTrailing)
             }
-
-            GitHubStarButton()
-
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.16), lineWidth: 0.8))
+        .environment(\.colorScheme, .dark)
+        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
+        .onChange(of: state.activeTab) { _, _ in showingAccount = false }
+        .popover(isPresented: $showUpdate, arrowEdge: .top) { FlowPilotUpdateView() }
+    }
+    private var chrome: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 15)).foregroundStyle(.cyan.opacity(0.9))
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 9).fill(.cyan.opacity(0.12)))
+            Text("FlowPilot").font(.system(size: 15, weight: .semibold, design: .rounded))
             Spacer()
-
-            Button {
-                showUpdatePopover.toggle()
-            } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: updateService.isRestartRequired ? "arrow.clockwise.circle" : "arrow.down.circle")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(updateService.hasUpdateBadge ? .cyan : .white.opacity(0.55))
-                        .frame(width: 23, height: 23)
-                        .background(Circle().fill(Color.white.opacity(0.045)))
-
-                    if updateService.hasUpdateBadge {
-                        Circle()
-                            .fill(updateService.isRestartRequired ? Color.orange : Color.red)
-                            .frame(width: 6.5, height: 6.5)
-                            .overlay(Circle().stroke(Color.black.opacity(0.65), lineWidth: 1))
-                            .offset(x: 1.5, y: -1.5)
-                    }
+            chromeButton(state.isPinned ? "pin.fill" : "pin", L("Pin window", "置顶悬浮窗"), tint: state.isPinned ? .cyan : .white.opacity(0.6)) { state.isPinned.toggle() }
+            chromeButton("chevron.down", L("Collapse", "收起悬浮窗")) { state.collapse() }
+            Menu {
+                Button { state.isPrivacyMode.toggle() } label: {
+                    Label(state.isPrivacyMode ? L("Disable privacy mode", "关闭隐私模式") : L("Enable privacy mode", "开启隐私模式"), systemImage: "eye.slash")
                 }
+                Button { showUpdate = true } label: { Label(L("Software update", "检查软件更新"), systemImage: "arrow.down.circle") }
+                Button { NSWorkspace.shared.open(URL(string: "https://github.com/ParsifalC/codex-flow")!) } label: { Label("GitHub", systemImage: "arrow.up.right.square") }
+                Button { openConsole() } label: { Label(L("Open console", "打开控制台"), systemImage: "terminal") }
+                Divider()
+                Button { copySummary() } label: { Label(L("Copy this turn", "复制本轮摘要"), systemImage: "doc.on.doc") }
+                    .disabled(currentRun == nil || state.isPrivacyMode)
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 14, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .overlay(alignment: .topTrailing) { if updateService.hasUpdateBadge { Circle().fill(.cyan).frame(width: 5, height: 5) } }
             }
-            .buttonStyle(.plain)
-            .help(L("Software Update", "软件更新"))
-            .popover(isPresented: $showUpdatePopover, arrowEdge: .top) {
-                FlowPilotUpdateView()
-            }
-
-            chromeButton(
-                state.isPrivacyMode ? "eye.slash.fill" : "eye.fill",
-                state.isPrivacyMode ? .orange : .white.opacity(0.55),
-                L("Privacy mode", "隐私模式")
-            ) { state.isPrivacyMode.toggle() }
-
-            chromeButton(
-                state.isPinned ? "pin.fill" : "pin",
-                state.isPinned ? .cyan : .white.opacity(0.55),
-                L("Pin window", "置顶窗口")
-            ) { state.isPinned.toggle() }
-
-            chromeButton("chevron.down", .white.opacity(0.55), L("Collapse", "收起")) {
-                state.collapse()
-            }
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 8)
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help(L("More actions", "更多操作")).accessibilityLabel(L("More actions", "更多操作"))
+        }.padding(.horizontal, 17).padding(.vertical, 13)
     }
-
-    private func chromeButton(_ icon: String, _ tint: Color, _ help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(tint)
-                .frame(width: 23, height: 23)
-                .background(Circle().fill(Color.white.opacity(0.045)))
-        }
-        .buttonStyle(.plain)
-        .help(help)
+    private func chromeButton(_ icon: String, _ label: String, tint: Color = .white.opacity(0.6), action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: icon).font(.system(size: 12)).foregroundStyle(tint).frame(width: 28, height: 28) }
+            .buttonStyle(.plain).help(label).accessibilityLabel(label)
     }
-
-    private var tabBar: some View {
+    private var tabs: some View {
         HStack(spacing: 4) {
-            ForEach(OverlayTab.allCases) { tab in
-                TabButtonView(
-                    title: tab.localizedTitle,
-                    icon: tab.iconName,
-                    selected: !showingAccount && state.activeTab == tab
-                ) {
-                    showingAccount = false
-                    state.selectTab(tab)
-                }
-            }
-
-            TabButtonView(
-                title: L("Account", "账户"),
-                icon: "person.crop.circle.fill",
-                selected: showingAccount
-            ) {
-                showingAccount = true
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(Color.black.opacity(0.14))
+            tab(L("Task", "任务"), selected: !showingAccount && state.activeTab == .inspector) { showingAccount = false; state.selectTab(.inspector) }
+            tab(L("History", "历史"), selected: !showingAccount && state.activeTab == .history) { showingAccount = false; state.selectTab(.history) }
+            tab(L("Statistics", "统计"), selected: !showingAccount && state.activeTab == .analytics) { showingAccount = false; state.selectTab(.analytics) }
+            tab(L("Account", "账户"), selected: showingAccount) { showingAccount = true }
+        }.padding(4).background(RoundedRectangle(cornerRadius: 10).fill(.black.opacity(0.18))).padding(.horizontal, 16)
     }
-
-    private struct TabButtonView: View {
-    let title: String
-    let icon: String
-    let selected: Bool
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
+    private func tab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 8.8, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 9.2, weight: selected ? .bold : .medium, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            .foregroundColor(selected ? .white : (isHovered ? .white.opacity(0.85) : .white.opacity(0.52)))
-            .frame(maxWidth: .infinity, minHeight: 26)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(selected ? Color.cyan.opacity(0.22) : (isHovered ? Color.white.opacity(0.06) : Color.clear))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(selected ? Color.cyan.opacity(0.32) : (isHovered ? Color.white.opacity(0.1) : Color.clear), lineWidth: 0.6)
-                    )
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+            Text(title).font(.system(size: 12, weight: selected ? .semibold : .regular))
+                .foregroundStyle(.white.opacity(selected ? 0.95 : 0.5)).frame(maxWidth: .infinity).padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(selected ? 0.10 : 0)))
+        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
     }
-}
-
-    private struct GitHubStarButton: View {
-        @State private var isHovered = false
-        @State private var hasClicked = false
-
-        var body: some View {
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    hasClicked = true
+    private var projectPicker: some View {
+        Button { showPicker.toggle() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "folder").font(.system(size: 16)).foregroundStyle(.cyan.opacity(0.7))
+                    .frame(width: 32, height: 32).background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(0.04)))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state.isPrivacyMode ? L("Hidden project", "项目已隐藏") : currentRun?.projectName ?? L("No completed turns", "尚无已完成轮次"))
+                        .font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    Text(state.isPrivacyMode ? "•••" : currentRun?.thread?.name ?? currentRun?.sessionId.map { L("Chat", "对话") + " · " + String($0.prefix(12)) } ?? L("Waiting for a completed turn", "等待轮次完成"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
-                if let url = URL(string: "https://github.com/ParsifalC/codex-flow") {
-                    NSWorkspace.shared.open(url)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        hasClicked = false
-                    }
-                }
-            } label: {
-                HStack(spacing: 3.5) {
-                    Image(systemName: hasClicked ? "heart.fill" : "star.fill")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(
-                            hasClicked
-                                ? LinearGradient(
-                                    colors: [Color.pink, Color.red],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                                : LinearGradient(
-                                    colors: [
-                                        Color(red: 1.0, green: 0.88, blue: 0.35),
-                                        Color(red: 0.98, green: 0.68, blue: 0.16)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                        )
-                        .shadow(
-                            color: (hasClicked ? Color.pink : Color(red: 1.0, green: 0.75, blue: 0.2))
-                                .opacity(isHovered ? 0.7 : 0.3),
-                            radius: isHovered ? 3 : 1.5
-                        )
-
-                    Text(hasClicked ? L("Thanks!", "感谢支持!") : "Star")
-                        .font(.system(size: 9.2, weight: .bold, design: .rounded))
-                        .foregroundColor(isHovered ? .white : .white.opacity(0.88))
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3.5)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    (hasClicked ? Color.pink : Color(red: 1.0, green: 0.8, blue: 0.2))
-                                        .opacity(isHovered ? 0.18 : 0.08),
-                                    (hasClicked ? Color.purple : Color(red: 1.0, green: 0.55, blue: 0.1))
-                                        .opacity(isHovered ? 0.12 : 0.04)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    (hasClicked ? Color.pink : Color(red: 1.0, green: 0.85, blue: 0.3))
-                                        .opacity(isHovered ? 0.55 : 0.26),
-                                    (hasClicked ? Color.purple : Color(red: 1.0, green: 0.6, blue: 0.15))
-                                        .opacity(isHovered ? 0.32 : 0.12)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.75
-                        )
-                )
-                .shadow(
-                    color: (hasClicked ? Color.pink : Color(red: 1.0, green: 0.75, blue: 0.15))
-                        .opacity(isHovered ? 0.28 : 0),
-                    radius: 4,
-                    y: 1
-                )
-                .scaleEffect(isHovered ? 1.03 : 1.0)
-            }
-            .buttonStyle(.plain)
-            .help(L("Star FlowPilot on GitHub", "前往 GitHub 为 FlowPilot 点亮 Star"))
-            .onHover { isHovered = $0 }
-            .animation(.spring(response: 0.2, dampingFraction: 0.75), value: isHovered)
-        }
-    }
-
-    private var background: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.055, green: 0.062, blue: 0.085).opacity(0.98),
-                        Color(red: 0.035, green: 0.041, blue: 0.058).opacity(0.98)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .shadow(color: .black.opacity(0.48), radius: 18, y: 8)
-    }
-
-    // MARK: - Inspector
-
-    @ViewBuilder
-    private var inspectorSurface: some View {
-        if let run = currentRun {
-            if isFullHeight {
-                inspectorContent(run)
-            } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    inspectorContent(run)
-                }
-                .frame(maxHeight: 440)
-            }
-        } else {
-            idleInspector
-        }
-    }
-
-    private func inspectorContent(_ run: TaskRun) -> some View {
-        VStack(spacing: 8) {
-            if state.inspectedRun != nil { historicalBanner }
-            projectHeader(run)
-            metricsGrid(run)
-
-            if !run.effectiveQuotaWindows.isEmpty {
-                let isPending = run.isRunning && (run.quotaAfter ?? []).isEmpty
-                QuotaWindowsView(windows: run.effectiveQuotaWindows, isRunning: isPending)
-            }
-
-            taskNarrativeCard(run)
-            participantsCard(run)
-            TokenUsageBreakdownView(
-                usage: run.aggregatedUsage,
-                workerTokens: run.workerTotalTokens,
-                parentTokens: run.parentTotalTokens
-            )
-
-            if run.hasSkillsOrTools {
-                InspectorSkillsToolsView(run: run)
-            }
-
-            if !run.allWorkers.isEmpty {
-                workerOutcomesCard(run)
-            }
-
-            if run.hasTrajectory || run.hasLogs {
-                executionDetailCard(run)
-            }
-
-            actionFooter(run)
-        }
-        .padding(.top, 8)
-    }
-
-    private var historicalBanner: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 8.5))
-                .foregroundColor(.cyan)
-            Text(L("Viewing historical task", "正在查看历史任务"))
-                .font(.system(size: 8.8, weight: .semibold))
-                .foregroundColor(.cyan)
-            Spacer()
-            recentTaskMenu
-            Button(L("Live", "当前任务")) { state.jumpToLive() }
-                .buttonStyle(.plain)
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.cyan.opacity(0.3)))
-        }
-        .padding(7)
-        .background(cardBackground(tint: .cyan))
-    }
-
-    private func projectHeader(_ run: TaskRun) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                Image(systemName: run.isInternalTask ? "gearshape.fill" : "folder.fill")
-                    .font(.system(size: 8))
-                    .foregroundColor(run.isInternalTask ? .cyan.opacity(0.7) : .white.opacity(0.48))
-
-                HoverRevealText(
-                    run.projectName,
-                    font: .system(size: 10, weight: .bold, design: .rounded),
-                    foregroundColor: .white.opacity(0.94),
-                    lineLimit: 1,
-                    privacyBlur: state.isPrivacyMode,
-                    popoverWidth: 300
-                )
-
-                if run.isInternalTask {
-                    Text(L("System", "系统"))
-                        .font(.system(size: 6.8, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.55))
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 0.5)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                }
-
-                if let branch = run.gitBranch, !branch.isEmpty {
-                    Text("·").foregroundColor(.white.opacity(0.25))
-                    HoverRevealText(
-                        branch,
-                        font: .system(size: 8.8, weight: .medium, design: .monospaced),
-                        foregroundColor: .cyan.opacity(0.88),
-                        lineLimit: 1,
-                        privacyBlur: state.isPrivacyMode,
-                        popoverWidth: 320
-                    )
-                }
-
-                if !state.isPrivacyMode && !isFullHeight {
-                    recentTaskMenu
-                }
-
-                Spacer(minLength: 2)
-                statusBadge(run)
-            }
-
-            HoverRevealText(
-                run.turnPreview,
-                font: .system(size: 9.4),
-                foregroundColor: .white.opacity(0.63),
-                lineLimit: 1,
-                privacyBlur: state.isPrivacyMode,
-                popoverWidth: 390
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(8)
-        .background(cardBackground())
-    }
-
-    private var recentTaskMenu: some View {
-        Menu {
-            if let latest = state.latestRun {
-                Section(L("Live Session", "当前会话")) {
-                    Button {
-                        state.jumpToLive()
-                    } label: {
-                        Text(L("⚡ Live · \(latest.projectName) · \(latest.localizedFormattedDate)", "⚡ 当前 · \(latest.projectName) · \(latest.localizedFormattedDate)"))
-                    }
-                }
-            }
-
-            if !state.recentChats.isEmpty {
-                Section(L("Recent Chats & Tasks", "最近对话任务")) {
-                    ForEach(Array(state.recentChats.prefix(10).enumerated()), id: \.element.id) { index, chat in
-                        if let latest = chat.latestRun {
-                            Button {
-                                if latest.id == state.latestRun?.id {
-                                    state.jumpToLive()
-                                } else {
-                                    state.inspect(run: latest)
-                                }
-                            } label: {
-                                let tag = chat.isInternalTask ? " [\(L("System", "系统"))]" : ""
-                                Text("#\(index + 1) \(chat.projectName)\(tag) · \(chat.localizedFormattedDate) · \(shortMenuText(chat.title))")
-                            }
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button {
-                state.selectTab(.history)
-            } label: {
-                Label(L("Browse All History", "浏览全部历史"), systemImage: "clock.arrow.circlepath")
-            }
-        } label: {
-            Image(systemName: "chevron.down.circle.fill")
-                .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.42))
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(L("Switch task", "切换任务"))
-    }
-
-    private func shortMenuText(_ text: String) -> String {
-        let cleaned = text.replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.count > 34 ? String(cleaned.prefix(34)) + "…" : cleaned
-    }
-
-    private func metricsGrid(_ run: TaskRun) -> some View {
-        let usage = run.aggregatedUsage
-        return HStack(spacing: 6) {
-            InspectorMetricView(
-                title: L("Time", "耗时"),
-                value: run.formattedDuration,
-                detail: L("wall time", "任务时长"),
-                icon: "timer",
-                accent: .cyan,
-                progress: min(1, run.durationSeconds / 600.0)
-            )
-
-            InspectorMetricView(
-                title: L("Tokens", "Token"),
-                value: run.formattedCompactTokens,
-                detail: run.workerTotalTokens > 0 ? "W: \(run.formattedWorkerTokens)" : L("total", "总用量"),
-                icon: "circle.grid.cross.fill",
-                accent: Color(red: 0.95, green: 0.35, blue: 0.8),
-                progress: min(1, Double(usage.totalTokens ?? 0) / 100_000.0)
-            )
-
-            // The old Cost ring treated optional credit telemetry like USD and was
-            // frequently empty. Output tokens are deterministic and unambiguous.
-            InspectorMetricView(
-                title: L("Output", "输出"),
-                value: TaskRun.formatTokenCount(usage.effectiveOutputTokens),
-                detail: L("tokens", "Token"),
-                icon: "arrow.up.circle.fill",
-                accent: Color(red: 0.25, green: 0.88, blue: 0.58),
-                progress: outputShare(usage)
-            )
-        }
-    }
-
-    private func outputShare(_ usage: TokenUsage) -> Double {
-        Double(usage.effectiveOutputTokens) / Double(max(1, usage.totalTokens ?? 0))
-    }
-
-    private func taskNarrativeCard(_ run: TaskRun) -> some View {
-        let hasGoal = run.effectiveGoal?.isEmpty == false
-        let hasConclusion = run.effectiveConclusion?.isEmpty == false
-        return Group {
-            if hasGoal || hasConclusion {
-                VStack(alignment: .leading, spacing: 6) {
-                    sectionHeader("sparkles.rectangle.stack.fill", L("Task Objective & Summary", "任务目标与概要说明"), .cyan)
-
-                    if let goal = run.effectiveGoal, !goal.isEmpty {
-                        narrativeBlock(L("Objective", "目标"), "target", goal, .cyan, 3)
-                    }
-
-                    if let conclusion = run.effectiveConclusion, !conclusion.isEmpty {
-                        narrativeBlock(L("Outcome / Conclusion", "交付结论"), "checkmark.seal.fill", conclusion, .green, 4)
-                    }
-                }
-                .padding(8)
-                .background(cardBackground())
-            }
-        }
-    }
-
-    private func narrativeBlock(_ label: String, _ icon: String, _ text: String, _ tint: Color, _ lines: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Label(label, systemImage: icon)
-                .font(.system(size: 8.2, weight: .bold))
-                .foregroundColor(tint.opacity(0.9))
-
-            HoverRevealText(
-                text,
-                font: .system(size: 9.3),
-                foregroundColor: .white.opacity(0.88),
-                lineLimit: lines,
-                privacyBlur: state.isPrivacyMode,
-                popoverWidth: 390
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 7).fill(tint.opacity(0.07)))
-    }
-
-    private func participantsCard(_ run: TaskRun) -> some View {
-        HStack(spacing: 6) {
-            participantBlock(
-                icon: "brain.head.profile",
-                title: L("Parent", "父 Agent"),
-                name: run.parent?.displayModel ?? L("Direct CLI", "直接 CLI"),
-                subtitle: participantSubtitle(run.parent),
-                tint: .indigo,
-                badge: run.parent?.displayEffort,
-                fullText: parentHoverText(run)
-            )
-
-            participantBlock(
-                icon: "person.2.fill",
-                title: L("Workers", "Worker"),
-                name: workerSummaryText(run),
-                subtitle: workersSubtitle(run),
-                tint: .teal,
-                badge: run.allWorkers.isEmpty ? nil : "\(run.allWorkers.count)",
-                fullText: workerHoverText(run)
-            )
-        }
-    }
-
-    private func workerSummaryText(_ run: TaskRun) -> String {
-        if run.allWorkers.isEmpty { return L("Direct execution", "直接执行") }
-        if run.allWorkers.count == 1 {
-            let w = run.allWorkers[0]
-            if let name = w.name, name != "default", !name.isEmpty, name != w.displayModel {
-                return "\(name) (\(w.displayModel))"
-            }
-            return w.displayModel
-        }
-
-        var modelCounts: [String: Int] = [:]
-        var order: [String] = []
-        for w in run.allWorkers {
-            let m = w.displayModel
-            if modelCounts[m] == nil {
-                order.append(m)
-            }
-            modelCounts[m, default: 0] += 1
-        }
-
-        if order.count == 1 {
-            return "\(run.allWorkers.count) × \(order[0])"
-        } else {
-            return order.map { "\(modelCounts[$0]!) × \($0)" }.joined(separator: ", ")
-        }
-    }
-
-    private func workersSubtitle(_ run: TaskRun) -> String {
-        if run.allWorkers.isEmpty { return L("No subagents", "无子 Agent") }
-        let tokens = run.allWorkers.reduce(0) { $0 + ($1.effectiveUsage?.totalTokens ?? 0) }
-        let efforts = Array(Set(run.allWorkers.compactMap { $0.displayEffort }))
-        let effortPart = efforts.isEmpty ? nil : efforts.joined(separator: "/")
-
-        if let effort = effortPart {
-            if tokens > 0 {
-                return "\(effort) · \(TaskRun.formatTokenCount(tokens)) tokens"
-            }
-            return effort
-        }
-        if tokens > 0 {
-            return "\(TaskRun.formatTokenCount(tokens)) tokens"
-        }
-        return L("\(run.allWorkers.count) workers", "\(run.allWorkers.count) 个 Worker")
-    }
-
-    private func parentHoverText(_ run: TaskRun) -> String {
-        guard let parent = run.parent else {
-            return L("Direct CLI execution (no parent agent metadata)", "直接 CLI 执行（无父 Agent 元数据）")
-        }
-        var lines: [String] = []
-        let name = parent.name ?? L("Parent Agent", "父 Agent")
-        let effort = parent.displayEffort.map { " (\($0))" } ?? ""
-        lines.append("\(name) · \(parent.displayModel)\(effort)")
-        if let tokens = parent.effectiveUsage?.totalTokens, tokens > 0 {
-            lines.append(L("Usage: \(TaskRun.formatTokenCount(tokens)) tokens", "用量：\(TaskRun.formatTokenCount(tokens)) Token"))
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private func workerHoverText(_ run: TaskRun) -> String {
-        if run.allWorkers.isEmpty { return L("Direct execution (no subagents)", "直接执行（无子 Agent）") }
-        return run.allWorkers.enumerated().map { index, w in
-            let name = w.agentType ?? w.name ?? L("Worker", "Worker")
-            let effort = w.displayEffort.map { " (\($0))" } ?? ""
-            let tokens = w.effectiveUsage?.totalTokens.map { " · \(TaskRun.formatTokenCount($0)) tokens" } ?? ""
-            return "#\(index + 1) \(name) · \(w.displayModel)\(effort)\(tokens)"
-        }.joined(separator: "\n")
-    }
-
-    private func participantBlock(
-        icon: String,
-        title: String,
-        name: String,
-        subtitle: String,
-        tint: Color,
-        badge: String? = nil,
-        fullText: String? = nil
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 3) {
-                Label(title, systemImage: icon)
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundColor(tint.opacity(0.9))
                 Spacer()
-                if let badge {
-                    Text(badge)
-                        .font(.system(size: 6.8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(tint.opacity(0.9))
-                        .padding(.horizontal, 3.5)
-                        .padding(.vertical, 0.5)
-                        .background(Capsule().fill(tint.opacity(0.14)))
-                }
-            }
-
-            HoverRevealText(
-                name,
-                font: .system(size: 9.8, weight: .bold, design: .rounded),
-                foregroundColor: .white.opacity(0.9),
-                lineLimit: 1,
-                popoverWidth: 280,
-                fullText: fullText
-            )
-
-            Text(subtitle)
-                .font(.system(size: 7.8))
-                .foregroundColor(.white.opacity(0.4))
-                .lineLimit(1)
+                Image(systemName: "arrow.up.arrow.down").font(.system(size: 11)).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity).contentShape(Rectangle())
         }
-        .padding(7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground())
-    }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 18).padding(.vertical, 15)
+        .accessibilityLabel(L("Switch completed turn", "切换已完成轮次"))
+        .popover(isPresented: $showPicker, arrowEdge: .bottom) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    Text(L("Switch completed turn", "切换已完成轮次")).font(.headline)
 
-    private func participantSubtitle(_ participant: ParticipantInfo?) -> String {
-        guard let participant else { return L("No usage data", "暂无用量数据") }
-        let tokens = participant.effectiveUsage?.totalTokens ?? 0
-        if let effort = participant.displayEffort {
-            if tokens > 0 {
-                return "\(effort) · \(TaskRun.formatTokenCount(tokens)) tokens"
+            if let latest = state.latestRun {
+                Button(L("Latest completed turn", "最近完成轮次") + " · " + latest.projectName) { state.jumpToLive(); showPicker = false }
             }
-            return effort
-        }
-        if tokens > 0 {
-            return "\(TaskRun.formatTokenCount(tokens)) tokens"
-        }
-        return L("No usage data", "暂无用量数据")
-    }
-
-    private func workerOutcomesCard(_ run: TaskRun) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            sectionHeader("checkmark.bubble.fill", L("Worker Outcomes", "Worker 执行结果"), .teal)
-
-            ForEach(run.allWorkers) { worker in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        HoverRevealText(
-                            worker.agentType ?? worker.name ?? L("Worker", "Worker"),
-                            font: .system(size: 8.7, weight: .semibold, design: .rounded),
-                            foregroundColor: .white.opacity(0.88),
-                            lineLimit: 1,
-                            popoverWidth: 300
-                        )
-                        Spacer(minLength: 4)
-                        HStack(spacing: 3) {
-                            HoverRevealText(
-                                worker.displayModel,
-                                font: .system(size: 7.7, weight: .medium, design: .monospaced),
-                                foregroundColor: .teal.opacity(0.78),
-                                lineLimit: 1,
-                                popoverWidth: 280
-                            )
-                            if let effort = worker.displayEffort {
-                                Text(effort)
-                                    .font(.system(size: 6.8, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.teal.opacity(0.9))
-                                    .padding(.horizontal, 3.5)
-                                    .padding(.vertical, 0.5)
-                                    .background(Capsule().fill(Color.teal.opacity(0.14)))
-                            }
-                        }
-                    }
-
-                    if let conclusion = worker.conclusion, !conclusion.isEmpty {
-                        HoverRevealText(
-                            conclusion,
-                            font: .system(size: 8.8),
-                            foregroundColor: .white.opacity(0.64),
-                            lineLimit: 3,
-                            privacyBlur: state.isPrivacyMode,
-                            popoverWidth: 390
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(6)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.025)))
-            }
-        }
-        .padding(8)
-        .background(cardBackground())
-    }
-
-    private func executionDetailCard(_ run: TaskRun) -> some View {
-        let stepCount = run.trajectory?.count ?? 0
-        let logCount = run.logs?.count ?? 0
-        return VStack(alignment: .leading, spacing: 5) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    executionDetailsExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "point.filled.topleft.down.curvedto.point.bottomright.up")
-                        .font(.system(size: 8))
-                        .foregroundColor(.indigo)
-                    Text(L("Execution Details", "执行详情"))
-                        .font(.system(size: 8.8, weight: .bold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.7))
-                    Spacer()
-                    Text(L("\(stepCount) steps · \(logCount) logs", "\(stepCount) 步 · \(logCount) 条日志"))
-                        .font(.system(size: 7.3, weight: .medium))
-                        .foregroundColor(.white.opacity(0.38))
-                    Image(systemName: executionDetailsExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(.white.opacity(0.35))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if executionDetailsExpanded {
-                ForEach(Array((run.trajectory ?? []).prefix(6))) { step in
-                    HStack(alignment: .top, spacing: 5) {
-                        Circle()
-                            .fill(step.status == "error" ? Color.orange : Color.cyan)
-                            .frame(width: 4.5, height: 4.5)
-                            .padding(.top, 4)
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            HoverRevealText(
-                                step.title ?? step.name ?? "Step",
-                                font: .system(size: 8.6, weight: .semibold),
-                                foregroundColor: .white.opacity(0.82),
-                                lineLimit: 1,
-                                popoverWidth: 360
-                            )
-
-                            if let detail = step.detail, !detail.isEmpty {
-                                HoverRevealText(
-                                    detail,
-                                    font: .system(size: 7.8, design: .monospaced),
-                                    foregroundColor: .white.opacity(0.5),
-                                    lineLimit: 1,
-                                    privacyBlur: state.isPrivacyMode,
-                                    popoverWidth: 410
-                                )
-                            }
-                        }
-                    }
-                }
-
-                ForEach(Array((run.logs ?? []).suffix(4))) { entry in
-                    HStack(alignment: .top, spacing: 5) {
-                        Circle()
-                            .fill(entry.level == "error" ? Color.orange : Color.green)
-                            .frame(width: 4, height: 4)
-                            .padding(.top, 4)
-
-                        HoverRevealText(
-                            entry.message ?? "",
-                            font: .system(size: 7.7, design: .monospaced),
-                            foregroundColor: entry.level == "error" ? .orange.opacity(0.85) : .white.opacity(0.58),
-                            lineLimit: 2,
-                            privacyBlur: state.isPrivacyMode,
-                            popoverWidth: 420
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(state.recentChats) { chat in
+                Section(state.isPrivacyMode ? L("Chat", "对话") : chat.projectName + " · " + chat.title) {
+                    ForEach(chat.runs.prefix(12)) { run in
+                        Button(state.isPrivacyMode ? L("Completed turn", "已完成轮次") : run.localizedFormattedDate + " · " + String(run.turnPreview.prefix(40))) { state.inspect(run: run); showingAccount = false; showPicker = false }
                     }
                 }
             }
+            Divider()
+            Button(L("Browse all history", "浏览全部历史")) { showingAccount = false; state.selectTab(.history); showPicker = false }
+
+                }.buttonStyle(.plain).font(.system(size: 12)).padding(18)
+            }.frame(width: 345, height: 360)
         }
-        .padding(8)
-        .background(cardBackground())
     }
-
-    private func actionFooter(_ run: TaskRun) -> some View {
-        HStack(spacing: 6) {
-            Button {
-                copySummary(run)
-            } label: {
-                Label(
-                    copiedSummary ? L("Copied", "已复制") : L("Copy summary", "复制摘要"),
-                    systemImage: copiedSummary ? "checkmark" : "doc.on.doc"
-                )
-                .font(.system(size: 8.6, weight: .semibold))
-                .foregroundColor(copiedSummary ? .green : .white.opacity(0.75))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
+    private var inspector: some View {
+        ScrollView(.vertical) {
+            if let run = currentRun {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Text(state.isPrivacyMode ? L("Completed turn", "已完成轮次") : L("Turn", "轮次") + " · " + String((run.turnId ?? "—").prefix(8)))
+                        Spacer()
+                        Text(run.localizedFormattedDate)
+                    }.font(.system(size: 10)).foregroundStyle(.secondary)
+                    TurnDetailView(run: run, isPrivacyMode: state.isPrivacyMode)
+                    HStack {
+                        Button { state.selectTab(.history) } label: { Label(L("History", "查看历史"), systemImage: "clock.arrow.circlepath") }
+                        Spacer()
+                        Button { copySummary() } label: { Label(copied ? L("Copied", "已复制") : L("Copy", "复制摘要"), systemImage: copied ? "checkmark" : "doc.on.doc") }.disabled(state.isPrivacyMode)
+                    }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                }.padding(16)
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "tray").font(.system(size: 27)).foregroundStyle(.cyan.opacity(0.6))
+                    Text(L("No completed turns yet", "尚无已完成轮次")).font(.system(size: 15, weight: .medium))
+                    Text(L("The goal and result appear here when a turn finishes.", "完成一轮后，目标与结果将在这里呈现。"))
+                        .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }.frame(maxWidth: .infinity).padding(.vertical, 55).padding(.horizontal, 20)
             }
-            .buttonStyle(.plain)
-
-            Button {
-                openConsole()
-            } label: {
-                Label(L("Console", "控制台"), systemImage: "terminal.fill")
-                    .font(.system(size: 8.6, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.75))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
-            }
-            .buttonStyle(.plain)
-
+        }.frame(maxHeight: isFullHeight ? .infinity : 370)
+    }
+    private var footer: some View {
+        HStack {
+            Text("FlowPilot")
             Spacer()
-            Text(run.localizedFormattedDate)
-                .font(.system(size: 7.8))
-                .foregroundColor(.white.opacity(0.35))
-        }
+            Text(state.isPrivacyMode ? L("Privacy mode", "隐私模式") : L("Completed turns", "已完成轮次"))
+        }.font(.system(size: 10)).foregroundStyle(.white.opacity(0.3)).padding(.horizontal, 18).padding(.vertical, 11)
     }
-
-    private var idleInspector: some View {
-        VStack(spacing: 10) {
-            FlowPilotLogoView(size: 58, showGlow: true, withBolt: true, text: "FlowPilot")
-                .frame(width: 58, height: 58)
-                .padding(.top, 20)
-
-            Text(L("FlowPilot is Ready", "FlowPilot 已就绪"))
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-
-            Text(L("Listening for live task and usage telemetry", "正在监听任务与用量遥测"))
-                .font(.system(size: 9.5))
-                .foregroundColor(.white.opacity(0.48))
-
-            HStack(spacing: 7) {
-                Button { showingAccount = true } label: {
-                    Label(L("Account Limits", "账户额度"), systemImage: "person.crop.circle")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.cyan)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.cyan.opacity(0.12)))
-                }
-                .buttonStyle(.plain)
-
-                Button { openConsole() } label: {
-                    Label(L("Console", "控制台"), systemImage: "terminal.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.72))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.white.opacity(0.06)))
-                }
-                .buttonStyle(.plain)
-            }
-
-            Spacer(minLength: 12)
-        }
-        .frame(maxWidth: .infinity, minHeight: 300)
+    private func copySummary() {
+        guard let run = currentRun, !state.isPrivacyMode else { return }
+        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + L("Goal: ", "本轮目标：") + localizedResultText(run.publishedGoal) + "\n\n" + L("Result: ", "结果：") + localizedResultText(run.publishedConclusion)
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
     }
-
-    // MARK: - Helpers
-
-    private func statusBadge(_ run: TaskRun) -> some View {
-        HStack(spacing: 3) {
-            Circle().fill(runStatusColor(run)).frame(width: 4.5, height: 4.5)
-            Text(runStatusText(run))
-                .font(.system(size: 7.4, weight: .bold, design: .rounded))
-        }
-        .foregroundColor(runStatusColor(run))
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(runStatusColor(run).opacity(0.12)))
-    }
-
-    private func runStatusColor(_ run: TaskRun) -> Color {
-        run.isRunning ? .cyan : (run.isError ? .orange : .green)
-    }
-
-    private func runStatusText(_ run: TaskRun) -> String {
-        run.isRunning
-            ? L("RUNNING", "运行中")
-            : (run.isError ? L("FAILED", "失败") : L("COMPLETED", "已完成"))
-    }
-
-    private var statusText: String { currentRun.map(runStatusText) ?? L("READY", "就绪") }
-    private var statusColor: Color { currentRun.map(runStatusColor) ?? .green }
-
-    private func sectionHeader(_ icon: String, _ title: String, _ tint: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 8))
-                .foregroundColor(tint)
-            Text(title)
-                .font(.system(size: 8.8, weight: .bold, design: .rounded))
-                .foregroundColor(.white.opacity(0.7))
-            Spacer()
-        }
-    }
-
-    private func cardBackground(tint: Color? = nil) -> some View {
-        let base = tint ?? Color.white
-        return RoundedRectangle(cornerRadius: 9)
-            .fill(base.opacity(tint == nil ? 0.04 : 0.07))
-            .overlay(
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(base.opacity(tint == nil ? 0.075 : 0.18), lineWidth: 0.7)
-            )
-    }
-
-    private func copySummary(_ run: TaskRun) {
-        let usage = run.aggregatedUsage
-        let text = L(
-            "FlowPilot Task Summary\nProject: \(run.projectName)\nDuration: \(run.formattedDuration)\nTotal tokens: \(run.formattedTotalTokens)\nInput tokens: \(TaskRun.formatTokenCount(usage.effectivePromptTokens))\nOutput tokens: \(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorkers: \(run.allWorkers.count)\nSummary: \(run.turnPreview)",
-            "FlowPilot 任务摘要\n项目：\(run.projectName)\n耗时：\(run.formattedDuration)\n总 Token：\(run.formattedTotalTokens)\n输入 Token：\(TaskRun.formatTokenCount(usage.effectivePromptTokens))\n输出 Token：\(TaskRun.formatTokenCount(usage.effectiveOutputTokens))\nWorker：\(run.allWorkers.count)\n摘要：\(run.turnPreview)"
-        )
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        copiedSummary = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            copiedSummary = false
-        }
-    }
-
     private func openConsole() {
-        let script = """
-        tell application "Terminal"
-            activate
-            do script "codex-flow"
-        end tell
-        """
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
-        }
+        let script = "tell application \"Terminal\"\nactivate\ndo script \"codex-flow\"\nend tell"
+        var error: NSDictionary?
+        NSAppleScript(source: script)?.executeAndReturnError(&error)
     }
 }
 
@@ -1082,7 +246,8 @@ public struct QuotaWindowsView: View {
     }
 
     private var ordered: [QuotaWindow] {
-        windows.sorted { ($0.windowDurationMins ?? Int.max) < ($1.windowDurationMins ?? Int.max) }
+        windows.filter { $0.windowDurationMins != TaskRun.shortQuotaWindowMinutes }
+            .sorted { ($0.windowDurationMins ?? Int.max) < ($1.windowDurationMins ?? Int.max) }
     }
 
     private var cardTitle: String {

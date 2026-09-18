@@ -22,8 +22,10 @@ public class TelemetryWatcher {
             self.telemetryURL = self.dirURL.appendingPathComponent("last.json")
         }
         
-        // Initial load
-        loadLatestData()
+        // Recovery may repair last.json after a crash between the atomic run
+        // and last-file replacements. Keep it off the main thread and make
+        // the first UI read only after recovery has completed.
+        recoverLastThenLoad()
         startWatching()
     }
     
@@ -121,15 +123,61 @@ public class TelemetryWatcher {
     }
     
     public func loadLatestData() {
-        guard FileManager.default.fileExists(atPath: telemetryURL.path) else { return }
-        do {
-            let data = try Data(contentsOf: telemetryURL)
-            let decoder = JSONDecoder()
-            var run = try decoder.decode(TaskRun.self, from: data)
+        let url = telemetryURL
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self,
+                  FileManager.default.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url),
+                  var run = try? JSONDecoder().decode(TaskRun.self, from: data),
+                  run.publication != nil else {
+                return
+            }
             TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-            state.update(run: run)
+            DispatchQueue.main.async {
+                self.state.update(run: run)
+            }
+        }
+    }
+
+    private func recoverLastThenLoad() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            self.recoverLastSnapshot()
+            guard FileManager.default.fileExists(atPath: self.telemetryURL.path),
+                  let data = try? Data(contentsOf: self.telemetryURL),
+                  var run = try? JSONDecoder().decode(TaskRun.self, from: data),
+                  run.publication != nil else {
+                return
+            }
+            TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
+            DispatchQueue.main.async {
+                self.state.update(run: run)
+            }
+        }
+    }
+
+    private func recoverLastSnapshot() {
+        let environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let codexHome = environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
+        let candidates = [
+            environment["CODEX_FLOW_BIN"],
+            URL(fileURLWithPath: codexHome).appendingPathComponent("codex-flow").appendingPathComponent("bin").appendingPathComponent("codex-flow").path,
+            "/usr/local/bin/codex-flow",
+            "/opt/homebrew/bin/codex-flow"
+        ].compactMap { $0 }.filter { FileManager.default.isExecutableFile(atPath: $0) }
+
+        guard let executable = candidates.first else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["telemetry", "recover-last"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
         } catch {
-            // If decode fails, retain existing state
+            // Recovery is best effort; the watcher still reads last.json.
         }
     }
 }

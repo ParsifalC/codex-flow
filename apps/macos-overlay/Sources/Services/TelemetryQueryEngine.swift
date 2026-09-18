@@ -63,6 +63,9 @@ public class TelemetryQueryEngine {
             let mtime = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
             
             if let cached = cachedRuns[stem], cached.mtime == mtime {
+                if !isHistoryVisible(cached.run) {
+                    continue
+                }
                 if let merged = cached.run.mergedInto, !merged.isEmpty {
                     continue
                 }
@@ -77,12 +80,33 @@ public class TelemetryQueryEngine {
             
             run.fileStem = stem
             cachedRuns[stem] = (mtime, run)
+            if !isHistoryVisible(run) {
+                continue
+            }
             if let merged = run.mergedInto, !merged.isEmpty {
                 continue
             }
             result.append(run)
         }
         
+        // A late worker refresh can leave more than one published revision in
+        // a copied run directory. Keep only the newest revision per turn.
+        var latestByTurn: [String: TaskRun] = [:]
+        var legacyRuns: [TaskRun] = []
+        for run in result {
+            guard let session = run.sessionId, let turn = run.turnId,
+                  let revision = run.publicationRevision else {
+                legacyRuns.append(run)
+                continue
+            }
+            let identity = "\(session)--\(turn)"
+            if let previous = latestByTurn[identity], (previous.publicationRevision ?? 0) >= revision {
+                continue
+            }
+            latestByTurn[identity] = run
+        }
+        result = legacyRuns + Array(latestByTurn.values)
+
         // Sort descending by finished time or started time
         result.sort { r1, r2 in
             let t1 = r1.finishedAtMs ?? r1.startedAtMs ?? 0
@@ -97,7 +121,9 @@ public class TelemetryQueryEngine {
         if FileManager.default.fileExists(atPath: lastFileURL.path),
            let data = try? Data(contentsOf: lastFileURL),
            let run = try? JSONDecoder().decode(TaskRun.self, from: data) {
-            if let merged = run.mergedInto, !merged.isEmpty {
+            if !isHistoryVisible(run) {
+                // A newly started publication-required run is not history.
+            } else if let merged = run.mergedInto, !merged.isEmpty {
                 // Ignore merged run and fall back to loadAllRuns()
             } else {
                 return run
@@ -108,9 +134,14 @@ public class TelemetryQueryEngine {
     }
     
     // MARK: - Transcript Insights Extraction
+
+    private func isHistoryVisible(_ run: TaskRun) -> Bool {
+        if run.publication != nil { return true }
+        return run.publicationRequired != true && !run.isRunning
+    }
     
     public func enrichRunIfNeeded(_ run: inout TaskRun) {
-        if (run.trajectory == nil || run.skillsUsed == nil || run.summaryInfo == nil),
+        if (run.trajectory == nil || run.skillsUsed == nil || run.toolsUsed == nil || run.logs == nil),
            let transcript = run.transcriptPath,
            let insights = parseTranscriptInsights(from: transcript) {
             if run.skillsUsed == nil || run.skillsUsed!.isEmpty {
@@ -124,9 +155,6 @@ public class TelemetryQueryEngine {
             }
             if run.logs == nil || run.logs!.isEmpty {
                 run.logs = insights.logs
-            }
-            if run.summaryInfo == nil {
-                run.summaryInfo = insights.summary
             }
         }
     }
@@ -151,8 +179,6 @@ public class TelemetryQueryEngine {
         var toolsDict: [String: ToolCallInfo] = [:]
         var trajectory: [TrajectoryStep] = []
         var logs: [TaskLogEntry] = []
-        var goal: String? = nil
-        var conclusion: String? = nil
         
         let lines = content.components(separatedBy: .newlines)
         for line in lines where !line.isEmpty {
@@ -235,34 +261,6 @@ public class TelemetryQueryEngine {
                         type: "tool_call",
                         message: "[\(toolName)] \(inpSummary)"
                     ))
-                } else if pType == "message" {
-                    let role = payload["role"] as? String
-                    var msgText = ""
-                    if let contentList = payload["content"] as? [[String: Any]] {
-                        for item in contentList {
-                            if let t = item["text"] as? String {
-                                msgText += t
-                            } else if let ot = item["output_text"] as? String {
-                                msgText += ot
-                            }
-                        }
-                    }
-                    msgText = msgText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if role == "user" && !msgText.isEmpty {
-                        var cleanPrompt = msgText
-                        if let r = cleanPrompt.range(of: "<USER_REQUEST>"),
-                           let endR = cleanPrompt.range(of: "</USER_REQUEST>") {
-                            cleanPrompt = String(cleanPrompt[r.upperBound..<endR.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        }
-                        if let reqRange = cleanPrompt.range(of: "## My request:", options: .caseInsensitive) {
-                            cleanPrompt = String(cleanPrompt[reqRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        }
-                        if !cleanPrompt.starts(with: "<") || goal == nil {
-                            goal = cleanPrompt
-                        }
-                    } else if role == "assistant" && !msgText.isEmpty {
-                        conclusion = msgText
-                    }
                 }
             } else if recType == "event_msg" && payload["type"] as? String == "item_completed" {
                 if let item = payload["item"] as? [String: Any],
@@ -286,17 +284,12 @@ public class TelemetryQueryEngine {
         
         let skillsList = skillsDict.map { SkillUsage(name: $0.key, count: $0.value) }
         let toolsList = Array(toolsDict.values)
-        let summaryInfo = TaskSummaryInfo(
-            goal: goal != nil ? String(goal!.prefix(300)) : nil,
-            conclusion: conclusion != nil ? String(conclusion!.prefix(500)) : nil
-        )
-        
         return (
             skills: skillsList,
             tools: toolsList,
             trajectory: Array(trajectory.suffix(20)),
             logs: Array(logs.suffix(30)),
-            summary: summaryInfo
+            summary: TaskSummaryInfo()
         )
     }
     

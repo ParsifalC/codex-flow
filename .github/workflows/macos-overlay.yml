@@ -41,6 +41,18 @@ jobs:
             apps/macos-overlay/Tests/TelemetryQueryEngineConcurrencyTests.swift \
             -o "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
           "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
+      - name: Test published turn context model and query
+        run: |
+          set -euo pipefail
+          FLOW_BUILD_ROOT="$(mktemp -d)"
+          trap 'rm -rf "$FLOW_BUILD_ROOT"' EXIT
+          export CODEX_HOME="$FLOW_BUILD_ROOT/codex-home"
+          swiftc \
+            apps/macos-overlay/Sources/Models/TelemetryData.swift \
+            apps/macos-overlay/Sources/Services/TelemetryQueryEngine.swift \
+            apps/macos-overlay/Tests/TelemetryTurnContextTests.swift \
+            -o "$FLOW_BUILD_ROOT/telemetry-turn-context-tests"
+          "$FLOW_BUILD_ROOT/telemetry-turn-context-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
       - name: Smoke test overlay lifecycle

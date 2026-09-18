@@ -19,7 +19,7 @@ public struct AnalyticsView: View {
     }
 
     public var body: some View {
-        let content = VStack(spacing: 9) {
+        let content = VStack(spacing: 14) {
             periodHeader
 
             if stats.totalRuns == 0 {
@@ -47,7 +47,7 @@ public struct AnalyticsView: View {
                 ScrollView(.vertical, showsIndicators: true) {
                     content
                 }
-                .frame(maxHeight: 405)
+                .frame(maxHeight: 365)
             }
         }
         .onAppear {
@@ -67,11 +67,11 @@ public struct AnalyticsView: View {
     private var periodHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
-                Text(L("Aggregation Summary", "聚合统计"))
-                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                Text(L("Statistics", "统计"))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.86))
-                Text(L("Deterministic telemetry only", "仅展示确定性遥测数据"))
-                    .font(.system(size: 7.5))
+                Text(L("Completed turns", "已完成轮次"))
+                    .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.36))
             }
 
@@ -94,7 +94,7 @@ public struct AnalyticsView: View {
             }
         } label: {
             Text(title)
-                .font(.system(size: 8.4, weight: state.statsDays == days ? .bold : .medium, design: .rounded))
+                .font(.system(size: 11, weight: state.statsDays == days ? .bold : .medium, design: .rounded))
                 .foregroundColor(state.statsDays == days ? .white : .white.opacity(0.48))
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
@@ -115,7 +115,7 @@ public struct AnalyticsView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.white.opacity(0.72))
             Text(L("Task, token and efficiency trends will appear after telemetry is recorded.", "记录遥测后会显示任务、Token 与效率趋势。"))
-                .font(.system(size: 8.8))
+                .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 15)
@@ -162,10 +162,10 @@ public struct AnalyticsView: View {
         VStack(spacing: 2.5) {
             HStack(spacing: 3) {
                 Image(systemName: icon)
-                    .font(.system(size: 7.5))
+                    .font(.system(size: 11))
                     .foregroundColor(accent)
                 Text(title)
-                    .font(.system(size: 7.8, weight: .medium, design: .rounded))
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.46))
                     .textCase(.uppercase)
             }
@@ -176,7 +176,7 @@ public struct AnalyticsView: View {
                 .lineLimit(1)
 
             Text(subtext)
-                .font(.system(size: 7.3, design: .rounded))
+                .font(.system(size: 11, design: .rounded))
                 .foregroundColor(.white.opacity(0.4))
                 .lineLimit(1)
         }
@@ -193,10 +193,10 @@ public struct AnalyticsView: View {
             HStack {
                 HStack(spacing: 4) {
                     Image(systemName: "chart.xyaxis.line")
-                        .font(.system(size: 8))
+                        .font(.system(size: 11))
                         .foregroundColor(.cyan)
                     Text(L("Usage Trend", "用量趋势"))
-                        .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.72))
                 }
                 Spacer()
@@ -204,7 +204,7 @@ public struct AnalyticsView: View {
                     ProgressView().controlSize(.mini)
                 } else {
                     Text(L("tokens / day", "Token / 天"))
-                        .font(.system(size: 7.2))
+                        .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.34))
                 }
             }
@@ -242,14 +242,14 @@ public struct AnalyticsView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(title)
-                    .font(.system(size: 8.4, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.white.opacity(0.7))
                 Spacer()
                 Text(String(format: "%.1f%%", percentage))
-                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(accent)
                 Text("(\(detail))")
-                    .font(.system(size: 7.2))
+                    .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.35))
             }
 
@@ -270,7 +270,7 @@ public struct AnalyticsView: View {
     private var modelBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(L("Model Breakdown", "模型分布"))
-                .font(.system(size: 8.6, weight: .bold, design: .rounded))
+                .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.62))
                 .textCase(.uppercase)
 
@@ -285,7 +285,7 @@ public struct AnalyticsView: View {
     private var projectBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(L("Projects Distribution", "项目分布"))
-                .font(.system(size: 8.6, weight: .bold, design: .rounded))
+                .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundColor(.white.opacity(0.62))
                 .textCase(.uppercase)
 
@@ -370,14 +370,16 @@ public struct UsageTrendChart: View {
             HStack(spacing: 5) {
                 VStack {
                     Text(TaskRun.formatTokenCount(maxTokens))
-                        .font(.system(size: 6.7, design: .monospaced))
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.white.opacity(0.3))
                     Spacer()
                     Text("0")
-                        .font(.system(size: 6.7, design: .monospaced))
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.white.opacity(0.3))
                 }
-                .frame(width: 28)
+                .frame(width: 45)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
 
                 GeometryReader { proxy in
                     ZStack {
@@ -425,7 +427,7 @@ public struct UsageTrendChart: View {
                 Spacer()
                 Text(points.last.map { formatTrendDate($0.date) } ?? "—")
             }
-            .font(.system(size: 6.8, design: .monospaced))
+            .font(.system(size: 11, design: .monospaced))
             .foregroundColor(.white.opacity(0.3))
             .padding(.leading, 33)
         }
@@ -490,7 +492,7 @@ public struct AnalyticsModelRow: View {
         HStack(spacing: 4) {
             HoverRevealText(
                 model.name,
-                font: .system(size: 8.8, weight: .semibold, design: .monospaced),
+                font: .system(size: 11, weight: .semibold, design: .monospaced),
                 foregroundColor: .white.opacity(0.86),
                 lineLimit: 1,
                 popoverWidth: 320
@@ -500,7 +502,7 @@ public struct AnalyticsModelRow: View {
             HStack(spacing: 2) {
                 ForEach(model.roles, id: \.self) { role in
                     Text(localizedRole(role))
-                        .font(.system(size: 6.8, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(role == "parent" ? .indigo : .teal)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
@@ -511,16 +513,16 @@ public struct AnalyticsModelRow: View {
             Spacer(minLength: 2)
 
             Text(L("\(model.calls) calls", "\(model.calls) 次"))
-                .font(.system(size: 7.2))
+                .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.35))
 
             Text(TaskRun.formatTokenCount(model.tokens))
-                .font(.system(size: 8.2, weight: .bold, design: .rounded))
+                .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
                 .frame(minWidth: 38, alignment: .trailing)
 
             Text(String(format: "%.0f%%", percentage))
-                .font(.system(size: 7.2, design: .rounded))
+                .font(.system(size: 11, design: .rounded))
                 .foregroundColor(.white.opacity(0.4))
                 .frame(width: 25, alignment: .trailing)
         }
@@ -537,12 +539,12 @@ public struct AnalyticsProjectRow: View {
     public var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "folder.fill")
-                .font(.system(size: 7))
+                .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.42))
 
             HoverRevealText(
                 project.name,
-                font: .system(size: 8.7, weight: .medium, design: .rounded),
+                font: .system(size: 11, weight: .medium, design: .rounded),
                 foregroundColor: .white.opacity(0.8),
                 lineLimit: 1,
                 privacyBlur: isPrivacyMode,
@@ -552,11 +554,11 @@ public struct AnalyticsProjectRow: View {
             Spacer(minLength: 3)
 
             Text(L("\(project.runs) runs", "\(project.runs) 次"))
-                .font(.system(size: 7.2))
+                .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.34))
 
             Text(TaskRun.formatTokenCount(project.tokens))
-                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
         }
         .padding(.horizontal, 6)

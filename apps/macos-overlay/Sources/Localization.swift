@@ -151,6 +151,13 @@ public func localizedRole(_ role: String) -> String {
     }
 }
 
+public func localizedResultText(_ text: String?) -> String {
+    guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return L("Not recorded", "未记录")
+    }
+    return text
+}
+
 public extension OverlayTab {
     var localizedTitle: String {
         switch self {

@@ -41,11 +41,13 @@ public class OverlayState: ObservableObject {
 
     private var historyLoadGeneration = 0
     private var statsLoadGeneration = 0
+    private var publicationGate = PublishedTurnGate()
 
     public init() {
         if let latest = TelemetryQueryEngine.shared.loadLatestRun() {
             latestRun = latest
             isTaskRunning = latest.isRunning
+            publicationGate.seed(latest)
         }
         loadMenuData()
     }
@@ -219,8 +221,11 @@ public class OverlayState: ObservableObject {
         }
     }
 
-    public func update(run: TaskRun) {
+    public func update(run: TaskRun, notificationTriggered: Bool = false) {
         DispatchQueue.main.async {
+            let decision = self.publicationGate.accept(run, notify: notificationTriggered)
+            if decision.notify { self.expand(notificationTriggered: true) }
+            guard decision.refresh else { return }
             self.latestRun = run
             self.isTaskRunning = run.isRunning
             if self.activeTab == .history {
@@ -238,6 +243,7 @@ public class OverlayState: ObservableObject {
 // MARK: - Main Root Container View
 public struct OverlayRootView: View {
     @ObservedObject var state: OverlayState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(state: OverlayState) {
         self.state = state
@@ -267,7 +273,7 @@ public struct OverlayRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .background(Color.clear)
-        .animation(.spring(response: 0.16, dampingFraction: 0.82), value: state.isExpanded)
+        .animation(reduceMotion ? nil : .spring(response: 0.16, dampingFraction: 0.82), value: state.isExpanded)
     }
 }
 
@@ -557,7 +563,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var needsPointerReconciliationAfterGeometry = false
 
     private let bubbleSize = NSSize(width: 76, height: 76)
-    private let summarySize = NSSize(width: 384, height: 490)
+    private let summarySize = NSSize(width: 384, height: 590)
     private let snapMargin: CGFloat = 8.0
     private let snapThreshold: CGFloat = 36.0
 
@@ -660,6 +666,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Single-owner geometry pipeline
     public func updateWindowFrame(animated: Bool = true) {
+        let animated = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         pendingPresentationAnimated = animated
         guard runtime.requestPresentationGeometry() else { return }
         performPresentationFrameUpdate(animated: animated)
