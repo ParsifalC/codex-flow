@@ -99,9 +99,10 @@ different text returns `goal_conflict`. File arguments preserve quotes,
 newlines, and Unicode without shell interpolation. Never copy a parent
 receipt into a Worker handoff, export, summary, or log.
 
-No verified host turn-receipt transport is currently established. Automatic
-goal/plan writes remain disabled until a real target-host end-to-end check
-proves receipt delivery, same-turn CLI writes, and parent Stop binding.
+Automatic goal/plan writes are enabled only on installations whose real Codex
+Desktop probe verified receipt delivery, same-turn CLI writes, and parent Stop
+binding. The verified Desktop UserPromptSubmit hook supplies the exact receipt
+through `hookSpecificOutput.additionalContext`. Use only that supplied receipt.
 Unverified or unsupported hosts show “未记录”. Do not fabricate receipt JSON,
 scan `turn-receipts`, use `last.json` or a unique active turn, or infer identity
 from `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, or other `CODEX_*` variables.

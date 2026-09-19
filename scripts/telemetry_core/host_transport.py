@@ -1,4 +1,4 @@
-"""Opt-in, one-turn Desktop transport probe; production delivery stays off.
+"""Locally verified Desktop receipt transport and opt-in one-turn probe.
 
 Protocol: https://developers.openai.com/codex/hooks#userpromptsubmit
 Only hookSpecificOutput.additionalContext is model-visible context. A successful
@@ -14,6 +14,50 @@ from .common import STATE_ROOT, atomic_json, now_ms, state_lock, telemetry_write
 from .turn_context import ReceiptError, register_receipt, receipt_digest
 
 PROBE_FILE = "desktop-context-probe.json"
+TRANSPORT_FILE = "desktop-context-transport.json"
+
+
+def enable_desktop_transport(*, state_root: Path = STATE_ROOT) -> dict[str, Any]:
+    """Enable this installation only after its real parent Stop probe passed."""
+    if not telemetry_writes_enabled():
+        return {"status": "disabled"}
+    if not probe_status(state_root=state_root).get("goal_plan_stop_chain_verified"):
+        raise ReceiptError("host_transport_unverified")
+    config = {"schema_version": 1, "enabled": True, "transport": "codex-additional-context-v1"}
+    atomic_json(Path(state_root) / TRANSPORT_FILE, config)
+    return {"status": "enabled", "automatic_writes_enabled": True}
+
+
+def hook_context(event: dict[str, Any], *, state_root: Path = STATE_ROOT) -> dict[str, Any] | None:
+    """Deliver exact receipts only on a locally verified Desktop installation."""
+    if not telemetry_writes_enabled() or not isinstance(event, dict):
+        return None
+    try:
+        path = Path(state_root) / TRANSPORT_FILE
+        config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if config != {"schema_version": 1, "enabled": True, "transport": "codex-additional-context-v1"}:
+            return probe_hook_context(event, state_root=state_root)
+        if (event.get("hook_event_name") != "UserPromptSubmit" or event.get("agent_id")
+                or event.get("role", "parent") != "parent" or not _desktop_parent(event)):
+            return None
+        receipt = register_receipt(event, state_root=state_root)
+        if receipt is None:
+            return None
+        receipt_file = Path(state_root) / "turn-receipts" / (receipt_digest(receipt.session_id, receipt.turn_id) + ".json")
+        context = (
+            "FlowPilot verified Desktop turn metadata (not the user's request). "
+            "The current parent UserPromptSubmit supplied this exact receipt file: "
+            + json.dumps(str(receipt_file), ensure_ascii=False) + ". "
+            "After the installed FlowPilot strategy gate, if participating, use write-goal and write-plan "
+            "with this receipt. Extract the actual current need (1–400 codepoints), preserving ongoing task context. "
+            "Save the complete actual planner JSON; on follow-ups reuse the existing plan and ledger with origin=reused. "
+            "Never reset the task budget, alter user messages, fabricate metadata, scan other receipts, "
+            "display receipt contents, or pass receipts to workers. Disabled strategy or bypass means no writes. "
+            "Parent Stop alone publishes metadata. Continue the user task if writing fails."
+        )
+        return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
+    except (OSError, ValueError, TypeError, AttributeError, ReceiptError):
+        return None
 
 
 def arm_probe(*, session_id: str, cwd: str, state_root: Path = STATE_ROOT,
@@ -105,7 +149,9 @@ def probe_status(*, state_root: Path = STATE_ROOT,
     if not path.exists():
         return {"status": "not_armed", "automatic_writes_enabled": False}
     config = json.loads(path.read_text(encoding="utf-8"))
-    status = {"status": config.get("status"), "automatic_writes_enabled": False,
+    transport_path = Path(state_root) / TRANSPORT_FILE
+    transport = json.loads(transport_path.read_text(encoding="utf-8")) if transport_path.exists() else {}
+    status = {"status": config.get("status"), "automatic_writes_enabled": transport == {"schema_version": 1, "enabled": True, "transport": "codex-additional-context-v1"},
               "same_turn_receipt_delivery_verified": False, "goal_plan_stop_chain_verified": False}
     if (config.get("status") == "armed" and config.get("wait_for_next_turn") is not True
             and config.get("expires_at_ms", 0) < clock()):

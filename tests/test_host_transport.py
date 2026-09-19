@@ -28,6 +28,25 @@ class DesktopProbeTests(unittest.TestCase):
     def arm(self):
         host_transport.arm_probe(session_id="chat", cwd=str(self.root), state_root=self.root, clock=lambda: 100)
 
+    def test_enable_requires_successful_real_probe(self):
+        with self.assertRaises(host_transport.ReceiptError):
+            host_transport.enable_desktop_transport(state_root=self.root)
+        self.assertFalse((self.root / host_transport.TRANSPORT_FILE).exists())
+
+    def test_verified_transport_delivers_multiple_parent_turns_only(self):
+        with patch.object(host_transport, "probe_status", return_value={"goal_plan_stop_chain_verified": True}):
+            host_transport.enable_desktop_transport(state_root=self.root)
+        for turn in ("one", "two"):
+            output = host_transport.hook_context({**self.event, "turn_id": turn}, state_root=self.root)
+            self.assertIn("write-goal", output["hookSpecificOutput"]["additionalContext"])
+        for event in ({**self.event, "agent_id": "child"}, {**self.event, "role": "worker"},
+                      {**self.event, "hook_event_name": "Stop"}):
+            self.assertIsNone(host_transport.hook_context(event, state_root=self.root))
+        with patch.object(host_transport, "telemetry_writes_enabled", return_value=False):
+            self.assertIsNone(host_transport.hook_context(self.event, state_root=self.root))
+        self.transcript.write_text(json.dumps({"type": "session_meta", "payload": {"id": "chat", "source": "cli"}}))
+        self.assertIsNone(host_transport.hook_context(self.event, state_root=self.root))
+
     def test_default_is_silent_and_read_only(self):
         before = set(self.root.iterdir())
         self.assertIsNone(host_transport.probe_hook_context(self.event, state_root=self.root, clock=lambda: 101))

@@ -420,8 +420,8 @@ def main() -> int:
     if isinstance(event, dict) and telemetry_writes_enabled():
         try:
             collect_hook(event)
-            from telemetry_core.host_transport import probe_hook_context
-            context = probe_hook_context(event)
+            from telemetry_core.host_transport import hook_context
+            context = hook_context(event)
             if context is not None:
                 print(json.dumps(context, ensure_ascii=False))
             _check_auto_ack_restart_on_hook()
