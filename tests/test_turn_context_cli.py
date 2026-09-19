@@ -52,19 +52,22 @@ class TurnContextCLITests(unittest.TestCase):
             "started_at": 1000, "finished_at": 1004, "repair_count": 0, "checkpoint_count": 0,
         }
 
-    def seed(self):
+    def seed(self, *, turn_id="turn-2"):
         code = """
 import json, sys
 from dataclasses import asdict
 from pathlib import Path
 from telemetry_core.turn_context import register_receipt
 from strategy_runtime import TaskProfile, compile_plan
-r=register_receipt({'hook_event_name':'UserPromptSubmit','session_id':'chat-a','turn_id':'turn-2'})
+r=register_receipt({'hook_event_name':'UserPromptSubmit','session_id':'chat-a','turn_id':sys.argv[3]})
 Path(sys.argv[1]).write_text(json.dumps(asdict(r)), encoding='utf-8')
 Path(sys.argv[2]).write_text(json.dumps(compile_plan(TaskProfile(),routing_mode='delegate').to_dict()), encoding='utf-8')
 """
-        result = subprocess.run([sys.executable, "-c", code, str(self.receipt), str(self.plan)], env=self.env, text=True, capture_output=True)
+        result = subprocess.run([sys.executable, "-c", code, str(self.receipt), str(self.plan), turn_id], env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def write_goal_content(self, text, *, line_ending="\n"):
+        self.text.write_bytes(text.replace("\n", line_ending).encode("utf-8"))
 
     def goal_args(self):
         return ("write-goal", "--receipt-file", str(self.receipt), "--text-file", str(self.text))
@@ -170,22 +173,44 @@ with patch.object(telemetry, 'recover_last', return_value=result), patch.object(
         self.assertFalse((self.home / "codex-flow").exists())
 
     def test_file_content_roundtrips_and_conflict_does_not_overwrite(self):
-        self.seed()
-        first = self.cli(*self.goal_args())
-        self.assertEqual(first.returncode, 0, first.stderr)
-        payload = json.loads(first.stdout)
-        self.assertEqual((payload["session_id"], payload["turn_id"]), ("chat-a", "turn-2"))
-        self.assertEqual(payload["goal"]["text"], self.text.read_text(encoding="utf-8"))
-        self.assertEqual(self.cli(*self.goal_args()).stdout, first.stdout)
-        self.text.write_text("changed", encoding="utf-8")
-        self.assert_error(self.cli(*self.goal_args()), "goal_conflict")
+        source = "修复 Unicode 🌏\n保留 '$HOME' 与 `literal`"
+        for label, line_ending in (("lf", "\n"), ("crlf", "\r\n")):
+            with self.subTest(line_ending=label):
+                self.receipt = self.home / f"receipt-{label}.json"
+                self.text = self.home / f"goal-{label}.txt"
+                self.write_goal_content(source, line_ending=line_ending)
+                self.seed(turn_id=f"turn-{label}")
+                expected = source.replace("\n", line_ending)
+
+                first = self.cli(*self.goal_args())
+                self.assertEqual(first.returncode, 0, first.stderr)
+                payload = json.loads(first.stdout)
+                self.assertEqual((payload["session_id"], payload["turn_id"]), ("chat-a", f"turn-{label}"))
+                self.assertEqual(payload["goal"]["text"], expected)
+
+                state_after_first = self.state_snapshot(self.home / "codex-flow")
+                second = self.cli(*self.goal_args())
+                self.assertEqual(second.stdout, first.stdout)
+                self.assertEqual(self.state_snapshot(self.home / "codex-flow"), state_after_first)
+
+                self.write_goal_content("changed", line_ending=line_ending)
+                self.assert_error(self.cli(*self.goal_args()), "goal_conflict")
+                self.assertEqual(self.state_snapshot(self.home / "codex-flow"), state_after_first)
 
     def test_unicode_json_output_is_safe_on_non_utf8_console(self):
-        self.seed()
-        self.env["PYTHONIOENCODING"] = "ascii"
-        result = self.cli(*self.goal_args())
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["goal"]["text"], self.text.read_text(encoding="utf-8"))
+        source = "修复 Unicode 🌏\n保留 '$HOME' 与 `literal`"
+        for label, line_ending in (("lf", "\n"), ("crlf", "\r\n")):
+            with self.subTest(line_ending=label):
+                self.receipt = self.home / f"receipt-ascii-{label}.json"
+                self.text = self.home / f"goal-ascii-{label}.txt"
+                self.write_goal_content(source, line_ending=line_ending)
+                self.seed(turn_id=f"ascii-{label}")
+                expected = source.replace("\n", line_ending)
+
+                self.env["PYTHONIOENCODING"] = "ascii"
+                result = self.cli(*self.goal_args())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["goal"]["text"], expected)
 
     def test_empty_overlong_and_invalid_utf8_files(self):
         self.seed()
