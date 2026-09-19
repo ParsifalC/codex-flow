@@ -56,7 +56,6 @@ assert len(run1["tools_used"]) == 1 and run1["tools_used"][0]["name"] == "mcp__g
 assert len(run1["trajectory"]) == 1 and run1["trajectory"][0]["name"] == "mcp__github_search", run1
 assert len(run1["logs"]) >= 1, run1
 assert "summary_info" not in run1 and "result" not in run1, run1
-assert rep1["task_summaries_restored"] is False, rep1
 assert rep1["skills_tools_restored"] is True, rep1
 assert rep1["trajectories_restored"] is True, rep1
 assert rep1["logs_restored"] is True, rep1
@@ -78,7 +77,6 @@ assert run2["tools_used"] == [{"name": "existing-tool", "count": 3}], run2
 assert run2["trajectory"] == [{"type": "existing_step"}], run2
 assert run2["logs"] == [{"message": "existing log"}], run2
 assert run2["summary_info"] == {"goal": "existing goal", "conclusion": "existing conclusion"}, run2
-assert rep2["task_summaries_restored"] is False, rep2
 assert rep2["skills_tools_restored"] is False, rep2
 assert rep2["trajectories_restored"] is False, rep2
 assert rep2["logs_restored"] is False, rep2

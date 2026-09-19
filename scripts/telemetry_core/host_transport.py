@@ -21,7 +21,11 @@ def enable_desktop_transport(*, state_root: Path = STATE_ROOT) -> dict[str, Any]
     """Enable this installation only after its real parent Stop probe passed."""
     if not telemetry_writes_enabled():
         return {"status": "disabled"}
-    if not probe_status(state_root=state_root).get("goal_plan_stop_chain_verified"):
+    try:
+        verified = probe_status(state_root=state_root).get("goal_plan_stop_chain_verified")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        raise ReceiptError("host_transport_unverified") from None
+    if not verified:
         raise ReceiptError("host_transport_unverified")
     config = {"schema_version": 1, "enabled": True, "transport": "codex-additional-context-v1"}
     atomic_json(Path(state_root) / TRANSPORT_FILE, config)
@@ -49,7 +53,8 @@ def hook_context(event: dict[str, Any], *, state_root: Path = STATE_ROOT) -> dic
             "The current parent UserPromptSubmit supplied this exact receipt file: "
             + json.dumps(str(receipt_file), ensure_ascii=False) + ". "
             "After the installed FlowPilot strategy gate, if participating, use write-goal and write-plan "
-            "with this receipt. Extract the actual current need (1–400 codepoints), preserving ongoing task context. "
+            "with this receipt. Extract the actual current need (1–80 codepoints, at most two sentences), preserving ongoing task context. "
+            "Use concise, accurate, plain language focused on the desired outcome; omit jargon and process narration. "
             "Save the complete actual planner JSON; on follow-ups reuse the existing plan and ledger with origin=reused. "
             "Never reset the task budget, alter user messages, fabricate metadata, scan other receipts, "
             "display receipt contents, or pass receipts to workers. Disabled strategy or bypass means no writes. "
@@ -130,9 +135,9 @@ def probe_hook_context(event: dict[str, Any], *, state_root: Path = STATE_ROOT,
                 + json.dumps(str(receipt_file), ensure_ascii=False) + ".\n"
                 "For this explicitly armed probe only, use this supplied receipt-file with the installed "
                 "FlowPilot skill's write-goal and write-plan commands after its strategy gate. "
-                "Extract the actual current user need (1–400 codepoints); save the actual complete planner JSON, "
+                "Extract the actual current user need (1–80 codepoints, at most two sentences); save the actual complete planner JSON, "
                 "or reuse the existing plan and ledger with origin=reused. Never reset the task budget. "
-                "The skill's automatic-write-disabled notice still applies outside this one probe. "
+                "Outside this probe, automatic writes require a locally verified and enabled transport. "
                 "Do not display the receipt contents, copy it into worker handoffs, scan for other receipts, "
                 "or edit the user's message/transcript. A successful probe needs both same-turn CLI writes "
                 "and matching parent Stop publication. Continue the user's task if metadata writing fails."

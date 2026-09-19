@@ -1,21 +1,30 @@
 """Parent-turn receipts and atomic FlowPilot goal/ExecutionPlan sidecars.
 
 Receipts enforce correct association, not an adversarial security boundary.
-There is no verified host transport in this release: hooks register receipts
-locally but never emit them through systemMessage, environment guesses, or
-user-prompt rewrites. Explicit file APIs are independently testable; automated
-FlowPilot writes must remain off until a real host transport is verified.
+Host delivery is handled by host_transport only after a real local Desktop
+probe passes. Explicit file APIs never infer turn identity or rewrite prompts.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Callable
 
-from .common import STATE_ROOT, atomic_json, now_ms, state_lock, telemetry_writes_enabled
+from .common import (
+    STATE_ROOT,
+    atomic_json,
+    now_ms,
+    read_json_object,
+    run_key,
+    safe_key_part,
+    state_lock,
+    telemetry_writes_enabled,
+)
+from .turn_result import parent_turn_aborted
 
 
 class ReceiptError(ValueError):
@@ -42,6 +51,16 @@ def _identifier(value: Any) -> str:
         value.encode("utf-8")
     except UnicodeError:
         raise ReceiptError("receipt_invalid") from None
+    return value
+
+
+def _transcript_path(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        return None
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        return None
     return value
 
 
@@ -153,7 +172,11 @@ def register_receipt(event: dict[str, Any], *, state_root: Path = STATE_ROOT) ->
             validate_receipt(receipt, state_root=state_root)
             return receipt
         receipt = TurnReceipt(1, session_id, turn_id, secrets.token_urlsafe(32), "parent")
-        atomic_json(path, {**asdict(receipt), "state": "active"})
+        registration = {**asdict(receipt), "state": "active"}
+        transcript_path = _transcript_path(event.get("transcript_path"))
+        if transcript_path is not None:
+            registration["transcript_path"] = transcript_path
+        atomic_json(path, registration)
         return receipt
 
 
@@ -296,27 +319,72 @@ def _current_context(receipt: TurnReceipt, state_root: Path) -> dict[str, Any]:
     }
 
 
-def _write_receipt(path: Path, state_root: Path) -> TurnReceipt:
+def _legacy_transcript_path(receipt: TurnReceipt, state_root: Path) -> str | None:
+    key = run_key({"session_id": receipt.session_id, "turn_id": receipt.turn_id})
+    path = Path(state_root) / "runs" / (safe_key_part(key) + ".json")
+    run = read_json_object(path)
+    if not isinstance(run, dict):
+        return None
+    if (run.get("session_id"), run.get("turn_id")) != (receipt.session_id, receipt.turn_id):
+        return None
+    return _transcript_path(run.get("transcript_path"))
+
+
+def _transcript_version(path: str | None) -> tuple[int, ...] | None:
+    if path is None:
+        return None
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _write_receipt(path: Path, state_root: Path) -> tuple[TurnReceipt, str | None, tuple[int, ...] | None]:
     receipt = load_receipt(path)
     # A rejection-only preflight prevents unknown receipts from creating lock
     # directories. The authoritative active check is repeated under the lock.
-    if _registered(receipt, state_root).get("state") != "active":
+    registration = _registered(receipt, state_root)
+    if registration.get("state") != "active":
         raise ReceiptError("receipt_expired")
-    return receipt
+    transcript_path = _transcript_path(registration.get("transcript_path"))
+    if transcript_path is None:
+        transcript_path = _legacy_transcript_path(receipt, state_root)
+    version = _transcript_version(transcript_path)
+    if transcript_path is not None and parent_turn_aborted(
+        transcript_path, receipt.turn_id, session_id=receipt.session_id
+    ):
+        digest = receipt_digest(receipt.session_id, receipt.turn_id)
+        with state_lock("turn-" + digest, state_root=state_root) as acquired:
+            if not acquired:
+                raise ReceiptError("locked")
+            if _registered(receipt, state_root).get("state") != "active":
+                raise ReceiptError("receipt_expired")
+            seal_receipt(receipt, state_root=state_root)
+        raise ReceiptError("receipt_expired")
+    return receipt, transcript_path, version
 
 
 def write_goal(*, receipt_file: Path, text_file: Path, state_root: Path = STATE_ROOT,
                clock: Callable[[], int] = now_ms) -> dict[str, Any]:
     if not telemetry_writes_enabled():
         return {"status": "disabled"}
-    receipt = _write_receipt(receipt_file, state_root)
+    receipt, transcript_path, version = _write_receipt(receipt_file, state_root)
     text = _read_utf8(text_file)
     if not text.strip():
         raise ReceiptError("goal_empty")
-    if len(text) > 400:
+    if len(text) > 80:
         raise ReceiptError("goal_too_long")
+    # Sentence-final punctuation; dots within decimals/versions do not split.
+    sentences = [part for part in re.split(r'[。！？!?]+|\.(?=\s|$)', text)
+                 if part.strip().strip('"\'”’」』').strip()]
+    if len(sentences) > 2:
+        raise ReceiptError("goal_too_many_sentences")
     with state_lock("turn-" + receipt_digest(receipt.session_id, receipt.turn_id), state_root=state_root) as acquired:
         if not acquired:
+            raise ReceiptError("locked")
+        # Retry changed transcripts without parsing history under the write lock.
+        if _transcript_version(transcript_path) != version:
             raise ReceiptError("locked")
         context = _current_context(receipt, state_root)
         if "goal" in context:
@@ -337,10 +405,12 @@ def write_plan(*, receipt_file: Path, plan_file: Path, origin: str, state_root: 
         return {"status": "disabled"}
     if origin not in {"compiled", "reused", "replanned"}:
         raise ReceiptError("invalid_origin")
-    receipt = _write_receipt(receipt_file, state_root)
+    receipt, transcript_path, version = _write_receipt(receipt_file, state_root)
     plan = validate_execution_plan(_parse_json(_read_utf8(plan_file), "invalid_execution_plan"))
     with state_lock("turn-" + receipt_digest(receipt.session_id, receipt.turn_id), state_root=state_root) as acquired:
         if not acquired:
+            raise ReceiptError("locked")
+        if _transcript_version(transcript_path) != version:
             raise ReceiptError("locked")
         context = _current_context(receipt, state_root)
         revision = 1

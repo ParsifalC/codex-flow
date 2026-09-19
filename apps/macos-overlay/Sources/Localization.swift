@@ -31,6 +31,14 @@ public final class AppLocalization: ObservableObject {
         language == .zh ? chinese : english
     }
 
+    public static func setConfiguredLanguage(_ value: String) throws {
+        _ = try FlowPilotCommand.run(["language", value])
+    }
+
+    public func refresh() {
+        language = Self.resolveLanguage()
+    }
+
     public static func resolveLanguage() -> AppLanguage {
         let env = ProcessInfo.processInfo.environment
         if let rawOverride = env["CODEX_FLOW_LANGUAGE"], !rawOverride.isEmpty {
@@ -164,6 +172,7 @@ public extension OverlayTab {
         case .inspector: return L("Inspector", "任务")
         case .history: return L("History", "历史")
         case .analytics: return L("Analytics", "统计")
+        case .account: return L("Account", "账户")
         }
     }
 }

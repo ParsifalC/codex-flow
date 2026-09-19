@@ -88,11 +88,15 @@ is `cwd`, chat is `session_id`, and turn is `turn_id`. Each turn has its own
 goal; do not rewrite the user's message or transcript to record it.
 
 After the gate above and **before** TaskProfile/planner work, write the current
-turn's goal (1–400 Unicode codepoints) to a UTF-8 file, then run:
+turn's goal (1–80 Unicode codepoints, at most two sentences; prefer one sentence) to a UTF-8 file, then run:
 
 ```text
 codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --text-file <utf8-goal-file>
 ```
+
+Write the goal in concise, accurate, plain language: state the concrete outcome the user wants.
+Prefer familiar words; omit process narration, jargon, and repeated background.
+For example: “恢复语言切换，让目标和执行信息更易读。”
 
 The first successful goal is immutable. Identical text is idempotent;
 different text returns `goal_conflict`. File arguments preserve quotes,

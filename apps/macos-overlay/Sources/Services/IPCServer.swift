@@ -119,11 +119,10 @@ public class IPCService {
                 .appendingPathComponent("telemetry")
                 .appendingPathComponent("last.json")
             guard let data = try? Data(contentsOf: lastURL),
-                  var run = try? JSONDecoder().decode(TaskRun.self, from: data),
+                  let run = try? JSONDecoder().decode(TaskRun.self, from: data),
                   run.publication != nil else {
                 return nil
             }
-            TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
             return run
         }
 
@@ -169,7 +168,7 @@ public class IPCService {
                 state.toggle()
                 return "{\"ok\": true, \"action\": \"toggle\", \"isExpanded\": \(state.isExpanded)}\n"
             } else if cmd == "expand" {
-                state.expand()
+                state.openLatest()
                 return "{\"ok\": true, \"action\": \"expand\"}\n"
             } else if cmd == "collapse" {
                 state.collapse()
@@ -184,6 +183,10 @@ public class IPCService {
                     state.selectTab(.analytics)
                     state.expand()
                     return "{\"ok\": true, \"tab\": \"Analytics\"}\n"
+                } else if target == "account" {
+                    state.selectTab(.account)
+                    state.expand()
+                    return "{\"ok\": true, \"tab\": \"Account\"}\n"
                 } else {
                     state.selectTab(.inspector)
                     state.expand()
@@ -209,27 +212,28 @@ public class IPCService {
                 state.selectTab(.history)
                 state.expand()
                 return "{\"ok\": true, \"action\": \"showing_history\"}\n"
-            } else if cmd.hasPrefix("update") {
-                let payload = cmd.dropFirst("update".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if cmd == "refresh" || cmd.hasPrefix("update") {
+                let notify = cmd != "refresh"
+                let payload = notify
+                    ? cmd.dropFirst("update".count).trimmingCharacters(in: .whitespacesAndNewlines)
+                    : ""
                 // Publication is authoritative. Always prefer last.json so an
                 // IPC hint cannot display an unfinished or stale payload.
                 if let run = latestPublishedRun() {
-                    state.update(run: run, notificationTriggered: true)
+                    state.update(run: run, notificationTriggered: notify)
                     return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
                 }
                 if !payload.isEmpty,
                    let fileData = try? Data(contentsOf: URL(fileURLWithPath: payload)),
-                   var run = try? JSONDecoder().decode(TaskRun.self, from: fileData),
+                   let run = try? JSONDecoder().decode(TaskRun.self, from: fileData),
                    run.publication != nil {
-                    TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                    state.update(run: run, notificationTriggered: true)
+                    state.update(run: run, notificationTriggered: notify)
                     return "{\"ok\": true, \"updatedFrom\": \"file\"}\n"
                 } else if !payload.isEmpty,
                           let json = payload.data(using: .utf8),
-                          var run = try? JSONDecoder().decode(TaskRun.self, from: json),
+                          let run = try? JSONDecoder().decode(TaskRun.self, from: json),
                           run.publication != nil {
-                    TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                    state.update(run: run, notificationTriggered: true)
+                    state.update(run: run, notificationTriggered: notify)
                     return "{\"ok\": true, \"updatedFrom\": \"json\"}\n"
                 }
                 return "{\"ok\": false, \"error\": \"no published telemetry snapshot\"}\n"

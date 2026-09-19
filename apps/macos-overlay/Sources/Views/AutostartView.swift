@@ -190,7 +190,7 @@ public enum FlowPilotAutostartService {
 
 public struct AutostartCard: View {
     @ObservedObject private var localization = AppLocalization.shared
-    @State private var status = FlowPilotAutostartService.status()
+    @State private var status: FlowPilotAutostartStatus?
     @State private var isChanging = false
     @State private var message: String?
     @State private var isError = false
@@ -198,69 +198,84 @@ public struct AutostartCard: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
                 Image(systemName: "power.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(status.enabled ? .green : .orange.opacity(0.72))
+                    .foregroundColor(status?.enabled == true ? .green : .orange.opacity(0.72))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L("Launch at Login", "登录时启动"))
-                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.84))
                     Text(statusText)
-                        .font(.system(size: 7.6))
-                        .foregroundColor(.white.opacity(0.42))
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.6))
                 }
 
                 Spacer()
 
-                if isChanging {
+                if isChanging || status == nil {
                     ProgressView().controlSize(.mini)
                 }
 
-                Toggle("", isOn: Binding(
-                    get: { status.enabled },
+                Toggle(L("Launch at Login", "登录时启动"), isOn: Binding(
+                    get: { status?.enabled ?? false },
                     set: { setEnabled($0) }
                 ))
                 .labelsHidden()
                 .toggleStyle(SleekSwitchToggleStyle(tint: .green))
-                .disabled(isChanging)
+                .disabled(isChanging || status == nil)
             }
 
             if let message {
                 Text(message)
-                    .font(.system(size: 7.6, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(isError ? .orange : .green)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack(spacing: 4) {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 7.2))
+                    .font(.system(size: 11))
                 Text(L(
-                    "Registered as a user LaunchAgent; enabling it affects the next login and does not restart the current widget.",
-                    "使用用户级 LaunchAgent 注册；开启后从下次登录生效，不会重启当前悬浮窗。"
+                    "Starts FlowPilot at your next login. The current window stays open.",
+                    "下次登录时自动打开 FlowPilot，不影响当前窗口。"
                 ))
-                    .font(.system(size: 7.2))
+                    .font(.system(size: 11))
             }
-            .foregroundColor(.white.opacity(0.3))
+            .foregroundColor(.white.opacity(0.55))
         }
-        .padding(9)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color.white.opacity(0.04))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
         )
-        .onAppear { status = FlowPilotAutostartService.status() }
+        .onAppear(perform: refresh)
     }
 
     private var statusText: String {
+        guard let status else { return L("Reading login settings…", "正在读取登录设置…") }
         guard status.enabled else { return L("Disabled", "已关闭") }
         if status.launchdLoaded {
-            return L("Enabled · managed by launchd in this login session", "已开启 · 当前登录会话由 launchd 托管")
+            return L("Enabled · starts with your Mac", "已开启 · 登录后自动启动")
         }
         return L("Enabled · starts automatically on next login", "已开启 · 下次登录自动启动")
+    }
+
+    private func refresh() {
+        guard !isChanging else { return }
+        isChanging = true
+        // Waiting for launchctl during SwiftUI layout can reenter its graph
+        // through Process.waitUntilExit's run loop and abort the application.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let next = FlowPilotAutostartService.status()
+            DispatchQueue.main.async {
+                status = next
+                isChanging = false
+            }
+        }
     }
 
     private func setEnabled(_ enabled: Bool) {
@@ -281,8 +296,9 @@ public struct AutostartCard: View {
                         : L("Login launch disabled; FlowPilot remains running now.", "已关闭登录启动；当前 FlowPilot 继续运行。")
                 }
             } catch {
+                let next = FlowPilotAutostartService.status()
                 DispatchQueue.main.async {
-                    status = FlowPilotAutostartService.status()
+                    status = next
                     isChanging = false
                     isError = true
                     message = error.localizedDescription

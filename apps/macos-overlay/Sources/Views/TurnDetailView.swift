@@ -4,19 +4,17 @@ import SwiftUI
 public struct TurnDetailView: View {
     public let run: TaskRun
     public let isPrivacyMode: Bool
-    public var compact: Bool = false
-    @State private var goalExpanded = false
     @State private var resultExpanded = false
-    @State private var planExpanded = false
+    @State private var planExpanded = true
     @State private var jsonExpanded = false
 
-    public init(run: TaskRun, isPrivacyMode: Bool = false, compact: Bool = false) {
-        self.run = run; self.isPrivacyMode = isPrivacyMode; self.compact = compact
+    public init(run: TaskRun, isPrivacyMode: Bool = false) {
+        self.run = run; self.isPrivacyMode = isPrivacyMode
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 16) {
-                narrative(L("This turn’s goal", "本轮目标"), hint: L("Extracted need", "需求提炼"), text: run.publishedGoal, expanded: $goalExpanded, accent: true)
+                narrative(L("This turn’s goal", "本轮目标"), hint: L("Extracted need", "需求提炼"), text: run.publishedGoal, accent: true)
                 Divider().overlay(Color.white.opacity(0.08))
                 narrative(L("Result", "结果"), hint: nil, text: run.publishedConclusion, expanded: $resultExpanded, accent: false)
                 if run.result?.truncated == true {
@@ -39,11 +37,11 @@ public struct TurnDetailView: View {
                         planRow(L("Strategy", "策略"), value(plan, "strategy"))
                         planRow(L("Routing", "路由"), value(plan, "routing"))
                         planRow(L("Review", "审查方式"), value(plan, "review_mode"))
-                        planRow(L("Planned workers", "计划配置"), L("Explore", "探索") + " " + value(plan, "exploration_workers") + " · " + L("Implement", "实现") + " " + value(plan, "implementation_workers") + " · " + L("Review", "审查") + " " + value(plan, "reviewer_workers"))
-                        planRow(L("Actual participants", "实际参与"), L("Parent 1 · Workers", "父 Agent 1 · 子 Agent") + " \(run.allWorkers.count)")
+                        planRow(L("Task worker plan", "任务计划配置"), L("Explore", "探索") + " " + value(plan, "exploration_workers") + " · " + L("Implement", "实现") + " " + value(plan, "implementation_workers") + " · " + L("Review", "审查") + " " + value(plan, "reviewer_workers"))
+                        planRow(L("Observed this turn", "本轮记录参与"), L("Parent 1 · Workers", "父 Agent 1 · 子 Agent") + " \(run.allWorkers.count)")
                         planRow(L("Plan origin", "计划来源"), origin(orchestration.origin))
                         planRow(L("Revision", "计划修订"), orchestration.revision.map(String.init) ?? L("Not recorded", "未记录"))
-                        Text(L("Planned counts and actual participants are recorded separately.", "计划配置与实际参与人数分别记录。"))
+                        Text(L("The plan describes staffing by task stage; participation counts reflect agents recorded this turn. Reusing a plan does not mean running every stage again.", "计划列出任务各阶段的人员配置；参与人数统计本轮已记录的 Agent。沿用计划不代表每轮重跑所有阶段。"))
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                         DisclosureGroup(L("Full plan JSON", "查看完整计划 JSON"), isExpanded: $jsonExpanded) {
                             ScrollView([.horizontal, .vertical]) {
@@ -65,10 +63,10 @@ public struct TurnDetailView: View {
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.035)))
         }
         .onChange(of: run.id) { _, _ in
-            goalExpanded = false; resultExpanded = false; planExpanded = false; jsonExpanded = false
+            resultExpanded = false; planExpanded = true; jsonExpanded = false
         }
     }
-    private func narrative(_ title: String, hint: String?, text: String?, expanded: Binding<Bool>, accent: Bool) -> some View {
+    private func narrative(_ title: String, hint: String?, text: String?, expanded: Binding<Bool>? = nil, accent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(title).fontWeight(.semibold); Spacer()
@@ -77,10 +75,10 @@ public struct TurnDetailView: View {
             Text(isPrivacyMode ? L("Hidden in privacy mode", "隐私模式已隐藏") : localizedResultText(text))
                 .font(.system(size: accent ? 15 : 13, weight: accent ? .medium : .regular))
                 .foregroundStyle(text == nil ? .white.opacity(0.4) : .white.opacity(0.94))
-                .lineSpacing(5).lineLimit(expanded.wrappedValue ? nil : (accent ? 3 : 5))
+                .lineSpacing(5).lineLimit(expanded?.wrappedValue == false ? 5 : nil)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if text != nil && !isPrivacyMode {
+            if let expanded, text != nil && !isPrivacyMode {
                 Button(expanded.wrappedValue ? L("Show less", "收起全文") : L("Read full text", "展开全文")) { expanded.wrappedValue.toggle() }
                     .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.cyan.opacity(0.9))
             }

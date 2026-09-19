@@ -16,20 +16,12 @@ from .app_server import (
     transcript_turn_usage,
 )
 from .common import (
-    LAST_FILE,
-    atomic_json,
     iter_run_files,
     now_ms,
     numeric_ms,
     read_json_object,
     telemetry_writes_enabled,
 )
-
-
-def _has_summary(val: Any) -> bool:
-    if not isinstance(val, dict):
-        return False
-    return any(bool(v) for v in val.values())
 
 
 def repair_run(
@@ -47,7 +39,6 @@ def repair_run(
     if not isinstance(run, dict):
         return run
 
-    before_summary = _has_summary(run.get("summary_info"))
     before_skills = bool(run.get("skills_used"))
     before_tools = bool(run.get("tools_used"))
     before_trajectory = bool(run.get("trajectory"))
@@ -85,8 +76,6 @@ def repair_run(
             for key in ("skills_used", "tools_used", "trajectory", "logs"):
                 if not run.get(key) and insights.get(key):
                     run[key] = insights[key]
-            if not before_summary and _has_summary(insights.get("summary_info")):
-                run["summary_info"] = insights["summary_info"]
 
         parent = run.get("parent")
         if isinstance(parent, dict):
@@ -121,7 +110,6 @@ def repair_run(
             run["quota_change_during_run"] = quota_delta(before, after)
 
     if report is not None:
-        report["task_summaries_restored"] = not before_summary and _has_summary(run.get("summary_info"))
         report["skills_tools_restored"] = (
             (not before_skills and bool(run.get("skills_used")))
             or (not before_tools and bool(run.get("tools_used")))
@@ -151,7 +139,6 @@ def format_repair_summary(stats: dict[str, int]) -> str:
         f"{'unchanged:':<{col_width}}{stats.get('unchanged', 0):>{val_width}}",
         f"{'transcript missing:':<{col_width}}{stats.get('transcript_missing', 0):>{val_width}}",
         "",
-        f"{'task summaries restored:':<{col_width}}{stats.get('task_summaries_restored', 0):>{val_width}}",
         f"{'skills/tools restored:':<{col_width}}{stats.get('skills_tools_restored', 0):>{val_width}}",
         f"{'trajectories restored:':<{col_width}}{stats.get('trajectories_restored', 0):>{val_width}}",
         f"{'logs restored:':<{col_width}}{stats.get('logs_restored', 0):>{val_width}}",
@@ -168,7 +155,6 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
         "repaired": 0,
         "unchanged": 0,
         "transcript_missing": 0,
-        "task_summaries_restored": 0,
         "skills_tools_restored": 0,
         "trajectories_restored": 0,
         "logs_restored": 0,
@@ -200,10 +186,8 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
             changed = publication.changed
             if publication.last_updated:
                 from .collector import notify_overlay_if_active
-                notify_overlay_if_active(publication.snapshot)
+                notify_overlay_if_active(publication.snapshot, notify=False)
 
-        if run_report.get("task_summaries_restored"):
-            stats["task_summaries_restored"] += 1
         if run_report.get("skills_tools_restored"):
             stats["skills_tools_restored"] += 1
         if run_report.get("trajectories_restored"):
@@ -227,7 +211,7 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
         recovered = recover_last(state_root=_common.STATE_ROOT)
         if recovered.last_updated:
             from .collector import notify_overlay_if_active
-            notify_overlay_if_active(recovered.snapshot)
+            notify_overlay_if_active(recovered.snapshot, notify=False)
     if verbose:
         print(format_repair_summary(stats))
 

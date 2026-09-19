@@ -47,7 +47,6 @@ from .common import (
     telemetry_notifications_enabled,
     telemetry_retention_days,
     telemetry_writes_enabled,
-    worker_index_entry,
 )
 from .turn_context import ReceiptError, load_receipt, receipt_digest, register_receipt, seal_receipt, validate_receipt
 from .turn_result import extract_parent_final, parent_turn_completed_at
@@ -777,6 +776,15 @@ def run_maintenance() -> None:
                                 seal_receipt(receipt, state_root=_common.STATE_ROOT)
                         except ReceiptError:
                             pass
+                        sidecar_path = _common.STATE_ROOT / "turn-context" / (digest + ".json")
+                        try:
+                            sidecar_path.unlink()
+                        except FileNotFoundError:
+                            pass
+                        except OSError:
+                            # Keep the run so a later maintenance pass can
+                            # retry cleanup without orphaning its sidecar.
+                            continue
                         try:
                             path.unlink()
                         except OSError:
@@ -876,8 +884,8 @@ def send_system_notification(run: dict[str, Any]) -> None:
         return
 
 
-def notify_overlay_if_active(run: dict[str, Any]) -> None:
-    """Send immediate update event to macos-overlay daemon if running."""
+def notify_overlay_if_active(run: dict[str, Any], *, notify: bool = False) -> None:
+    """Send a quiet refresh or completion update to macos-overlay if running."""
     if not telemetry_writes_enabled():
         return
     import socket
@@ -889,7 +897,7 @@ def notify_overlay_if_active(run: dict[str, Any]) -> None:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(0.5)
         client.connect(sock_path)
-        client.sendall(b"update\n")
+        client.sendall(("update" if notify else "refresh").encode() + b"\n")
         client.close()
     except Exception:
         pass
@@ -941,7 +949,7 @@ def _emit_publication(publication: PublicationResult, *, summary=False) -> None:
     if publication.snapshot is None:
         return
     if publication.last_updated:
-        notify_overlay_if_active(publication.snapshot)
+        notify_overlay_if_active(publication.snapshot, notify=publication.notify)
     if publication.notify:
         send_system_notification(publication.snapshot)
     if summary and publication.published and policy_bool("telemetry", "summary", True):

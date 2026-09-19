@@ -238,11 +238,10 @@ public final class TelemetryWatcher {
         let loader = snapshotLoader
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self,
-                  var run = loader(url),
+                  let run = loader(url),
                   run.publication != nil else {
                 return
             }
-            TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
             DispatchQueue.main.async {
                 self.state.update(run: run)
             }
@@ -259,8 +258,7 @@ public final class TelemetryWatcher {
             self.watcherQueue.async {
                 // Reads triggered during recovery are deferred. Read once after
                 // recovery, then release queued filesystem/manual refreshes.
-                if var run = loader(url), run.publication != nil {
-                    TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
+                if let run = loader(url), run.publication != nil {
                     DispatchQueue.main.async {
                         self.state.update(run: run, notificationTriggered: false, recovery: true)
                     }

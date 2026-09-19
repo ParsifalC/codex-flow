@@ -16,17 +16,23 @@ The **FlowPilot Overlay** is a 100% native macOS desktop companion built with **
 
 ---
 
-## Visual Architecture & 3 View Modes
+## Compact entry and four pages
 
 Turn goals, results, and orchestration are keyed by `session_id + turn_id`, not
 a chat-wide goal. New records require `publication` before appearing in details.
 Legacy completed history remains readable without backfilling missing fields.
-Host receipt delivery remains unverified; see [telemetry compatibility](telemetry.en.md#store-goals-plans-and-results-per-turn).
+Host receipt delivery is verified per installation; see [telemetry compatibility](telemetry.en.md#store-goals-plans-and-results-per-turn).
 
 Task, History, Analytics, and Account tabs retain more, pin, collapse, switch,
 and copy actions. Task, History, and Account hide 300-minute (five-hour) quota
 windows while retaining collection and other periods. Native glass uses
 `NSVisualEffectView`, with an opaque fallback for reduced transparency.
+More → Language offers system, Chinese, and English; the saved setting applies immediately.
+Turn goals display in full without an expand button. Execution details start expanded;
+the full plan JSON remains optional. Plan counts describe staffing by task stage,
+while participation counts describe agents recorded this turn. Reusing a plan does
+not imply rerunning every stage. Statistics aggregate locally recorded completed
+turns in the selected period, not account-wide usage across devices.
 
 This release targets native macOS UI. Windows keeps Python/CLI compatibility;
 its visual specification uses higher-opacity acrylic surfaces, or solid colors
@@ -37,14 +43,11 @@ may still show the previous content model.
 
 ![FlowPilot 3-State Poster](assets/promo/flowpilot_promo_poster.png)
 
-### 1. 🟢 Micro Capsule (Idle & Ambient State)
-- **Ultra-Lightweight Footprint**: 68px frosted glass floating bubble with dynamic macOS `ultraThinMaterial`.
-- **Live Aura & Breathing Ring**: Dynamic rainbow gradient border with real-time status pulses:
-  - 🟢 **Idle / Success**: Green indicator, ready for new tasks.
-  - 🔵 **Running**: Cyan breathing pulse with live elapsed timer.
-  - 🟠 **Alert / Error**: Orange pulse alerting on failed runs or high rate limits.
-- **Token Badge**: Live token counter badge (e.g. `198.2k`) for the latest turn.
-- **Auto Half-Tuck**: Smart screen-edge docking and anti-overflow magnetic snapping.
+### 1. Compact entry
+- **Status**: Shows “New result”, “Completed”, or “Waiting”, plus the latest completed turn’s token usage.
+- **Unread indicator**: Clears when that turn is explicitly opened. Automatic expansion does not acknowledge it.
+- **Docking**: The 148×58pt glass capsule reduces to an icon, unread dot, and arrow at the edge.
+- **Accessibility**: Respects reduced transparency and reduced motion.
 
 ---
 
@@ -58,12 +61,11 @@ may still show the previous content model.
 
 ---
 
-### 3. 📜 History (Multi-Dimensional Chat & Session Timeline)
-- **Dimension 1 (Project Filter & Time Scope)**: Filter by individual project/repository or toggle `All` / `Today`.
-- **Dimension 2 (Chat Accordion)**: Groups multi-turn runs into chronological chat sessions (`#1`, `#2`, `#3`), displaying total tokens, aggregated duration, and max worker concurrency.
-- **Dimension 3 (Session Turns Stream)**: Expandable turn-level timeline with turn numbers (`#1.1`, `#1.2`), precise timestamps, execution durations, worker tags, and per-turn quota deltas (`+1%` / `-1%`).
-- **Instant Keyword Search**: Live filtering across chat titles, branch names, and turn prompts.
-- **One-Click Drilldown**: Clicking any session turn immediately switches to the Inspector view for that turn.
+### 3. History
+- **Projects and chats**: Groups by project path, then expands each chat into turns.
+- **Time filter**: Switch between All and Today, or refresh manually.
+- **Turn rows**: Show the goal, turn identifier, completion time, duration, and token usage.
+- **Search and details**: Search projects, chats, or goals; select a turn to open the shared task details.
 
 ---
 
@@ -134,6 +136,7 @@ codex-flow overlay collapse     # Collapse to micro capsule
 codex-flow overlay tab inspector
 codex-flow overlay tab history
 codex-flow overlay tab analytics
+codex-flow overlay tab account
 
 # Historical view
 codex-flow overlay show 1       # Jump to specific task

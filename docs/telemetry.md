@@ -22,21 +22,21 @@ codex-flow telemetry context write-goal --receipt-file receipt.json --text-file 
 codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file plan.json --origin compiled
 ```
 
-文件使用 UTF-8。目标允许 1–400 个 Unicode 码点；首次成功后只能幂等重写相同
+文件使用 UTF-8。目标允许 1–80 个 Unicode 码点（含标点），优先一句、最多两句；首次成功后只能幂等重写相同
 文本。计划必须是 planner 的完整 schema 11 JSON；沿用同一任务的计划时使用
 `--origin reused`，不重置任务预算。凭证不进入公开的 run 或复制摘要。
 
 父 Stop 才把 `turn_context`、本轮父 Agent 的 `result` 和 `publication` 一起
 发布。`publication.revision` 表示快照修订，`completed_at_ms` 保留首次完成时间。
 重复 Stop 不重复通知；迟到 worker 只补充对应轮次，不把 `last.json` 回滚。
-若写 run 后进程退出，可运行 `codex-flow telemetry recover-last --json` 恢复 last；
+若写 run 后进程退出，可运行 `codex-flow telemetry recover-last --quiet` 恢复 last；
 恢复不发送完成通知。遥测关闭时写入、锁创建和 IPC 均停止，历史仍可读取。
 
-**兼容性状态：宿主凭证传递仍为 unverified。** 临时宿主验证环境缺少认证，
-没有复制用户认证或启用自动传递。桌面 transcript 格式已观察验证，但这不证明
-凭证能传到同一个父 turn。没有可验证凭证或父 final 时显示“未记录”，不能用
-最新轮次、唯一活动轮次、用户原文或最后一条 assistant 消息替代。
-Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证。
+**兼容性按安装环境验证。** 开发机已通过真实 Desktop 的同轮凭证传递、
+目标/完整计划写入和父 Stop 发布验证，并在本机启用自动传递。
+新安装不会因此自动启用；其他宿主仍需各自验证。没有可验证凭证或父 final 时
+显示“未记录”，不能用最新轮次、唯一活动轮次、用户原文或最后一条 assistant
+消息替代。Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证。
 
 仓库提供一次性桌面探针 `tests/turn-context-desktop-probe.py`。显式指定对话 ID
 和工作目录后，`arm --session-id <id> --cwd <绝对路径>` 只允许接下来一个真实
@@ -45,6 +45,17 @@ Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证
 仍只接收指定对话和目录下的一个真实父轮次。
 必须由用户实际发送消息触发；`status` 只有确认同轮目标、完整计划和父 Stop
 发布一致才成功。合成 Hook 和单测不能证明桌面支持，探针也不会打开全局自动写入。
+
+确认 `status` 返回 `supported_probe` 后，运行以下命令为当前安装启用自动传递。
+未验证时返回 `host_transport_unverified`，不会创建传递配置：
+
+```bash
+codex-flow telemetry context enable-desktop-transport
+```
+
+`bash tests/turn-context-host.sh` 读取当前安装的真实探针状态作为验收门；不会启动
+额外模型任务，也不把 CLI marker 当作 Desktop 验证。
+
 浮窗启动恢复使用 `recover-last --quiet`，避免恢复历史记录时发送 IPC 提醒。
 
 ## 保持采集与主任务解耦
@@ -149,7 +160,7 @@ codex-flow usage stats -p my-project -d 7
 ```
 
 ### 5. 历史遥测数据回填与修复
-针对已有的历史运行记录（`~/.codex/codex-flow/telemetry/runs/*.json`），批量补齐可恢复字段（Skills、Tools、执行轨迹、命令日志、任务总结及元数据富化）：
+针对已有的历史运行记录（`~/.codex/codex-flow/telemetry/runs/*.json`），批量补齐可恢复字段（Skills、Tools、执行轨迹、命令日志及元数据富化）：
 
 ```bash
 # 演练预览（仅扫描与统计，不修改任何文件）
@@ -158,6 +169,8 @@ codex-flow telemetry repair --dry-run
 # 执行正式回填修复（幂等执行，仅补缺失字段，原子写入）
 codex-flow telemetry repair
 ```
+
+目标、计划和结果不通过历史修复生成；缺失内容继续显示“未记录”。
 
 **可恢复性判定原则**：
 - **不覆盖**：仅回填缺失字段，绝不覆盖已有有效数据。

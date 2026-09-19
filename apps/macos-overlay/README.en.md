@@ -6,7 +6,7 @@
 
 </div>
 
-`codex-flow-overlay` is a 100% native macOS floating widget built with **SwiftUI + AppKit**, deeply integrating the entire suite of `codex-flow usage` capabilities (live inspection, rate-limit quota monitoring, multi-session history, and aggregate efficiency analytics).
+`codex-flow-overlay` is a 100% native macOS floating widget built with **SwiftUI + AppKit**, deeply integrating the entire suite of `codex-flow usage` capabilities (completed turn details, account information, chat history, and aggregate usage analytics).
 
 ---
 
@@ -16,46 +16,19 @@
 
 ---
 
-## ✨ Core Highlights
+## Interface and data
 
-- 🟢 **Micro Capsule (Idle State)**:
-  - 68px diameter Frosted Glass bubble (macOS `ultraThinMaterial`);
-  - Dynamic rainbow gradient border with real-time breathing status aura;
-  - Status indicator (🟢 Idle/Complete · 🔵 Task Running · 🟠 Alert/Error);
-  - Live token badge displaying latest turn tokens (e.g. `198.2k`);
-  - Automatic half-tuck edge docking and magnetic screen snapping.
+- **Compact entry**: A 148×58pt glass capsule shows unread result status and the latest completed turn’s token usage. Docking reduces it to an icon, unread dot, and arrow.
+- **Task**: Shows the project, chat, turn goal, and result. The parent agent writes a goal of at most 80 Unicode code points and two sentences. Results come from the same turn’s parent final. Details appear after parent Stop; missing fields show “Not recorded”.
+- **Execution details**: A collapsed section exposes the saved complete plan and separates planned worker counts from actual participants.
+- **History**: Project/chat/turn grouping with All/Today filters, search, and turn selection.
+- **Statistics**: Retains 7/30-day usage, cache efficiency, model and project breakdowns.
+- **Account**: Retains identity, other quota windows, reset facts, strategy and login-start settings. Five-hour quota is hidden only in the UI; collection remains intact.
+- **Controls**: Four tabs, pin, collapse, more actions, copy, and turn switching; no repeated brand footer.
 
-- ⚡️ **Glass TabBar Control Center (Expanded State)**:
-  - **⚡️ Inspector**:
-    - **Header**: Project tag, Git branch badge, status pill, Pin lock, and collapse button;
-    - **Objective & Outcome**: Auto-extracted task goal and delivery conclusion;
-    - **3 KPI Rings**: Real-time circular gauges for Duration, Tokens, and Cost;
-    - **Rate Limits & Quota**: 5m / 1h / 1d / 7d quota progression bars and reset countdowns;
-    - **Token Distribution Bar**: Stacked breakdown of Prompt, Cached, Output, and Reasoning tokens;
-    - **Multi-Agent Topology**: Parent model reasoning effort and Worker subagent concurrency;
-    - **Skills & MCP Badges**: Automatic discovery and badge labeling of activated skills and MCP tools;
-    - **Historical Drilldown**: Inspect any past task with one-click `[⚡️ Jump to Live]`;
-    - **Action Bar**: Copy formatted summary, open Terminal console, Pin lock toggle.
-  - **📜 History**:
-    - Project filter, `All` / `Today` scope, and instant keyword search;
-    - **Chat Accordion**: Aggregates multi-turn runs into chronological chat sessions;
-    - **Session Turns**: Turn-level timeline with duration, tokens, worker badges, and quota deltas (`+1%` / `-1%`);
-    - Click any turn to inspect full details in the Inspector.
-  - **📊 Analytics**:
-    - Aggregate efficiency analysis with `7 Days` / `30 Days` toggles;
-    - Total tasks (dispatched vs. direct), active hours, and total attributed tokens;
-    - **Cache Efficiency**: Hit percentage and cached tokens saved;
-    - **Worker Offload**: Percentage of workload delegated to economic models;
-    - **Model Breakdown**: Calls, token proportions, and Parent/Worker roles;
-    - **Projects Distribution**: Multi-repository activity rankings.
+Explicitly viewing a result clears its unread indicator; automatic expansion does not. Privacy mode hides projects, chats, goals, and results, and disables copying. Native glass respects reduced transparency and reduced motion. Windows support currently covers Python/CLI only.
 
----
-
-## 🔒 Privacy & Demo Mode
-
-FlowPilot includes built-in privacy protection (`isPrivacyMode`):
-- All sensitive project names, prompt titles, task goals, and delivery conclusions are automatically frosted with smooth Gaussian blur filters (`blur(radius: 4.5)`).
-- Ideal for public presentations, videos, and documentation screenshots.
+Older promotional images may show the previous interface. See the [overlay guide](../../docs/overlay.en.md) and [turn metadata and host validation](../../docs/telemetry.en.md#store-goals-plans-and-results-per-turn).
 
 ---
 
@@ -90,6 +63,7 @@ codex-flow overlay collapse
 codex-flow overlay tab inspector
 codex-flow overlay tab history
 codex-flow overlay tab analytics
+codex-flow overlay tab account
 
 # Inspect historical task
 codex-flow overlay show 1

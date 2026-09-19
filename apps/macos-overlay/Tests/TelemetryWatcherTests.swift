@@ -29,12 +29,6 @@ public final class OverlayState {
     }
 }
 
-public final class TelemetryQueryEngine {
-    public static let shared = TelemetryQueryEngine()
-
-    public func enrichRunIfNeeded(_ run: inout TaskRun) {}
-}
-
 final class RecoveryCommandCapture {
     private let lock = NSLock()
     private var capturedCommand: TelemetryWatcher.RecoveryCommand?

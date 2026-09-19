@@ -8,10 +8,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from telemetry_core.app_server import extract_transcript_insights
+from telemetry_core import render
 
 
 class TurnResultTests(unittest.TestCase):
@@ -66,6 +68,50 @@ class TurnResultTests(unittest.TestCase):
         final["payload"]["turn_id"] = "turn-other"
         self.assertIsNone(self.extract(records))
 
+    def test_parent_terminal_for_another_turn_clears_stale_implicit_boundary(self):
+        records = [
+            self.records[0],
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn-2"}},
+            {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "turn-3"}},
+            {"type": "response_item", "payload": {
+                "type": "message", "role": "assistant", "phase": "final_answer",
+                "content": [{"type": "output_text", "text": "错误归属"}],
+            }},
+        ]
+        self.assertIsNone(self.extract(records))
+
+    def test_child_turn_boundaries_never_set_or_clear_parent_association(self):
+        child_start = {
+            "type": "event_msg", "agent_id": "worker",
+            "payload": {
+                "type": "task_started", "turn_id": "turn-2", "agent_id": "worker",
+                "thread_source": "subagent", "source": {"subagent": {}},
+            },
+        }
+        child_only = [self.records[0], child_start, {
+            "type": "response_item", "payload": {
+                "type": "message", "role": "assistant", "phase": "final_answer",
+                "content": [{"type": "output_text", "text": "子任务错误归属"}],
+            },
+        }]
+        self.assertIsNone(self.extract(child_only))
+
+        parent_start = {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn-2"}}
+        child_terminal = {
+            "type": "event_msg", "agent_id": "worker",
+            "payload": {
+                "type": "task_complete", "turn_id": "turn-3", "agent_id": "worker",
+                "thread_source": "subagent", "source": {"subagent": {}},
+            },
+        }
+        parent_final = {
+            "type": "response_item", "payload": {
+                "type": "message", "role": "assistant", "phase": "final_answer",
+                "content": [{"type": "output_text", "text": "父任务归属"}],
+            },
+        }
+        self.assertEqual(self.extract([self.records[0], parent_start, child_terminal, parent_final])["text"], "父任务归属")
+
     def test_conflicting_parent_metadata_fails_closed(self):
         records = self.records + [self.worker_metadata]
         self.assertIsNone(self.extract(records))
@@ -86,6 +132,22 @@ class TurnResultTests(unittest.TestCase):
         insights = extract_transcript_insights(str(self.path), "turn-2")
         self.assertFalse((insights.get("summary_info") or {}).get("goal"))
         self.assertFalse((insights.get("summary_info") or {}).get("conclusion"))
+
+    def test_terminal_summary_uses_published_parent_result_not_legacy_conclusion(self):
+        run = {"session_id": "chat-a", "turn_id": "turn-2", "parent": {}, "workers": {},
+               "publication": {"revision": 1, "completed_at_ms": 2},
+               "summary_info": {"conclusion": "旧推断结论"},
+               "result": {"source": "parent_final", "turn_id": "turn-2", "text": "本轮真实结果"}}
+        with patch.object(render, "LANG", "zh"):
+            text = render.render_summary(run)
+            self.assertIn("本轮真实结果", text)
+            self.assertNotIn("旧推断结论", text)
+            self.assertNotIn("交付结论", text)
+            for invalid in ({"source": "worker"}, {"turn_id": "turn-1"}):
+                candidate = {**run, "result": {**run["result"], **invalid}}
+                self.assertNotIn("本轮真实结果", render.render_summary(candidate))
+            del run["publication"]
+            self.assertNotIn("本轮真实结果", render.render_summary(run))
 
 
 if __name__ == "__main__":

@@ -70,7 +70,7 @@ public struct AnalyticsView: View {
                 Text(L("Statistics", "统计"))
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.86))
-                Text(L("Completed turns", "已完成轮次"))
+                Text(L("Locally recorded turns", "本机已记录轮次"))
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.36))
             }

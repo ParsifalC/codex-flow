@@ -26,12 +26,13 @@ def _parent_record(payload: dict[str, Any]) -> bool:
 
 def _scan(path: str | None, turn_id: str | None, session_id: str):
     if not _identifier(path) or not _identifier(turn_id) or not _identifier(session_id):
-        return None, None
+        return None, None, False
     proven = False
     current_turn = None
     fragments: list[str] = []
     truncated = False
     completed = None
+    aborted = False
     try:
         with Path(path).open(encoding="utf-8") as stream:
             for line in stream:
@@ -51,19 +52,25 @@ def _scan(path: str | None, turn_id: str | None, session_id: str):
                         and payload.get("originator") == "Codex Desktop"
                         and payload.get("thread_source") == "user"
                     ):
-                        return None, None
+                        return None, None, False
                     proven = True
                     continue
                 if not proven:
                     continue
                 explicit = _identifier(payload.get("turn_id")) or _identifier(record.get("turn_id"))
                 if kind == "turn_context" or (kind == "event_msg" and payload.get("type") == "task_started"):
-                    current_turn = explicit
+                    if _parent_record(payload) and _parent_record(record):
+                        current_turn = explicit
                     continue
                 if kind == "event_msg" and payload.get("type") in {"task_complete", "turn_aborted"}:
-                    if (explicit or current_turn) == turn_id and payload.get("type") == "task_complete":
-                        completed = completed or _transcript_timestamp_ms(record.get("timestamp"))
-                    current_turn = None
+                    parent_terminal = _parent_record(payload) and _parent_record(record)
+                    if parent_terminal:
+                        if (explicit or current_turn) == turn_id:
+                            if payload.get("type") == "task_complete":
+                                completed = completed or _transcript_timestamp_ms(record.get("timestamp"))
+                            else:
+                                aborted = True
+                        current_turn = None
                     continue
                 if (
                     kind != "response_item" or (explicit or current_turn) != turn_id
@@ -84,16 +91,16 @@ def _scan(path: str | None, turn_id: str | None, session_id: str):
                     fragments.append(text)
                     truncated |= payload.get("truncated") is True or record.get("truncated") is True
     except (OSError, UnicodeError, ValueError, OverflowError):
-        return None, None
+        return None, None, False
     result = None
     if fragments:
         result = {"text": "\n\n".join(fragments), "source": "parent_final", "turn_id": turn_id, "truncated": truncated}
-    return result, completed
+    return result, completed, aborted
 
 
 def extract_parent_final(transcript_path: str | None, turn_id: str | None,
                          *, session_id: str, max_chars: int = 0) -> dict[str, Any] | None:
-    result, _ = _scan(transcript_path, turn_id, session_id)
+    result, _, _ = _scan(transcript_path, turn_id, session_id)
     if result is not None and max_chars > 0 and len(result["text"]) > max_chars:
         result["text"] = result["text"][:max_chars]
         result["truncated"] = True
@@ -104,3 +111,9 @@ def parent_turn_completed_at(transcript_path: str | None, turn_id: str | None,
                              *, session_id: str) -> int | None:
     """Use the same parent proof and boundaries for immutable Stop ordering."""
     return _scan(transcript_path, turn_id, session_id)[1]
+
+
+def parent_turn_aborted(transcript_path: str | None, turn_id: str | None,
+                        *, session_id: str) -> bool:
+    """Return whether one exact Desktop parent turn has an abort event."""
+    return _scan(transcript_path, turn_id, session_id)[2]

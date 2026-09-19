@@ -39,6 +39,12 @@ public struct AccountView: View {
                 emptyState
             }
 
+            Text(L("Preferences", "偏好设置"))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+
             StrategyModeCard()
             AutostartCard()
         }

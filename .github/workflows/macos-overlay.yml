@@ -5,11 +5,15 @@ on:
     paths:
       - 'apps/macos-overlay/**'
       - 'bin/codex-flow'
+      - 'tests/overlay-language.sh'
+      - 'tests/overlay-account.sh'
       - '.github/workflows/macos-overlay.yml'
   pull_request:
     paths:
       - 'apps/macos-overlay/**'
       - 'bin/codex-flow'
+      - 'tests/overlay-language.sh'
+      - 'tests/overlay-account.sh'
       - '.github/workflows/macos-overlay.yml'
 
 jobs:
@@ -65,6 +69,10 @@ jobs:
         run: bash apps/macos-overlay/build.sh
       - name: Verify startup snapshot recovery ordering
         run: bash tests/overlay-startup.sh
+      - name: Verify language settings preserve the policy
+        run: bash tests/overlay-language.sh
+      - name: Verify account tab renders without crashing
+        run: bash tests/overlay-account.sh
       - name: Verify status client is read-only
         run: bash tests/overlay-read-only-status.sh
       - name: Smoke test overlay lifecycle

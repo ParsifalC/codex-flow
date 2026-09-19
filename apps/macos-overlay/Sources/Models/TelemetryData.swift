@@ -34,6 +34,7 @@ public enum OverlayTab: String, CaseIterable, Identifiable {
     case inspector = "Inspector"
     case history = "History"
     case analytics = "Analytics"
+    case account = "Account"
     
     public var id: String { rawValue }
     
@@ -42,6 +43,7 @@ public enum OverlayTab: String, CaseIterable, Identifiable {
         case .inspector: return "bolt.fill"
         case .history: return "clock.arrow.circlepath"
         case .analytics: return "chart.bar.xaxis"
+        case .account: return "person.crop.circle"
         }
     }
 }

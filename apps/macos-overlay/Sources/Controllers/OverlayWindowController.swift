@@ -18,7 +18,6 @@ public class OverlayState: ObservableObject {
             }
         }
     }
-    @Published public var isTaskRunning: Bool = false
     @Published public var isDocked: Bool = false
     @Published public var dockEdge: DockEdge = .right
     @Published public var latestRun: TaskRun? = nil
@@ -26,7 +25,6 @@ public class OverlayState: ObservableObject {
 
     @Published public var activeTab: OverlayTab = .inspector
     @Published public var inspectedRun: TaskRun? = nil
-    @Published public var historyRuns: [TaskRun] = []
     @Published public var historyChats: [ChatSession] = []
     @Published public var expandedChatIds: Set<String> = []
     @Published public var statsData: TelemetryStats? = nil
@@ -35,7 +33,6 @@ public class OverlayState: ObservableObject {
     @Published public var isTodayOnly: Bool = false
     @Published public var searchQuery: String = ""
     @Published public var recentChats: [ChatSession] = []
-    @Published public var allProjectsList: [String] = []
 
     public weak var windowController: OverlayWindowController?
 
@@ -43,7 +40,23 @@ public class OverlayState: ObservableObject {
     private var statsLoadGeneration = 0
     private var publicationGate = PublishedTurnGate()
 
-    public init() {
+    private let readDefaults: UserDefaults
+    @Published private var viewedTurnIds: [String]
+    public var hasUnreadResult: Bool {
+        guard let run = latestRun, run.publication != nil else { return false }
+        return !viewedTurnIds.contains(run.id)
+    }
+
+    public func markResultViewed(_ run: TaskRun?) {
+        guard let run, run.publication != nil, !viewedTurnIds.contains(run.id) else { return }
+        viewedTurnIds.append(run.id)
+        viewedTurnIds = Array(viewedTurnIds.suffix(200))
+        readDefaults.set(viewedTurnIds, forKey: "viewedCompletedTurns")
+    }
+
+    public init(readDefaults: UserDefaults = .standard) {
+        self.readDefaults = readDefaults
+        self.viewedTurnIds = readDefaults.stringArray(forKey: "viewedCompletedTurns") ?? []
         // TelemetryWatcher owns the initial snapshot after recover-last.
         // Reading last.json here would expose a stale snapshot before recovery.
         loadMenuData()
@@ -52,10 +65,8 @@ public class OverlayState: ObservableObject {
     public func loadMenuData() {
         DispatchQueue.global(qos: .userInitiated).async {
             let chats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 15)
-            let projects = TelemetryQueryEngine.shared.allProjects()
             DispatchQueue.main.async {
                 self.recentChats = chats
-                self.allProjectsList = projects
             }
         }
     }
@@ -89,20 +100,26 @@ public class OverlayState: ObservableObject {
             self.isPinned = false
             self.isDocked = false
             // Reliability first: AppKit frame interpolation while SwiftUI swaps
-            // a 384x490 panel for a 76x76 bubble has been the source of several
+            // a 384x590 panel for a 166x76 capsule has been the source of several
             // display/tracking races. Collapse now commits one stable frame;
-            // the compact circle/pill still animates entirely inside that host.
+            // the compact capsule still animates entirely inside that host.
             self.windowController?.updateWindowFrame(animated: false)
         }
     }
 
     public func toggle() {
-        isExpanded ? collapse() : expand()
+        isExpanded ? collapse() : openLatest()
+    }
+
+    public func openLatest() {
+        jumpToLive()
+        expand()
     }
 
     public func selectTab(_ tab: OverlayTab) {
         DispatchQueue.main.async {
             self.activeTab = tab
+            if tab == .inspector { self.markResultViewed(self.inspectedRun ?? self.latestRun) }
             if tab == .history {
                 self.loadHistory()
             } else if tab == .analytics {
@@ -113,27 +130,18 @@ public class OverlayState: ObservableObject {
     }
 
     public func inspect(run: TaskRun) {
-        var enrichedRun = run
         DispatchQueue.main.async {
-            self.inspectedRun = enrichedRun
+            self.inspectedRun = run
+            self.markResultViewed(run)
             self.activeTab = .inspector
             self.windowController?.updateWindowFrame(animated: true)
-        }
-        if enrichedRun.trajectory == nil || enrichedRun.skillsUsed == nil || enrichedRun.toolsUsed == nil || enrichedRun.logs == nil {
-            DispatchQueue.global(qos: .userInitiated).async {
-                TelemetryQueryEngine.shared.enrichRunIfNeeded(&enrichedRun)
-                DispatchQueue.main.async {
-                    if self.inspectedRun?.id == enrichedRun.id {
-                        self.inspectedRun = enrichedRun
-                    }
-                }
-            }
         }
     }
 
     public func jumpToLive() {
         DispatchQueue.main.async {
             self.inspectedRun = nil
+            self.markResultViewed(self.latestRun)
             self.activeTab = .inspector
             self.windowController?.updateWindowFrame(animated: true)
         }
@@ -150,16 +158,6 @@ public class OverlayState: ObservableObject {
 
     public func isChatExpanded(_ id: String) -> Bool {
         expandedChatIds.contains(id)
-    }
-
-    public func expandAllChats() {
-        expandedChatIds = Set(historyChats.map { $0.sessionId })
-        windowController?.updateWindowFrame(animated: true)
-    }
-
-    public func collapseAllChats() {
-        expandedChatIds.removeAll()
-        windowController?.updateWindowFrame(animated: true)
     }
 
     public func loadHistory() {
@@ -181,16 +179,9 @@ public class OverlayState: ObservableObject {
                 todayOnly: todayOnly,
                 search: search
             )
-            let runs = TelemetryQueryEngine.shared.fetchHistory(
-                limit: 60,
-                project: project,
-                todayOnly: todayOnly,
-                search: search
-            )
             DispatchQueue.main.async {
                 guard generation == self.historyLoadGeneration else { return }
                 self.historyChats = chats
-                self.historyRuns = runs
                 if self.expandedChatIds.isEmpty, let first = chats.first {
                     self.expandedChatIds.insert(first.sessionId)
                 }
@@ -234,7 +225,6 @@ public class OverlayState: ObservableObject {
             if decision.notify { self.expand(notificationTriggered: true) }
             guard decision.refresh else { return }
             self.latestRun = run
-            self.isTaskRunning = run.isRunning
             if self.activeTab == .history {
                 self.loadHistory()
             } else if self.activeTab == .analytics {
@@ -269,7 +259,7 @@ public struct OverlayRootView: View {
                     )
             } else {
                 BubbleView(state: state)
-                    .frame(width: 76, height: 76)
+                    .frame(width: 166, height: 76)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing)),
@@ -445,7 +435,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         } else if let windowController {
             windowController.endPointerInteraction(drainPendingPresentation: true)
             if !windowController.state.isExpanded {
-                windowController.state.expand()
+                windowController.state.openLatest()
             }
         }
         super.mouseUp(with: event)
@@ -519,7 +509,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
     }
 
     @objc private func expandSummary() {
-        windowController?.state.expand()
+        windowController?.state.openLatest()
     }
 
     @objc private func collapseBubble() {
@@ -569,7 +559,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var pendingPresentationAnimated = true
     private var needsPointerReconciliationAfterGeometry = false
 
-    private let bubbleSize = NSSize(width: 76, height: 76)
+    private let bubbleSize = NSSize(width: 166, height: 76)
     private let summarySize = NSSize(width: 384, height: 590)
     private let snapMargin: CGFloat = 8.0
     private let snapThreshold: CGFloat = 36.0
@@ -810,8 +800,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         hoverGate.allowsHover(at: NSEvent.mouseLocation)
     }
 
-    /// Compact docking is visual-only. Circle and pill share the same stationary
-    /// 76x76 host; no NSWindow frame is changed here.
+    /// Compact docking is visual-only. Capsule and docked tile share the same stationary
+    /// 166x76 host; no NSWindow frame is changed here.
     public func tuckBubble(animated: Bool = true) {
         guard !state.isExpanded,
               !state.isPinned,
@@ -895,7 +885,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
                   !self.state.isExpanded,
                   !self.isInteractingOrDragging,
                   !self.isGeometryTransitioning else { return }
-            self.state.expand()
+            self.state.openLatest()
         }
     }
 
@@ -1115,7 +1105,6 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
                     self.state.update(run: run)
                 } else {
                     self.state.latestRun = nil
-                    self.state.isTaskRunning = false
                     self.state.loadHistory()
                     self.state.loadStats()
                 }

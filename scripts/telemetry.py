@@ -17,23 +17,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from telemetry_core import *  # noqa: F401,F403
 from telemetry_core import (
     AppServer,
-    LAST_FILE,
     aggregate_usage_value,
-    atomic_json,
     collect_hook,
-    enrich_run_metadata,
-    extract_transcript_insights,
     fmt_duration_ms,
     fmt_tokens,
     format_latency_report,
-    format_repair_summary,
-    iter_run_files,
     latency_report,
     numeric_ms,
-    read_json_object,
     record_latency_event,
     repair_history,
-    repair_run,
     run_context,
     show_last,
     show_list,
@@ -80,8 +72,8 @@ def _localized_notification_body(run: dict) -> str:
     return " · ".join(parts)
 
 
-def _notify_overlay_safely() -> None:
-    """Push an update and wait for the daemon response before closing the socket."""
+def _notify_overlay_safely(*, notify: bool = False) -> None:
+    """Ask the overlay to refresh, or present a newly completed publication."""
     if not telemetry_writes_enabled():
         return
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
@@ -92,7 +84,7 @@ def _notify_overlay_safely() -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(0.75)
             client.connect(sock_path)
-            client.sendall(b"update\n")
+            client.sendall(("update" if notify else "refresh").encode() + b"\n")
             try:
                 client.recv(4096)
             except socket.timeout:
@@ -162,7 +154,7 @@ _collector.AppServer.rate_limits = _rate_limits_with_retry
 # collect_hook resolves these names from telemetry_core.collector at runtime.
 _collector.notification_body = _localized_notification_body
 _collector.send_system_notification = _localized_send_system_notification
-_collector.notify_overlay_if_active = lambda _run: _notify_overlay_safely()
+_collector.notify_overlay_if_active = lambda _run, *, notify=False: _notify_overlay_safely(notify=notify)
 
 
 def _context_cli(args: list[str]) -> int:
@@ -171,13 +163,18 @@ def _context_cli(args: list[str]) -> int:
         print("Usage: codex-flow telemetry context <command>\n\n"
               "  write-goal --receipt-file PATH --text-file PATH\n"
               "  write-plan --receipt-file PATH --plan-file PATH "
-              "--origin compiled|reused|replanned\n\n"
+              "--origin compiled|reused|replanned\n"
+              "  enable-desktop-transport (requires a completed local Desktop probe)\n\n"
               "Use an explicit host receipt and UTF-8 input files.")
         return 0
     if not telemetry_writes_enabled():
         print(json.dumps({"ok": False, "status": "disabled", "reason": "telemetry_disabled"}))
         return 0
     try:
+        if args[1:] == ["enable-desktop-transport"]:
+            from telemetry_core.host_transport import enable_desktop_transport
+            print(json.dumps(enable_desktop_transport(), sort_keys=True))
+            return 0
         if len(args) < 2 or args[1] not in {"write-goal", "write-plan"}:
             raise ReceiptError("invalid_arguments")
         action = args[1]
@@ -331,7 +328,7 @@ def main() -> int:
     if args and args[0] == "recover-last":
         publication = recover_last()
         if publication.last_updated and "--quiet" not in args[1:]:
-            _notify_overlay_safely()
+            _notify_overlay_safely(notify=False)
         print(json.dumps(asdict(publication), ensure_ascii=False, sort_keys=True))
         return 0
     if args:

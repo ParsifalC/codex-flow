@@ -1,61 +1,32 @@
 # 轮次上下文与新版浮窗验收记录
 
-本记录对应 `plans/2026-09-18-turn-context-overlay.md`，不替代原计划的验收门。
-状态截至 2026-09-18；整体尚未完成。
+更新至 2026-09-19。对应原实现计划 `plans/2026-09-18-turn-context-overlay.md`。
+功能已在开发机运行；跨平台与完整原生交互验收仍未完成。
 
-| 计划范围 | 当前证据 | 判定 |
+| 范围 | 证据 | 状态 |
 | --- | --- | --- |
-| Task 1：真实宿主同轮凭证 | `host-validation.json` 为 unverified；一次性 Desktop 探针仍为 armed，没有收到真实 Hook | 未通过，需真实用户消息触发 |
-| Task 1：凭证、隔离、锁与关闭守卫 | `test_turn_context.py`、`test_lock_recovery.py`、`test_publication.py`；此前遥测聚合 78 项 Python 测试通过 | 本机数据层验证通过；Windows 锁未实机验证 |
-| Task 2：目标、完整计划及 CLI | `test_turn_context_cli.py` 的 13 项测试通过；`turn-context-install.sh` 安装副本同样通过；已补齐帮助、错误与 disabled 响应字段 | CLI 通过，真实宿主自动写入未通过 |
-| Task 3：精确父 final | `turn_result.py` 与指定轮次提取测试；提交 `872d84d` | 已实现并通过本机测试 |
-| Task 4：Stop 发布、revision、排序与恢复 | publication/并发/崩溃测试；原生 reducer 与 watcher 集成可执行测试通过 | 本机数据链路通过；真实宿主链路仍缺证据 |
-| Task 5：四 tab 仿真与确认 | `flowpilot-overlay-navigation.html`、三个 fixture；用户确认“布局确认，按这版实现” | 用户确认已满足；自动浏览器交互验证受阻，未宣称通过 |
-| Task 6：原生 UI | `676e7c4`；四 tab、更多、毛玻璃、目标/结果优先、完整计划默认折叠、五小时展示过滤 | 已实现；原生修复独立复审通过 |
-| Task 6：模型和刷新 | model/query 与 watcher 可执行测试通过；历史排除未发布和旧 running；原样保留结果空白 | 本机验证通过 |
-| Task 6：真机交互与无障碍 | 已有任务/历史/统计截图；当前安装版历史截图及 IPC 收起/展开通过；账户、更多、键盘、VoiceOver、多屏和系统减少透明度尚无完整操作证据 | 未完成 |
-| Task 7：安装、打包与平台 | POSIX 隔离安装通过；目录递归打包保留；Windows 脚本与 CI 已接入 | Windows 执行未完成，本机无 PowerShell/Windows |
-| Task 8：场景回归 | 两 chat 四 turn fixture、遥测聚合、hook trust、instructions、隔离 smoke 的已有记录 | 不能替代宿主、Windows、真机及独立审查门 |
-| 用户追加：源码编译到本机 | 构建成功，安装和源码 binary SHA-256 一致；进程 98966 的 IPC status 返回 running | 已完成 |
+| Desktop 同轮凭证、目标、完整计划与 Stop | 开发机真实用户消息触发探针；本次自审重新读取 `turn-context-desktop-probe.py status`，返回 `supported_probe`，两个链路验证字段均为 true | 本机已验证；不能代表所有宿主 |
+| 自动传递 | `49a4e1f` 增加按本地探针结果启用的传递；本机 status 的 `automatic_writes_enabled` 为 true | 本机已启用；新安装默认不启用 |
+| 目标及计划 | 首次目标不可变、最长 80 个 Unicode 码点、最多两句；完整 schema 11 计划按 compiled/reused/replanned 保存 | Python 回归测试覆盖 |
+| 精确父 final 与发布 | `872d84d`；指定轮次与父角色提取，Stop 发布、revision、排序和恢复 | Python 与 Swift 数据层回归覆盖 |
+| 导航仿真 | 四 tab、更多菜单和轮次布局；用户确认“布局确认，按这版实现” | 已确认；仿真不等于原生验收 |
+| 原生界面 | 毛玻璃、目标/结果优先、编排折叠；移除五小时额度显示及底部品牌行；会话上下文与未读胶囊 | 已实现；本次自审继续修复导航与删除旧组件 |
+| 启动恢复 | `3e00488`、`fa1631c`；等待恢复后读取首份快照，启动不重复通知，只读 status 不创建目录 | 既有集成测试覆盖；本次状态回归通过 |
+| 源码本机安装 | 用户多次授权源码编译安装与重启；最近安装产物与对应构建文件一致 | 已执行；后续自审源码改动尚未替换本机运行版本 |
+| Windows | 已接入 Windows CI 的安装/UTF-8 CLI 测试 | 本机无 Windows/PowerShell，不能宣称通过 |
+| 真机交互与无障碍 | 用户已确认新版视觉；任务/历史截图及基础 IPC 操作已有记录 | 账户/更多/复制/多屏/VoiceOver/系统材质降级尚缺完整验证 |
 
-## 本机版本
+## 本次自审验证
 
-源码与安装产物 SHA-256：
-`03df78eedf35d9670e0b9877897919d110002efa0882d5cca46df4a71ad2bb2e`。
-安装位置：`~/.codex/codex-flow/bin/FlowPilot`。
-后续若再次编译，以新校验值为准。
+- 89 项核心 Python 测试通过，覆盖 turn context、CLI、final、publication、锁恢复、关闭守卫和 host transport。
+- 实际 OverlayState 的启动、未读、账户导航及胶囊命中区域测试通过。账户缺失和打开历史误清未读的测试均先失败、修复后通过。
+- 最新编译与其余自审证据记录在 `2026-09-19-pr-self-review.md`。
 
-用户后续明确授权本机源码安装，覆盖原计划“仅临时安装”的限制。
-没有恢复登录自启动，没有新增备份。测试中的安装仍使用临时 home。
-此前 smoke 隔离缺陷曾影响登录启动项，已告知用户并修复测试，不能声称此前从未影响真实设置。
+## 保留的限制与历史说明
 
-## 不可省略的后续验收
-
-1. 用真实 Desktop 用户消息触发已安装探针，同轮写入目标和完整实际计划，父 Stop 后验证相同 session/turn 的发布快照；当前自动写入保持关闭。
-2. 在 Windows runner/设备执行安装、UTF-8 CLI 与锁恢复测试。
-3. 完成账户、更多、复制、置顶/收起、切换、长文本、键盘/VoiceOver及系统材质降级检查。
-4. 收敛独立复审发现并重新编译安装受影响版本。原 ledger 和历史审查结果保留，不把过期窗口或缺失审查当作通过。
-
-## 当前安装版补充检查
-
-CGWindowList 确认 PID 61152 的窗口为 384×590。第一次捕获是裁切画面，切换历史并收起/展开后未复现；完整截图为 `/tmp/flowpilot-history-installed.png` 与 `/tmp/flowpilot-reexpand.png`。这证明新布局已在本机运行，但不替代账户、更多或无障碍交互验收。
-
-本轮修复后的 13 项 CLI 测试与 13 项安装副本测试通过。新增运行时代码通过 Python 3.8 语法解析，这不等于实际 Python 3.8/Windows 运行通过。
-
-当前真实 Desktop Stop 的结果已追加核验：已发布快照 result 与使用快照内明确 session/turn/transcript 路径提取的父 final 完全一致（221 字符）。历史行的“未记录”来自 publishedGoal，不能据此推断 result 缺失。该证据只证明结果归属与发布，不证明 receipt 传递或 goal/plan 写入。
-
-## 原生复审修复
-
-首次复审指出恢复读取竞态、子进程环境不一致、小圆窗减少动态效果缺口，以及只读状态查询创建目录。前三项已修复；IPC 路径计算改为纯读取，目录仅由显式启动的控制服务创建。控制服务供查看历史及启动/停止使用，不等同于遥测发布通知。
-
-新增阻塞恢复期间的文件/手动刷新测试和真实子进程环境断言通过；完整 watcher 可执行测试通过。`tests/overlay-read-only-status.sh` 在旧 binary 失败、修复后通过。全量 Swift 编译通过并安装，PID 87153 正常运行。减少动态效果的代码缺口已修复，系统设置/VoiceOver 操作仍未实测。修复独立复审进行中。
-
-原生交互环境检查：`AXIsProcessTrusted()` 返回 false；当前界面工具也未枚举未打包 FlowPilot。因此自动原生点击/VoiceOver 验收缺少访问条件，未请求改变系统设置，也未把无效点击算作通过。
-
-修复复审确认 3e00488 的四项 delta 为 Spec Accepted / Quality Approved。父级随后发现并移除 OverlayState 构造时绕过恢复的旧快照读取；新的实际 OverlayState 启动测试先失败后通过，完整源码重新构建并安装（PID 98966，哈希见上）。此最后增量独立复审为 Spec Accepted / Quality Approved。
-
-## 当前交接状态：受阻，非完成
-
-源码实现修复已保存于 1d744d8、3e00488、fa1631c，本机 binary 与最新源码构建一致。独立复审已结束并接受最终增量。此前连续多轮相同的外部验收条件仍缺失：实际用户消息触发的 Desktop receipt 写入链路、可操作的原生辅助功能/人工验收、Windows runner。当前无运行中的实现或审查工作可继续等待；不启用未验证宿主的自动写入，不将这些条件改写为已通过。
-
-最小解阻动作：在当前对话实际发送“验证本轮目标写入”，触发已准备的单轮探针（30 分钟有效）；随后核对同轮 goal/plan/Stop。另外提供 Windows 执行环境及原生交互验收条件。
+- 原执行计划和 ledger 保留，不用新的测试结果改写过期预算或原独立审查是否完成。此次 PR 自审单独记录。
+- 早期临时宿主验证缺少认证，之后已通过真实 Desktop 单轮探针；早期 unverified 结论不再代表本机状态。
+- 自动传递的本地验证不证明其他 Desktop 版本或其他宿主支持同一协议。合成 fixture 和单测也不能替代真实宿主验证。
+- 原生自动操作曾受 `AXIsProcessTrusted() == false` 及未打包应用无法枚举限制；没有将无效点击或截图尝试计为通过。
+- 早期 smoke 测试误影响真实登录启动项，已告知用户并修复测试隔离。用户要求先不恢复；后续没有恢复登录自启动，也没有新增备份。
+- 仍需 Windows runner 结果和完整原生交互验收，才能宣称全部验收完成。

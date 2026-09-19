@@ -84,6 +84,55 @@ Path(sys.argv[2]).write_text(json.dumps(compile_plan(TaskProfile(),routing_mode=
         self.assertIn("write-goal", proc.stdout)
         self.assertIn("write-plan", proc.stdout)
 
+    def test_enable_desktop_transport_requires_completed_probe(self):
+        self.assert_error(self.cli("enable-desktop-transport"), "host_transport_unverified")
+        self.assertFalse((self.home / "codex-flow").exists())
+        self.seed()
+        # Synthetic transport fixture verifies CLI behavior, not real host support.
+        code = """
+import json, sys
+from pathlib import Path
+from telemetry_core.host_transport import arm_probe, probe_hook_context
+from telemetry_core.turn_context import write_goal, write_plan
+from telemetry_core.publication import publish_parent_stop
+from telemetry_core.common import run_key
+home=Path(sys.argv[1])
+transcript=home/'desktop.jsonl'
+transcript.write_text(json.dumps({'type':'session_meta','payload':{
+    'id':'chat-a','source':'vscode','originator':'Codex Desktop','thread_source':'user'}}), encoding='utf-8')
+event={'hook_event_name':'UserPromptSubmit','session_id':'chat-a','turn_id':'turn-2',
+       'cwd':str(home),'transcript_path':str(transcript)}
+arm_probe(session_id='chat-a',cwd=str(home))
+assert probe_hook_context(event) is not None
+write_goal(receipt_file=home/'receipt.json',text_file=home/'goal.txt')
+write_plan(receipt_file=home/'receipt.json',plan_file=home/'plan.json',origin='compiled')
+publish_parent_stop(run_key=run_key(event),observed=event,completed_at_ms=123,
+    result={'source':'parent_final','turn_id':'turn-2','text':'fixture result'})
+"""
+        seeded = subprocess.run([sys.executable, "-c", code, str(self.home)], env=self.env,
+                                text=True, capture_output=True)
+        self.assertEqual(seeded.returncode, 0, seeded.stderr)
+        enabled = self.cli("enable-desktop-transport")
+        self.assertEqual(enabled.returncode, 0, enabled.stderr)
+        self.assertTrue(json.loads(enabled.stdout)["automatic_writes_enabled"])
+        config = self.home / "codex-flow/telemetry/desktop-context-transport.json"
+        self.assertTrue(json.loads(config.read_text())["enabled"])
+        self.disable_telemetry()
+        before = self.state_snapshot(self.home / "codex-flow")
+        self.assertEqual(json.loads(self.cli("enable-desktop-transport").stdout)["status"], "disabled")
+        self.assertEqual(before, self.state_snapshot(self.home / "codex-flow"))
+
+    def test_enable_rejects_damaged_probe_without_writing_transport(self):
+        root = self.home / "codex-flow/telemetry"
+        root.mkdir(parents=True)
+        probe = root / "desktop-context-probe.json"
+        for text in ("{broken", "[]", '{"status":"delivered"}'):
+            with self.subTest(text=text):
+                probe.write_text(text)
+                before = self.state_snapshot(root)
+                self.assert_error(self.cli("enable-desktop-transport"), "host_transport_unverified")
+                self.assertEqual(before, self.state_snapshot(root))
+
     def test_quiet_recovery_does_not_notify_overlay(self):
         code = """
 import sys
@@ -140,7 +189,7 @@ with patch.object(telemetry, 'recover_last', return_value=result), patch.object(
 
     def test_empty_overlong_and_invalid_utf8_files(self):
         self.seed()
-        for text, code in (("", "goal_empty"), ("字" * 401, "goal_too_long")):
+        for text, code in (("", "goal_empty"), ("字" * 81, "goal_too_long")):
             self.text.write_text(text, encoding="utf-8")
             self.assert_error(self.cli(*self.goal_args()), code)
         self.text.write_bytes(b"\xff")

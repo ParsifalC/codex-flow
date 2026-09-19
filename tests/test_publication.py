@@ -5,12 +5,14 @@ import copy
 import importlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -241,6 +243,7 @@ class HookPublicationTests(unittest.TestCase):
         patch.object(self.collector, "find_session_transcript", return_value=None).start()
         patch.object(self.collector, "now_ms", return_value=1789718403000).start()
         patch.object(common, "LOCK_TIMEOUT", 0.06).start()
+        self.real_notify = self.collector.notify_overlay_if_active
         self.ipc = patch.object(self.collector, "notify_overlay_if_active").start()
         self.notify = patch.object(self.collector, "send_system_notification").start()
         patch.object(self.collector, "write_stop_output").start()
@@ -249,6 +252,69 @@ class HookPublicationTests(unittest.TestCase):
         transcript = self.home / "parent.jsonl"
         transcript.write_text("\n".join(json.dumps(r) for r in [fixture["parent_metadata"], *fixture["records"]]))
         self.event["transcript_path"] = str(transcript)
+
+    def _overlay_socket(self, expected):
+        path = self.home / "codex-flow/overlay.sock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        patch.dict(os.environ, {"CODEX_HOME": str(self.home)}).start()
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(path))
+        server.listen()
+        server.settimeout(0.1)
+        commands = []
+
+        def serve():
+            deadline = time.monotonic() + 5
+            while len(commands) < expected and time.monotonic() < deadline:
+                try:
+                    connection, _ = server.accept()
+                except socket.timeout:
+                    continue
+                with connection:
+                    commands.append(connection.recv(4096).decode().strip())
+                    connection.sendall(b'{"ok": true}\n')
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+
+        def wait_for_commands():
+            thread.join(5)
+            server.close()
+            self.assertEqual(len(commands), expected)
+            return commands
+
+        return wait_for_commands
+
+    def test_real_socket_first_stop_update_and_late_worker_refresh(self):
+        self.collector.collect_hook(self.event)
+        worker = {**self.event, "hook_event_name": "SubagentStart", "turn_id": "child", "agent_id": "worker", "agent_type": "worker"}
+        self.collector.collect_hook(worker)
+        self.ipc.side_effect = self.real_notify
+        wait_for_commands = self._overlay_socket(expected=2)
+        self.collector.collect_hook({**self.event, "hook_event_name": "Stop"})
+        self.collector.collect_hook({**worker, "hook_event_name": "SubagentStop"})
+        self.assertEqual(wait_for_commands(), ["update", "refresh"])
+
+    def test_real_socket_repair_recovery_is_quiet(self):
+        self.collector.collect_hook(self.event)
+        self.collector.collect_hook({**self.event, "hook_event_name": "Stop"})
+        (self.state / "last.json").unlink()
+        self.ipc.side_effect = self.real_notify
+        wait_for_commands = self._overlay_socket(expected=1)
+        self.repair.repair_history(verbose=False)
+        self.assertEqual(wait_for_commands(), ["refresh"])
+
+    def test_real_socket_cli_recovery_is_quiet(self):
+        self.collector.collect_hook(self.event)
+        self.collector.collect_hook({**self.event, "hook_event_name": "Stop"})
+        (self.state / "last.json").unlink()
+        self.ipc.side_effect = self.real_notify
+        wait_for_commands = self._overlay_socket(expected=1)
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/telemetry.py"), "recover-last"],
+            env={**os.environ, "CODEX_HOME": str(self.home), "PYTHONPATH": str(ROOT / "scripts")},
+            text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(wait_for_commands(), ["refresh"])
 
     def test_hooks_publish_once_without_render_or_notification_persistence(self):
         self.collector.collect_hook(self.event)
