@@ -46,6 +46,8 @@ CI or device validation.
 
 The repository includes a one-turn Desktop probe in `tests/turn-context-desktop-probe.py`.
 Explicitly select a chat and working directory with `arm --session-id <id> --cwd <absolute-path>`.
+The default wait expires after 30 minutes. Add `--wait-for-next-turn` for manual
+validation across sessions; it still accepts only one parent turn in the selected chat and directory.
 The next real parent turn can receive its receipt path through
 `UserPromptSubmit.hookSpecificOutput.additionalContext`. A real user message must
 trigger the hook. `status` succeeds only after same-turn goal, full plan, and

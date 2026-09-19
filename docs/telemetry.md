@@ -41,6 +41,8 @@ Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证
 仓库提供一次性桌面探针 `tests/turn-context-desktop-probe.py`。显式指定对话 ID
 和工作目录后，`arm --session-id <id> --cwd <绝对路径>` 只允许接下来一个真实
 父轮次通过 `UserPromptSubmit.hookSpecificOutput.additionalContext` 接收凭证路径。
+默认等待 30 分钟；人工联调可加 `--wait-for-next-turn`，等待下一条发言而不按时间过期，
+仍只接收指定对话和目录下的一个真实父轮次。
 必须由用户实际发送消息触发；`status` 只有确认同轮目标、完整计划和父 Stop
 发布一致才成功。合成 Hook 和单测不能证明桌面支持，探针也不会打开全局自动写入。
 浮窗启动恢复使用 `recover-last --quiet`，避免恢复历史记录时发送 IPC 提醒。

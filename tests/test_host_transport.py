@@ -73,6 +73,16 @@ class DesktopProbeTests(unittest.TestCase):
         self.assertFalse(status["goal_plan_stop_chain_verified"])
         self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
 
+    def test_explicit_wait_survives_delay_but_still_accepts_only_one_turn(self):
+        host_transport.arm_probe(session_id="chat", cwd=str(self.root), state_root=self.root,
+                                 clock=lambda: 100, wait_for_next_turn=True)
+        tomorrow = 86400100
+        self.assertEqual(host_transport.probe_status(state_root=self.root, clock=lambda: tomorrow)["status"], "armed")
+        self.assertIsNotNone(host_transport.probe_hook_context(self.event, state_root=self.root, clock=lambda: tomorrow))
+        self.assertIsNone(host_transport.probe_hook_context({**self.event, "turn_id": "two"},
+                                                          state_root=self.root, clock=lambda: tomorrow + 1))
+        self.assertFalse(host_transport.probe_status(state_root=self.root)["automatic_writes_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

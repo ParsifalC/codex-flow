@@ -17,7 +17,8 @@ PROBE_FILE = "desktop-context-probe.json"
 
 
 def arm_probe(*, session_id: str, cwd: str, state_root: Path = STATE_ROOT,
-              clock: Callable[[], int] = now_ms) -> dict[str, Any]:
+              clock: Callable[[], int] = now_ms,
+              wait_for_next_turn: bool = False) -> dict[str, Any]:
     """Arm only an explicitly selected chat; IDs for writes still come from hooks."""
     if not telemetry_writes_enabled():
         return {"status": "disabled"}
@@ -28,6 +29,7 @@ def arm_probe(*, session_id: str, cwd: str, state_root: Path = STATE_ROOT,
             raise ReceiptError("locked")
         config = {"schema_version": 1, "status": "armed", "session_id": session_id,
                   "cwd": str(Path(cwd).resolve()), "expires_at_ms": clock() + 1800000,
+                  "wait_for_next_turn": wait_for_next_turn,
                   "transport": "codex-additional-context-v1"}
         atomic_json(Path(state_root) / PROBE_FILE, config)
     return {"status": "armed", "automatic_writes_enabled": False}
@@ -60,7 +62,8 @@ def probe_hook_context(event: dict[str, Any], *, state_root: Path = STATE_ROOT,
         if (config.get("status") not in {"armed", "delivered"}
                 or config.get("session_id") != event.get("session_id")
                 or config.get("cwd") != str(Path(event.get("cwd", "")).resolve())
-                or config.get("expires_at_ms", 0) < clock() or not _desktop_parent(event)):
+                or (config.get("wait_for_next_turn") is not True and config.get("expires_at_ms", 0) < clock())
+                or not _desktop_parent(event)):
             return None
         # The probe lock is never acquired by publication/turn writers.
         with state_lock("desktop-context-probe", state_root=state_root) as acquired:
@@ -104,7 +107,8 @@ def probe_status(*, state_root: Path = STATE_ROOT,
     config = json.loads(path.read_text(encoding="utf-8"))
     status = {"status": config.get("status"), "automatic_writes_enabled": False,
               "same_turn_receipt_delivery_verified": False, "goal_plan_stop_chain_verified": False}
-    if config.get("status") == "armed" and config.get("expires_at_ms", 0) < clock():
+    if (config.get("status") == "armed" and config.get("wait_for_next_turn") is not True
+            and config.get("expires_at_ms", 0) < clock()):
         status["status"] = "expired"
         return status
     if config.get("status") != "delivered":
