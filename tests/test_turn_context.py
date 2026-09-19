@@ -277,6 +277,18 @@ class TurnContextTests(unittest.TestCase):
         direct["implementation_stage"] = self.plan()["implementation_stage"]
         self.assert_code("invalid_execution_plan", context.validate_execution_plan, direct)
 
+    def test_execution_plan_accepts_inherited_parent_model(self):
+        plan = compile_plan(TaskProfile(quality_intent="strong"), strategy="quality", routing_mode="delegate").to_dict()
+        self.assertIsNone(plan["implementer_model"])
+        self.assertIsNone(plan["reviewer_model"])
+        self.assertEqual(context.validate_execution_plan(plan), plan)
+        for field, value in (("parent_model_floor", "explicit-model"),
+                             ("implementer_capability_policy", "other-capability")):
+            invalid = deepcopy(plan)
+            invalid[field] = value
+            with self.subTest(field=field):
+                self.assert_code("invalid_execution_plan", context.validate_execution_plan, invalid)
+
     def test_concurrent_goal_and_plan_merge_without_lost_updates(self):
         receipt = self.receipt_file()
         goal, plan = self.text_file("并发目标"), self.plan_file()

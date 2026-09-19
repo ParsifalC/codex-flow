@@ -267,7 +267,12 @@ def validate_execution_plan(value: Any) -> dict[str, Any]:
             require(stage.idle_timeout_seconds <= RUNTIME_MAX_WORKER_IDLE_SECONDS)
             require(stage.hard_timeout_seconds <= RUNTIME_MAX_WORKER_WALL_SECONDS)
             string(value[role + "_capability_policy"])
-            string(value[role + "_model"])
+            if value[role + "_model"] is None:
+                # The compiler leaves the model unset when inheriting the parent.
+                require(value["parent_model_floor"] == "auto")
+                require(value[role + "_capability_policy"] == value["parent_capability_policy"])
+            else:
+                string(value[role + "_model"])
             require(value[role + "_reasoning"] in EFFORTS)
         require(sum(counts) == value["planned_worker_count"] <= budget.max_total_workers)
         require(value["max_concurrent_threads"] <= max(1, *counts))
