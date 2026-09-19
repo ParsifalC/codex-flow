@@ -29,9 +29,8 @@ public struct BubbleView: View {
 
     private var tile: some View {
         HStack(spacing: state.isDocked ? 3 : 10) {
-            Image(systemName: "square.stack.3d.up.fill")
-                .font(.system(size: state.isDocked ? 17 : 23, weight: .medium))
-                .foregroundStyle(.cyan.opacity(0.95))
+            ResultBeacon(hasResult: state.latestRun != nil, isUnread: state.hasUnreadResult)
+                .frame(width: state.isDocked ? 19 : 26, height: state.isDocked ? 19 : 26)
             if !state.isDocked {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting", "等待结果") : L("Completed", "最近完成")))
@@ -62,12 +61,6 @@ public struct BubbleView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(.white.opacity(isHovered ? 0.32 : 0.17), lineWidth: 1)
         }
-        .overlay(alignment: .topTrailing) {
-            Circle().fill(state.hasUnreadResult ? Color.cyan : Color.clear)
-                .frame(width: 7, height: 7)
-                .overlay(Circle().stroke(state.hasUnreadResult ? Color(red: 0.10, green: 0.15, blue: 0.19) : .clear, lineWidth: 2))
-                .padding(7)
-        }
         .overlay(alignment: .bottomTrailing) {
             if updateService.hasUpdateBadge {
                 Image(systemName: updateService.isRestartRequired ? "arrow.clockwise" : "arrow.down")
@@ -89,4 +82,39 @@ public struct BubbleView: View {
         return task
     }
 
+}
+
+private struct ResultBeacon: View {
+    let hasResult: Bool
+    let isUnread: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Group {
+            if isUnread && !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                    let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
+                    let breath = (1 - cos(phase * 2 * .pi)) / 2
+                    beacon(breath: breath)
+                }
+            } else {
+                beacon(breath: 0)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func beacon(breath: Double) -> some View {
+        ZStack {
+            Circle()
+                .strokeBorder(Color.cyan.opacity(isUnread ? 0.45 + breath * 0.35 : 0.3), lineWidth: 1.5)
+                .scaleEffect(isUnread ? 0.88 + breath * 0.12 : 0.88)
+            if hasResult {
+                Circle()
+                    .fill(Color.cyan.opacity(isUnread ? 1 : 0.55))
+                    .padding(7)
+                    .shadow(color: .cyan.opacity(isUnread ? 0.3 + breath * 0.3 : 0), radius: 3)
+            }
+        }
+    }
 }

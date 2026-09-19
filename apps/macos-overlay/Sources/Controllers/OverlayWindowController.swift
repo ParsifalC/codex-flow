@@ -550,7 +550,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var hoverDwellTimer: Timer?
     private var collapseTimer: Timer?
     private var notificationCollapseTimer: Timer?
-    private let notificationAutoCollapseDuration: TimeInterval = 5.0
+    private let notificationAutoCollapseDuration: TimeInterval = 10.0
     private var tuckTimer: Timer?
     private let edgeTuckIdleInterval: TimeInterval = 30.0
 
