@@ -35,18 +35,18 @@ public struct BubbleView: View {
             if !state.isDocked {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting", "等待结果") : L("Completed", "最近完成")))
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.94))
                     if let run = state.latestRun {
                         Text(run.totalTokens > 0 ? run.formattedTotalTokens + " tokens" : L("Tokens unavailable", "消耗未记录"))
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.7))
                     }
                 }.lineLimit(1)
             } else {
                 Image(systemName: state.dockEdge == .right ? "chevron.left" : "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(.white.opacity(0.7))
             }
         }
         .frame(width: state.isDocked ? 40 : 148, height: 58)

@@ -16,7 +16,7 @@ public struct HistoryView: View {
     public var body: some View {
         VStack(spacing: 13) {
             HStack {
-                Text(L("Turn history", "历史轮次")).font(.system(size: 14, weight: .semibold))
+                Text(L("Turn history", "历史轮次")).font(.system(size: 16, weight: .semibold))
                 Spacer()
                 filter(L("All", "全部"), today: false)
                 filter(L("Today", "今天"), today: true)
@@ -24,7 +24,7 @@ public struct HistoryView: View {
                     .buttonStyle(.plain).help(L("Refresh history", "刷新历史"))
             }
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.72))
                 TextField(L("Search project, chat or goal", "搜索项目、对话或目标"), text: $state.searchQuery).textFieldStyle(.plain)
                     .onChange(of: state.searchQuery) { _, _ in
                         searchGeneration += 1; let generation = searchGeneration
@@ -33,18 +33,18 @@ public struct HistoryView: View {
                 if !state.searchQuery.isEmpty {
                     Button { state.searchQuery = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain)
                 }
-            }.font(.system(size: 12)).padding(10).background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(0.055)))
+            }.font(.system(size: 14)).padding(10).background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(0.055)))
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if state.historyChats.isEmpty {
                         Text(L("No completed turns found", "暂无符合条件的已完成轮次"))
-                            .font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 45)
+                            .font(.system(size: 14)).foregroundStyle(.white.opacity(0.72)).frame(maxWidth: .infinity).padding(.vertical, 45)
                     }
                     ForEach(projects, id: \.self) { project in
                         let chats = state.historyChats.filter { ($0.cwd ?? $0.projectName) == project }
                         VStack(alignment: .leading, spacing: 9) {
                             Label(state.isPrivacyMode ? L("Project hidden", "项目已隐藏") : chats.first?.projectName ?? project, systemImage: "folder")
-                                .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                                .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.72))
                             ForEach(chats) { chat in
                                 VStack(alignment: .leading, spacing: 0) {
                                     Button { state.toggleChatExpansion(chat.id) } label: {
@@ -52,8 +52,8 @@ public struct HistoryView: View {
                                             Image(systemName: state.isChatExpanded(chat.id) ? "chevron.down" : "chevron.right").font(.system(size: 9))
                                             Text(state.isPrivacyMode ? L("Chat hidden", "对话已隐藏") : chat.title).lineLimit(1)
                                             Spacer()
-                                            Text("\(chat.runs.count)").foregroundStyle(.secondary)
-                                        }.font(.system(size: 12, weight: .medium)).padding(12).contentShape(Rectangle())
+                                            Text("\(chat.runs.count)").foregroundStyle(.white.opacity(0.72))
+                                        }.font(.system(size: 14, weight: .medium)).padding(14).contentShape(Rectangle())
                                     }.buttonStyle(.plain)
                                     if state.isChatExpanded(chat.id) {
                                         ForEach(chat.runs) { run in
@@ -62,14 +62,14 @@ public struct HistoryView: View {
                                                     HStack {
                                                         Text(L("Turn", "轮次") + " · " + String((run.turnId ?? "—").prefix(8)))
                                                         Spacer(); Text(run.localizedFormattedDate)
-                                                    }.font(.system(size: 10)).foregroundStyle(.secondary)
+                                                    }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                                                     Text(state.isPrivacyMode ? L("Goal hidden", "目标已隐藏") : localizedResultText(run.publishedGoal))
-                                                        .font(.system(size: 12)).lineLimit(2).lineSpacing(3).frame(maxWidth: .infinity, alignment: .leading)
+                                                        .font(.system(size: 14)).lineLimit(2).lineSpacing(5).frame(maxWidth: .infinity, alignment: .leading)
                                                     HStack {
                                                         Text(run.formattedDuration + " · " + run.formattedTotalTokens + " tokens")
                                                         Spacer(); Image(systemName: "arrow.up.right")
-                                                    }.font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
-                                                }.padding(12).contentShape(Rectangle())
+                                                    }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                                                }.padding(14).contentShape(Rectangle())
                                             }.buttonStyle(.plain)
                                             if run.id != chat.runs.last?.id { Divider().padding(.horizontal, 12) }
                                         }
@@ -80,12 +80,12 @@ public struct HistoryView: View {
                         }
                     }
                 }.padding(.bottom, 10)
-            }.frame(maxHeight: isFullHeight ? .infinity : 275)
+            }.frame(maxHeight: isFullHeight ? .infinity : 305)
         }.padding(.top, 15).onAppear { state.loadHistory() }
     }
     private func filter(_ title: String, today: Bool) -> some View {
         Button { state.isTodayOnly = today; state.loadHistory() } label: {
-            Text(title).font(.system(size: 11)).padding(.horizontal, 9).padding(.vertical, 5)
+            Text(title).font(.system(size: 12)).padding(.horizontal, 9).padding(.vertical, 5)
                 .background(Capsule().fill(.white.opacity(state.isTodayOnly == today ? 0.12 : 0)))
         }.buttonStyle(.plain)
     }

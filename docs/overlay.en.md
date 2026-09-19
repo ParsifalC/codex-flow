@@ -33,6 +33,9 @@ the full plan JSON remains optional. Plan counts describe staffing by task stage
 while participation counts describe agents recorded this turn. Reusing a plan does
 not imply rerunning every stage. Statistics aggregate locally recorded completed
 turns in the selected period, not account-wide usage across devices.
+The panel is 420 pt wide, with 13–14 pt body/settings text, 16 pt goals, and
+secondary text of at least 12 pt. Long content wraps or scrolls; account reset
+times do not shrink to fit.
 
 This release targets native macOS UI. Windows keeps Python/CLI compatibility;
 its visual specification uses higher-opacity acrylic surfaces, or solid colors

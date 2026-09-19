@@ -156,17 +156,17 @@ public struct StrategyModeCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 5) {
                 Label(L("Global strategy mode", "全局策略模式"), systemImage: "slider.horizontal.3")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.82))
                 Spacer()
                 if let snapshot {
                     if let routing = snapshot.routing, !routing.isEmpty {
                         Text(localizedRoutingName(routing))
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundColor(.white.opacity(0.6))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     Text(localizedConfiguredName(snapshot))
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundColor(statusColor(snapshot))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -174,8 +174,8 @@ public struct StrategyModeCard: View {
                 }
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.48))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 .buttonStyle(.plain)
                 .disabled(isLoading || applyingProfile != nil || applyingEnabled)
@@ -185,22 +185,22 @@ public struct StrategyModeCard: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text(L("Reading strategy…", "正在读取策略…"))
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.45))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 .frame(maxWidth: .infinity, minHeight: 48)
             } else if let snapshot {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L("Enable strategy dispatch", "启用策略分发"))
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundColor(.white.opacity(0.84))
                         Text(L(
                             "Plan tasks and coordinate agents using your selected mode.",
                             "按所选模式规划任务并协调 Agent 执行。"
                         ))
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.55))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.7))
                     }
                     Spacer()
                     if applyingEnabled {
@@ -216,7 +216,7 @@ public struct StrategyModeCard: View {
 
                 if !snapshot.valid {
                     Text(L("The stored strategy is invalid. Choose a supported mode below to repair it.", "当前保存的策略无效，请在下方选择一个受支持模式进行修复。"))
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.orange.opacity(0.88))
                 }
 
@@ -229,22 +229,22 @@ public struct StrategyModeCard: View {
 
                 HStack(alignment: .top, spacing: 4) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                         .padding(.top, 1)
                     Text(L("Applies to all projects. Project settings can override the mode, but cannot turn on a disabled strategy.", "适用于所有项目。项目可使用自己的模式，但不能覆盖关闭状态。"))
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                 }
-                .foregroundColor(.white.opacity(0.55))
+                .foregroundColor(.white.opacity(0.7))
 
                 if let message {
                     Text(message)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundColor(isError ? .orange : .green)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
                 Text(message ?? L("Strategy data unavailable", "策略数据暂不可用"))
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.orange.opacity(0.85))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -318,24 +318,24 @@ public struct StrategyModeCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     Image(systemName: profile.iconName)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(profile.accent)
                     Text(profile.localizedName)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(selected ? 0.95 : 0.72))
                     Spacer()
                     if pending {
                         ProgressView().controlSize(.mini)
                     } else if selected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 11))
+                            .font(.system(size: 13))
                             .foregroundColor(profile.accent)
                     }
                 }
                 HoverRevealText(
                     profile.localizedDescription,
-                    font: .system(size: 11),
-                    foregroundColor: .white.opacity(0.6),
+                    font: .system(size: 13),
+                    foregroundColor: .white.opacity(0.7),
                     lineLimit: 2,
                     popoverWidth: 320
                 )

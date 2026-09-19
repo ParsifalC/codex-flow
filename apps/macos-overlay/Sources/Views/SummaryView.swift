@@ -59,13 +59,13 @@ public struct SummaryView: View {
     private var chrome: some View {
         HStack(spacing: 10) {
             Image(systemName: "square.stack.3d.up.fill")
-                .font(.system(size: 15)).foregroundStyle(.cyan.opacity(0.9))
+                .font(.system(size: 17)).foregroundStyle(.cyan.opacity(0.9))
                 .frame(width: 30, height: 30)
                 .background(RoundedRectangle(cornerRadius: 9).fill(.cyan.opacity(0.12)))
-            Text("FlowPilot").font(.system(size: 15, weight: .semibold, design: .rounded))
+            Text("FlowPilot").font(.system(size: 17, weight: .semibold, design: .rounded))
             Spacer()
             if state.isPrivacyMode {
-                Image(systemName: "eye.slash.fill").font(.system(size: 11)).foregroundStyle(.cyan)
+                Image(systemName: "eye.slash.fill").font(.system(size: 12)).foregroundStyle(.cyan)
                     .help(L("Privacy mode is on", "隐私模式已开启"))
                     .accessibilityLabel(L("Privacy mode is on", "隐私模式已开启"))
             }
@@ -90,7 +90,7 @@ public struct SummaryView: View {
                     .disabled(currentRun == nil || state.isPrivacyMode)
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 14, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 32, height: 32)
                     .overlay(alignment: .topTrailing) { if updateService.hasUpdateBadge { Circle().fill(.cyan).frame(width: 5, height: 5) } }
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -98,7 +98,7 @@ public struct SummaryView: View {
         }.padding(.horizontal, 17).padding(.vertical, 13)
     }
     private func chromeButton(_ icon: String, _ label: String, tint: Color = .white.opacity(0.6), action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: icon).font(.system(size: 12)).foregroundStyle(tint).frame(width: 28, height: 28) }
+        Button(action: action) { Image(systemName: icon).font(.system(size: 14)).foregroundStyle(tint).frame(width: 32, height: 32) }
             .buttonStyle(.plain).help(label).accessibilityLabel(label)
     }
     private func languageOption(_ value: String, _ title: String) -> some View {
@@ -135,8 +135,8 @@ public struct SummaryView: View {
     }
     private func tab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.system(size: 12, weight: selected ? .semibold : .regular))
-                .foregroundStyle(.white.opacity(selected ? 0.95 : 0.5)).frame(maxWidth: .infinity).padding(.vertical, 8)
+            Text(title).font(.system(size: 14, weight: selected ? .semibold : .regular))
+                .foregroundStyle(.white.opacity(selected ? 0.95 : 0.72)).frame(maxWidth: .infinity).padding(.vertical, 10)
                 .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(selected ? 0.10 : 0)))
         }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -147,12 +147,12 @@ public struct SummaryView: View {
                     .frame(width: 32, height: 32).background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(0.04)))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(state.isPrivacyMode ? L("Hidden project", "项目已隐藏") : currentRun?.projectName ?? L("No completed turns", "尚无已完成轮次"))
-                        .font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        .font(.system(size: 15, weight: .semibold)).lineLimit(1)
                     Text(conversationTitle).help(conversationTitle)
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72)).lineLimit(1)
                 }
                 Spacer()
-                Label(L("Switch", "切换"), systemImage: "chevron.down").font(.system(size: 11)).foregroundStyle(.secondary)
+                Label(L("Switch", "切换"), systemImage: "chevron.down").font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
             }.frame(maxWidth: .infinity).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -176,8 +176,8 @@ public struct SummaryView: View {
             Divider()
             Button(L("Browse all history", "浏览全部历史")) { state.selectTab(.history); showPicker = false }
 
-                }.buttonStyle(.plain).font(.system(size: 12)).padding(18)
-            }.frame(width: 345, height: 360)
+                }.buttonStyle(.plain).font(.system(size: 14)).padding(18)
+            }.frame(width: 380, height: 400)
         }
     }
     private var inspector: some View {
@@ -188,24 +188,24 @@ public struct SummaryView: View {
                         Text(state.isPrivacyMode ? L("Completed turn", "已完成轮次") : L("Turn", "轮次") + " · " + String((run.turnId ?? "—").prefix(8)))
                         Spacer()
                         Text(run.localizedFormattedDate)
-                    }.font(.system(size: 10)).foregroundStyle(.secondary)
+                    }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                     TurnDetailView(run: run, isPrivacyMode: state.isPrivacyMode)
                         .simultaneousGesture(TapGesture().onEnded { state.markResultViewed(run) })
                     HStack {
                         Button { state.selectTab(.history) } label: { Label(L("History", "查看历史"), systemImage: "clock.arrow.circlepath") }
                         Spacer()
                         Button { copySummary() } label: { Label(copied ? L("Copied", "已复制") : L("Copy", "复制摘要"), systemImage: copied ? "checkmark" : "doc.on.doc") }.disabled(state.isPrivacyMode)
-                    }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                    }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
                 }.padding(16)
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "tray").font(.system(size: 27)).foregroundStyle(.cyan.opacity(0.6))
-                    Text(L("No completed turns yet", "尚无已完成轮次")).font(.system(size: 15, weight: .medium))
+                    Text(L("No completed turns yet", "尚无已完成轮次")).font(.system(size: 17, weight: .medium))
                     Text(L("The goal and result appear here when a turn finishes.", "完成一轮后，目标与结果将在这里呈现。"))
-                        .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .font(.system(size: 14)).foregroundStyle(.white.opacity(0.72)).multilineTextAlignment(.center)
                 }.frame(maxWidth: .infinity).padding(.vertical, 55).padding(.horizontal, 20)
             }
-        }.frame(maxHeight: isFullHeight ? .infinity : 370)
+        }.frame(maxHeight: isFullHeight ? .infinity : 400)
     }
     private func copySummary() {
         guard let run = currentRun, !state.isPrivacyMode else { return }

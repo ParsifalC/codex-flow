@@ -201,16 +201,16 @@ public struct AutostartCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 Image(systemName: "power.circle.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(status?.enabled == true ? .green : .orange.opacity(0.72))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L("Launch at Login", "登录时启动"))
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.84))
                     Text(statusText)
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.7))
                 }
 
                 Spacer()
@@ -230,21 +230,21 @@ public struct AutostartCard: View {
 
             if let message {
                 Text(message)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(isError ? .orange : .green)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack(spacing: 4) {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 11))
+                    .font(.system(size: 13))
                 Text(L(
                     "Starts FlowPilot at your next login. The current window stays open.",
                     "下次登录时自动打开 FlowPilot，不影响当前窗口。"
                 ))
-                    .font(.system(size: 11))
+                    .font(.system(size: 13))
             }
-            .foregroundColor(.white.opacity(0.55))
+            .foregroundColor(.white.opacity(0.7))
         }
         .padding(14)
         .background(

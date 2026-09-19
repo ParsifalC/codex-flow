@@ -100,7 +100,7 @@ public class OverlayState: ObservableObject {
             self.isPinned = false
             self.isDocked = false
             // Reliability first: AppKit frame interpolation while SwiftUI swaps
-            // a 384x590 panel for a 166x76 capsule has been the source of several
+            // a full panel for a compact capsule has been the source of several
             // display/tracking races. Collapse now commits one stable frame;
             // the compact capsule still animates entirely inside that host.
             self.windowController?.updateWindowFrame(animated: false)
@@ -250,7 +250,7 @@ public struct OverlayRootView: View {
         ZStack(alignment: .topTrailing) {
             if state.isExpanded {
                 SummaryView(state: state)
-                    .frame(width: 384)
+                    .frame(width: OverlayWindowController.summarySize.width)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing)),
@@ -560,7 +560,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var needsPointerReconciliationAfterGeometry = false
 
     private let bubbleSize = NSSize(width: 166, height: 76)
-    private let summarySize = NSSize(width: 384, height: 590)
+    static let summarySize = NSSize(width: 420, height: 650)
     private let snapMargin: CGFloat = 8.0
     private let snapThreshold: CGFloat = 36.0
 
@@ -675,7 +675,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let targetSize = state.isExpanded ? summarySize : bubbleSize
+        let targetSize = state.isExpanded ? Self.summarySize : bubbleSize
         let currentFrame = window.frame
         guard let visible = presentationVisibleFrame(for: currentFrame) else {
             finishGeometryActivity()

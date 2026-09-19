@@ -18,7 +18,7 @@ public struct TurnDetailView: View {
                 Divider().overlay(Color.white.opacity(0.08))
                 narrative(L("Result", "结果"), hint: nil, text: run.publishedConclusion, expanded: $resultExpanded, accent: false)
                 if run.result?.truncated == true {
-                    Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                 }
             }
             .padding(16)
@@ -42,24 +42,24 @@ public struct TurnDetailView: View {
                         planRow(L("Plan origin", "计划来源"), origin(orchestration.origin))
                         planRow(L("Revision", "计划修订"), orchestration.revision.map(String.init) ?? L("Not recorded", "未记录"))
                         Text(L("The plan describes staffing by task stage; participation counts reflect agents recorded this turn. Reusing a plan does not mean running every stage again.", "计划列出任务各阶段的人员配置；参与人数统计本轮已记录的 Agent。沿用计划不代表每轮重跑所有阶段。"))
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                         DisclosureGroup(L("Full plan JSON", "查看完整计划 JSON"), isExpanded: $jsonExpanded) {
                             ScrollView([.horizontal, .vertical]) {
                                 Text(isPrivacyMode ? L("Hidden", "已隐藏") : prettyJSON(plan))
-                                    .font(.system(size: 10, design: .monospaced)).textSelection(.enabled).padding(.vertical, 8)
+                                    .font(.system(size: 12, design: .monospaced)).textSelection(.enabled).padding(.vertical, 8)
                             }.frame(maxHeight: 220)
                         }
-                    } else { Text(L("Not recorded", "未记录")).foregroundStyle(.secondary) }
+                    } else { Text(L("Not recorded", "未记录")).foregroundStyle(.white.opacity(0.72)) }
                 }.padding(.top, 14)
             } label: {
                 HStack {
                     Text(L("Execution details", "执行详情")).fontWeight(.semibold)
                     Spacer()
                     Text(run.turnContext?.orchestration == nil ? L("Not recorded", "未记录") : L("Orchestration", "编排计划"))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                 }
             }
-            .font(.system(size: 12)).tint(.white.opacity(0.7)).padding(13)
+            .font(.system(size: 14)).tint(.white.opacity(0.7)).padding(13)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.035)))
         }
         .onChange(of: run.id) { _, _ in
@@ -70,31 +70,31 @@ public struct TurnDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(title).fontWeight(.semibold); Spacer()
-                if let hint { Text(hint).foregroundStyle(.secondary) }
-            }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
+                if let hint { Text(hint).foregroundStyle(.white.opacity(0.72)) }
+            }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
             Text(isPrivacyMode ? L("Hidden in privacy mode", "隐私模式已隐藏") : localizedResultText(text))
-                .font(.system(size: accent ? 15 : 13, weight: accent ? .medium : .regular))
-                .foregroundStyle(text == nil ? .white.opacity(0.4) : .white.opacity(0.94))
-                .lineSpacing(5).lineLimit(expanded?.wrappedValue == false ? 5 : nil)
+                .font(.system(size: accent ? 16 : 14, weight: accent ? .semibold : .regular))
+                .foregroundStyle(text == nil ? .white.opacity(0.7) : .white.opacity(0.94))
+                .lineSpacing(6).lineLimit(expanded?.wrappedValue == false ? 5 : nil)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let expanded, text != nil && !isPrivacyMode {
                 Button(expanded.wrappedValue ? L("Show less", "收起全文") : L("Read full text", "展开全文")) { expanded.wrappedValue.toggle() }
-                    .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.cyan.opacity(0.9))
+                    .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.cyan.opacity(0.9))
             }
         }
     }
     private func fact(_ value: String, _ title: String) -> some View {
         VStack(spacing: 6) {
             Text(value).font(.system(size: 17, weight: .semibold, design: .rounded)).foregroundStyle(.white)
-            Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
         }.frame(maxWidth: .infinity)
     }
     private func planRow(_ title: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Text(title).foregroundStyle(.secondary).frame(width: 78, alignment: .leading)
+            Text(title).foregroundStyle(.white.opacity(0.72)).frame(width: 90, alignment: .leading)
             Text(isPrivacyMode ? "•••" : text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-        }.font(.system(size: 11))
+        }.font(.system(size: 13))
     }
     private func value(_ plan: JSONValue, _ key: String) -> String {
         guard case let .object(fields) = plan, let field = fields[key] else { return L("Not recorded", "未记录") }
