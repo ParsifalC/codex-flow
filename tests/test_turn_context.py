@@ -46,7 +46,9 @@ class TurnContextTests(unittest.TestCase):
 
     def text_file(self, text, name="text.txt"):
         path = self.home / name
-        path.write_text(text, encoding="utf-8")
+        # Keep the fixture's code points and newline bytes unchanged on
+        # Windows; text-mode writes would silently translate LF to CRLF.
+        path.write_bytes(text.encode("utf-8"))
         return path
 
     def plan_file(self, plan=None, name="plan.json"):
