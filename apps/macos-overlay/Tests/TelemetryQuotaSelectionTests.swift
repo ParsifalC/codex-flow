@@ -34,18 +34,7 @@ struct TelemetryQuotaSelectionTests {
 
         precondition(estimated.isQuotaEstimated)
         precondition(estimated.observedAccountDelta == 18.0)
-        // Transcript watermarks are evidence for this run, never canonical
-        // attribution that could be double-counted in aggregate statistics.
         precondition(estimated.canonicalQuotaDelta == nil)
-
-        let live = TaskRun(
-            sessionId: "quota-test-live",
-            turnId: UUID().uuidString,
-            status: "completed",
-            quotaBefore: before,
-            quotaAfter: after
-        )
-        precondition(!live.isQuotaEstimated)
     }
 
     private static func testFallbackDeltaComputedFromBeforeAndAfter() {

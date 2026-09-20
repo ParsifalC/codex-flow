@@ -6,7 +6,7 @@
 
 </div>
 
-`codex-flow-overlay` 是专为 macOS 设计的 100% 纯原生（基于 **SwiftUI + AppKit** 构建）桌面悬浮窗组件，深度集成了 `codex-flow usage` 的全部核心能力（实时巡检、配额监控、历史回溯、聚合效能分析）。
+`codex-flow-overlay` 是专为 macOS 设计的 100% 纯原生（基于 **SwiftUI + AppKit** 构建）桌面悬浮窗组件，深度集成了 `codex-flow usage` 的全部核心能力（已完成轮次详情、账户信息、历史回溯、聚合统计）。
 
 ---
 
@@ -16,46 +16,19 @@
 
 ---
 
-## ✨ 核心特性
+## 界面与数据
 
-- 🟢 **默认形态（灵动微胶囊 Micro Capsule）**：
-  - 直径 68px 的 Frosted Glass 毛玻璃拟物圆环（macOS `ultraThinMaterial`）；
-  - 外圈动态彩虹渐变边框与实时呼吸灯；
-  - 实时状态角标（🟢 空闲/完成 · 🔵 任务运行中 · 🟠 异常/告警）；
-  - 底部微缩显示最近任务的 Token 消耗徽章（如 `198.2k`）；
-  - 边缘自动半收起（Half-Tuck）与屏幕防溢出磁吸贴靠。
+- **悬浮入口**：148×58pt 毛玻璃胶囊，显示新结果状态和最近已完成轮次的 Token 消耗；靠边后缩成图标、未读点与箭头。
+- **任务**：显示项目、会话、本轮目标与结果。目标由父 Agent 提炼写入，最多 80 个 Unicode 码点、两句话；结果来自同轮父 Agent 的最终输出。父 Stop 发布后才展示，缺失内容显示“未记录”。
+- **执行详情**：默认折叠，显示实际保存的完整编排计划，区分计划人数与实际参与人数。
+- **历史**：按项目、会话、轮次分组，支持全部/今天、搜索和切换轮次。
+- **统计**：保留 7/30 天用量、缓存效率、模型和项目分布。
+- **账户**：保留账户信息、其他周期额度、重置事实、全局策略与自启动设置；五小时额度仅从 UI 隐藏，底层采集保留。
+- **操作**：四个 tab，置顶、收起、更多菜单、复制摘要及切换入口；底部不再重复品牌名。
 
-- ⚡️ **展开态（全功能 Glass TabBar 监控台）**：
-  - **⚡️ Inspector（任务巡检）**：
-    - **Header**：项目名标签、Git 分支胶囊、任务状态徽章、Pin 锁定按钮与折叠按钮；
-    - **任务目标与交付结论卡**：智能提炼展示会话目标与交付成果；
-    - **KPI Rings**：3 组高精环形仪表盘（Time 耗时、Tokens 消耗、Cost 费用估算）；
-    - **Rate Limits & Quota**：5m / 1h / 1d / 7d 账户配额消耗百分比进度与重置倒计时；
-    - **Token 细分条**：多色堆叠胶囊条，直观呈现 Prompt、Output、Cached 与 Reasoning 思考 Token 分布；
-    - **多 Agent 路由拓扑**：展示 Parent Agent（模型与 Reasoning 强度）及各个 Worker Subagents 的独立用量与状态；
-    - **技能与 MCP 标签**：自动标注调用的 Skills 与 MCP Server 工具；
-    - **历史查看态导航**：支持回溯任意历史任务，提供一键 `[⚡️ 查看最新]` 返回实时任务；
-    - **操作底栏**：一键复制 Summary 剪贴板（带 Copied 动画反馈）、唤起终端控制台、Pin 锁定常驻。
-  - **📜 History（历史回溯）**：
-    - 多维历史会话：支持按工程过滤、`All` / `Today` 切换与实时关键词检索；
-    - **会话手风琴 (Chat Accordion)**：按会话聚合多轮任务，展示会话总 Token 与最大并发；
-    - **轮次流水线 (Session Turns)**：精确展开每一轮次的时间、耗时、Worker 标签与配额消耗差值（`+1%` / `-1%`）；
-    - 点击任意历史任务条目即刻在 Inspector 中展开深度详情。
-  - **📊 Analytics（效能看板）**：
-    - 集成聚合效能分析，支持 `7 Days` / `30 Days` 周期切换；
-    - 汇总总任务数（委派 vs 直接）、总活跃时长、总 Token 消耗与费用预估；
-    - **Cache Efficiency**：缓存命中率与节省 Token 统计；
-    - **Worker Offload**：Worker 算力委派比例仪表；
-    - **Model Breakdown**：各模型调用次数、Token 占比与角色标签（Parent/Worker）；
-    - **Projects Distribution**：多仓库/多项目活跃度排行。
+新结果在明确查看后标记已读，自动弹窗不清除未读。隐私模式隐藏项目、会话、目标与结果，并禁用摘要复制。原生材质支持系统减少透明度和减少动态效果；Windows 目前只覆盖 Python/CLI，不提供原生浮窗。
 
----
-
-## 🔒 隐私脱敏与演示模式
-
-内置 `isPrivacyMode` 隐私保护：
-- 所有敏感项目名、对话指令、任务目标与交付结论均自动采用平滑的高斯模糊滤镜（`blur(radius: 4.5)`）打码；
-- 非常适合录屏演示、公开分享与制作文档插图。
+旧宣传图可能与当前界面不同。详见[浮窗说明](../../docs/overlay.md)及[按轮次记录与宿主验证](../../docs/telemetry.md#按轮次保存目标计划和结果)。
 
 ---
 
@@ -89,6 +62,7 @@ codex-flow overlay collapse
 codex-flow overlay tab inspector
 codex-flow overlay tab history
 codex-flow overlay tab analytics
+codex-flow overlay tab account
 
 # 查看指定历史任务（支持 #1、#2 或 session_id）
 codex-flow overlay show 1
@@ -113,10 +87,10 @@ codex-flow overlay stop
 | 动作 | 效果 |
 |---|---|
 | **光标移入气泡停留 0.4 秒** | 触发 Spring 弹性展开为 Telemetry 卡片 |
-| **光标移出卡片区域** | 延迟 0.8 秒自动收起为圆形气泡（未 Pin 时） |
+| **光标移出卡片区域** | 延迟 0.8 秒自动收起为胶囊（未 Pin 时） |
 | **单击气泡 / 顶部折叠按钮** | 立即切换展开 / 收起状态 |
-| **切换 Tab 选项卡** | 平滑切换 Inspector（任务详情）、History（任务列表）、Analytics（效能统计） |
-| **点击 History 任务条目** | 立即在 Inspector 中回溯该任务的完整 Token、费用与配额明细 |
+| **切换 Tab 选项卡** | 平滑切换 任务、历史、统计、账户 |
+| **点击 History 任务条目** | 立即在 Inspector 中回溯该轮次的目标、结果与编排详情 |
 | **按住气泡拖拽** | 自由拖拽到屏幕任意角落（带边界贴靠保护） |
 | **右键点击** | 弹出上下文菜单（Pin 锁定、折叠/展开、打开控制台、刷新、退出） |
 | **点击「Copy Summary」** | 格式化复制任务摘要至系统剪贴板 |

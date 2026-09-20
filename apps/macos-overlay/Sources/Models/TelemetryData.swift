@@ -1,9 +1,73 @@
 import Foundation
 
+/// Main-thread publication reducer. Data refresh and user notification have
+/// separate identities so a directory event cannot consume an IPC notification.
+struct PublishedTurnGate {
+    private var revisions: [String: Int] = [:]
+    private var notified: Set<String> = []
+    private var latestOrder: (Double, String, String)?
+
+    mutating func seed(_ run: TaskRun) {
+        // Startup and filesystem recovery are quiet reads. Register the
+        // snapshot for ordering/revision purposes, but leave its completion
+        // identity eligible for a later explicit completion IPC event.
+        _ = accept(run, notify: false)
+    }
+
+    mutating func accept(_ run: TaskRun, notify: Bool) -> (refresh: Bool, notify: Bool) {
+        guard let session = run.sessionId, !session.isEmpty,
+              let turn = run.turnId, !turn.isEmpty else { return (false, false) }
+        let identity = "\(session.utf8.count):\(session)\(turn)"
+
+        // Legacy records predate ordered publication. They may still be
+        // displayed as quiet history facts, but they never infer a result or
+        // consume a completion notification identity.
+        guard let publication = run.publication else {
+            guard run.publicationRequired != true, !run.isRunning,
+                  let completed = run.finishedAtMs ?? run.startedAtMs else {
+                return (false, false)
+            }
+            let order = (completed, session, turn)
+            if let latestOrder, order < latestOrder { return (false, false) }
+            let refresh = revisions[identity] == nil
+            if refresh {
+                revisions[identity] = 0
+                latestOrder = order
+            }
+            return (refresh, false)
+        }
+
+        guard let completed = publication.completedAtMs ?? run.finishedAtMs ?? run.startedAtMs else {
+            return (false, false)
+        }
+        let revision = publication.revision
+        let order = (completed, session, turn)
+
+        // Notification dedupe is per completed turn, independent of revision
+        // and global latest ordering. Compute it before the refresh ordering
+        // guard so an older completion can still notify without rolling back
+        // the latest displayed snapshot.
+        let shouldNotify = notify && !notified.contains(identity)
+        if shouldNotify { notified.insert(identity) }
+
+        if let previous = revisions[identity], revision < previous {
+            return (false, shouldNotify)
+        }
+        if let latestOrder, order < latestOrder {
+            return (false, shouldNotify)
+        }
+        let previous = revisions[identity]
+        let refresh = previous.map { revision > $0 } ?? true
+        if refresh { revisions[identity] = revision; latestOrder = order }
+        return (refresh, shouldNotify)
+    }
+}
+
 public enum OverlayTab: String, CaseIterable, Identifiable {
     case inspector = "Inspector"
     case history = "History"
     case analytics = "Analytics"
+    case account = "Account"
     
     public var id: String { rawValue }
     
@@ -12,6 +76,7 @@ public enum OverlayTab: String, CaseIterable, Identifiable {
         case .inspector: return "bolt.fill"
         case .history: return "clock.arrow.circlepath"
         case .analytics: return "chart.bar.xaxis"
+        case .account: return "person.crop.circle"
         }
     }
 }
@@ -494,6 +559,159 @@ public struct TaskSummaryInfo: Codable {
     }
 }
 
+/// Recursive JSON keeps the original schema-11 execution plan intact while
+/// allowing the native overlay to remain independent of planner revisions.
+public enum JSONValue: Codable, Equatable {
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case null
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .object(let value): try value.encode(to: encoder)
+        case .array(let value): try value.encode(to: encoder)
+        case .string(let value): try value.encode(to: encoder)
+        case .number(let value): try value.encode(to: encoder)
+        case .bool(let value): try value.encode(to: encoder)
+        case .null:
+            var container = encoder.singleValueContainer()
+            try container.encodeNil()
+        }
+    }
+}
+
+public struct TurnGoal: Codable, Equatable {
+    public var text: String?
+    public var source: String?
+    public var recordedAtMs: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case source
+        case recordedAtMs = "recorded_at_ms"
+    }
+
+    public init(text: String? = nil, source: String? = nil, recordedAtMs: Double? = nil) {
+        self.text = text
+        self.source = source
+        self.recordedAtMs = recordedAtMs
+    }
+}
+
+public struct OrchestrationInfo: Codable, Equatable {
+    public var origin: String?
+    public var revision: Int?
+    public var recordedAtMs: Double?
+    public var executionPlan: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case origin
+        case revision
+        case recordedAtMs = "recorded_at_ms"
+        case executionPlan = "execution_plan"
+    }
+
+    public init(
+        origin: String? = nil,
+        revision: Int? = nil,
+        recordedAtMs: Double? = nil,
+        executionPlan: JSONValue? = nil
+    ) {
+        self.origin = origin
+        self.revision = revision
+        self.recordedAtMs = recordedAtMs
+        self.executionPlan = executionPlan
+    }
+}
+
+public struct TurnContext: Codable, Equatable {
+    public var schemaVersion: Int?
+    public var sessionId: String?
+    public var turnId: String?
+    public var goal: TurnGoal?
+    public var orchestration: OrchestrationInfo?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case sessionId = "session_id"
+        case turnId = "turn_id"
+        case goal
+        case orchestration
+    }
+
+    public init(
+        schemaVersion: Int? = nil,
+        sessionId: String? = nil,
+        turnId: String? = nil,
+        goal: TurnGoal? = nil,
+        orchestration: OrchestrationInfo? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.sessionId = sessionId
+        self.turnId = turnId
+        self.goal = goal
+        self.orchestration = orchestration
+    }
+}
+
+public struct TurnResult: Codable, Equatable {
+    public var text: String?
+    public var source: String?
+    public var turnId: String?
+    public var truncated: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case source
+        case turnId = "turn_id"
+        case truncated
+    }
+
+    public init(text: String? = nil, source: String? = nil, turnId: String? = nil, truncated: Bool? = nil) {
+        self.text = text
+        self.source = source
+        self.turnId = turnId
+        self.truncated = truncated
+    }
+}
+
+public struct PublicationInfo: Codable, Equatable {
+    public var revision: Int
+    public var completedAtMs: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case revision
+        case completedAtMs = "completed_at_ms"
+    }
+
+    public init(revision: Int, completedAtMs: Double? = nil) {
+        self.revision = revision
+        self.completedAtMs = completedAtMs
+    }
+}
+
 public struct TaskRun: Codable, Identifiable {
     public var id: String {
         if let s = sessionId, let t = turnId {
@@ -523,6 +741,10 @@ public struct TaskRun: Codable, Identifiable {
     public var trajectory: [TrajectoryStep]?
     public var logs: [TaskLogEntry]?
     public var summaryInfo: TaskSummaryInfo?
+    public var turnContext: TurnContext?
+    public var result: TurnResult?
+    public var publication: PublicationInfo?
+    public var publicationRequired: Bool?
     public var transcriptPath: String?
     public var mergedInto: String?
     public var isSystemTask: Bool?
@@ -549,6 +771,10 @@ public struct TaskRun: Codable, Identifiable {
         case trajectory
         case logs
         case summaryInfo = "summary_info"
+        case turnContext = "turn_context"
+        case result
+        case publication
+        case publicationRequired = "publication_required"
         case transcriptPath = "transcript_path"
         case mergedInto = "merged_into"
         case isSystemTask = "is_system_task"
@@ -587,6 +813,10 @@ public struct TaskRun: Codable, Identifiable {
         trajectory = try container.decodeIfPresent([TrajectoryStep].self, forKey: .trajectory)
         logs = try container.decodeIfPresent([TaskLogEntry].self, forKey: .logs)
         summaryInfo = try container.decodeIfPresent(TaskSummaryInfo.self, forKey: .summaryInfo)
+        turnContext = try container.decodeIfPresent(TurnContext.self, forKey: .turnContext)
+        result = try container.decodeIfPresent(TurnResult.self, forKey: .result)
+        publication = try container.decodeIfPresent(PublicationInfo.self, forKey: .publication)
+        publicationRequired = try container.decodeIfPresent(Bool.self, forKey: .publicationRequired)
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         mergedInto = try container.decodeIfPresent(String.self, forKey: .mergedInto)
         isSystemTask = try container.decodeIfPresent(Bool.self, forKey: .isSystemTask)
@@ -644,6 +874,10 @@ public struct TaskRun: Codable, Identifiable {
         try container.encodeIfPresent(trajectory, forKey: .trajectory)
         try container.encodeIfPresent(logs, forKey: .logs)
         try container.encodeIfPresent(summaryInfo, forKey: .summaryInfo)
+        try container.encodeIfPresent(turnContext, forKey: .turnContext)
+        try container.encodeIfPresent(result, forKey: .result)
+        try container.encodeIfPresent(publication, forKey: .publication)
+        try container.encodeIfPresent(publicationRequired, forKey: .publicationRequired)
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
         try container.encodeIfPresent(mergedInto, forKey: .mergedInto)
         try container.encodeIfPresent(isSystemTask, forKey: .isSystemTask)
@@ -671,6 +905,10 @@ public struct TaskRun: Codable, Identifiable {
         trajectory: [TrajectoryStep]? = nil,
         logs: [TaskLogEntry]? = nil,
         summaryInfo: TaskSummaryInfo? = nil,
+        turnContext: TurnContext? = nil,
+        result: TurnResult? = nil,
+        publication: PublicationInfo? = nil,
+        publicationRequired: Bool? = nil,
         transcriptPath: String? = nil,
         fileStem: String? = nil,
         mergedInto: String? = nil,
@@ -697,6 +935,10 @@ public struct TaskRun: Codable, Identifiable {
         self.trajectory = trajectory
         self.logs = logs
         self.summaryInfo = summaryInfo
+        self.turnContext = turnContext
+        self.result = result
+        self.publication = publication
+        self.publicationRequired = publicationRequired
         self.transcriptPath = transcriptPath
         self.fileStem = fileStem
         self.mergedInto = mergedInto
@@ -745,30 +987,44 @@ public struct TaskRun: Codable, Identifiable {
     }
     
     public var effectiveGoal: String? {
-        if let g = summaryInfo?.goal, !g.isEmpty { return g }
-        if let p = thread?.preview, !p.isEmpty { return p }
-        if let s = summary, !s.isEmpty { return s }
-        if isInternalTask {
-            return sessionTitle
-        }
-        return nil
+        publishedGoal
     }
     
     public var effectiveConclusion: String? {
-        return summaryInfo?.conclusion ?? summary
+        publishedConclusion
+    }
+
+    public var publishedGoal: String? {
+        guard let text = turnContext?.goal?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return text
+    }
+
+    public var publishedConclusion: String? {
+        guard let text = result?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return text
     }
     
     public var turnPreview: String {
-        if let goal = summaryInfo?.goal, !goal.isEmpty {
+        if let goal = publishedGoal, !goal.isEmpty {
             return TaskRun.cleanPromptText(goal)
         }
-        if let sum = summary, !sum.isEmpty {
-            return sum
-        }
-        if let conclusion = summaryInfo?.conclusion, !conclusion.isEmpty {
+        if let conclusion = publishedConclusion, !conclusion.isEmpty {
             return TaskRun.cleanPromptText(conclusion)
         }
-        return thread?.preview ?? thread?.name ?? sessionTitle
+        return L("Not recorded", "未记录")
+    }
+
+    public var publicationRevision: Int? {
+        publication?.revision
+    }
+
+    public var publicationKey: String? {
+        guard let sessionId, let turnId, let revision = publicationRevision else { return nil }
+        return "\(sessionId)--\(turnId)--\(revision)"
     }
     
     public static func cleanPromptText(_ raw: String) -> String {

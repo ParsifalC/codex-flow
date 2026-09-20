@@ -7,7 +7,6 @@ public class IPCService {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
         let dir = URL(fileURLWithPath: codexHome).appendingPathComponent("codex-flow")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("overlay.sock").path
     }
 
@@ -28,6 +27,14 @@ public class IPCService {
 
         public func start() {
             guard serverSource == nil, serverSocket < 0 else { return }
+            // Path lookup and client status are read-only. Only an explicitly
+            // started control server owns creation of its socket directory.
+            do {
+                try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: path).deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+            } catch { return }
             unlink(path)
 
             serverSocket = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -104,6 +111,38 @@ public class IPCService {
             return number.uint64Value
         }
 
+        private func latestPublishedRun() -> TaskRun? {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
+            let lastURL = URL(fileURLWithPath: codexHome)
+                .appendingPathComponent("codex-flow")
+                .appendingPathComponent("telemetry")
+                .appendingPathComponent("last.json")
+            guard let data = try? Data(contentsOf: lastURL),
+                  let run = try? JSONDecoder().decode(TaskRun.self, from: data),
+                  run.publication != nil else {
+                return nil
+            }
+            return run
+        }
+
+        private func publishedRun(from payload: String) -> (run: TaskRun, source: String)? {
+            let value = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: value)),
+               let run = try? JSONDecoder().decode(TaskRun.self, from: data),
+               run.publication != nil {
+                return (run, "file")
+            }
+            if let data = value.data(using: .utf8),
+               let run = try? JSONDecoder().decode(TaskRun.self, from: data),
+               run.publication != nil {
+                return (run, "json")
+            }
+            return nil
+        }
+
         private func acceptConnection() {
             var clientAddr = sockaddr_un()
             var clientAddrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -146,7 +185,7 @@ public class IPCService {
                 state.toggle()
                 return "{\"ok\": true, \"action\": \"toggle\", \"isExpanded\": \(state.isExpanded)}\n"
             } else if cmd == "expand" {
-                state.expand()
+                state.openLatest()
                 return "{\"ok\": true, \"action\": \"expand\"}\n"
             } else if cmd == "collapse" {
                 state.collapse()
@@ -161,6 +200,10 @@ public class IPCService {
                     state.selectTab(.analytics)
                     state.expand()
                     return "{\"ok\": true, \"tab\": \"Analytics\"}\n"
+                } else if target == "account" {
+                    state.selectTab(.account)
+                    state.expand()
+                    return "{\"ok\": true, \"tab\": \"Account\"}\n"
                 } else {
                     state.selectTab(.inspector)
                     state.expand()
@@ -186,37 +229,28 @@ public class IPCService {
                 state.selectTab(.history)
                 state.expand()
                 return "{\"ok\": true, \"action\": \"showing_history\"}\n"
-            } else if cmd.hasPrefix("update") {
-                let payload = cmd.dropFirst("update".count).trimmingCharacters(in: .whitespacesAndNewlines)
-                if payload.isEmpty {
-                    let home = FileManager.default.homeDirectoryForCurrentUser
-                    let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
-                    let lastUrl = URL(fileURLWithPath: codexHome).appendingPathComponent("codex-flow").appendingPathComponent("telemetry").appendingPathComponent("last.json")
-                    if let data = try? Data(contentsOf: lastUrl),
-                       var run = try? JSONDecoder().decode(TaskRun.self, from: data) {
-                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                        state.update(run: run)
-                        state.expand(notificationTriggered: true)
-                        return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
+            } else if cmd == "refresh" || cmd.hasPrefix("update") {
+                let notify = cmd != "refresh"
+                let payload = notify
+                    ? cmd.dropFirst("update".count).trimmingCharacters(in: .whitespacesAndNewlines)
+                    : ""
+
+                // An explicit completion identity is authoritative. This is
+                // required when an older turn completes after a newer turn
+                // has already replaced last.json. Bare update keeps the
+                // historical latest-snapshot behavior.
+                if !payload.isEmpty {
+                    if let explicit = publishedRun(from: payload) {
+                        state.update(run: explicit.run, notificationTriggered: notify)
+                        return "{\"ok\": true, \"updatedFrom\": \"\(explicit.source)\"}\n"
                     }
-                    state.expand(notificationTriggered: true)
-                    return "{\"ok\": true, \"action\": \"expanded\"}\n"
-                } else {
-                    if let fileData = try? Data(contentsOf: URL(fileURLWithPath: payload)),
-                       var run = try? JSONDecoder().decode(TaskRun.self, from: fileData) {
-                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                        state.update(run: run)
-                        state.expand(notificationTriggered: true)
-                        return "{\"ok\": true, \"updatedFrom\": \"file\"}\n"
-                    } else if let json = payload.data(using: .utf8),
-                              var run = try? JSONDecoder().decode(TaskRun.self, from: json) {
-                        TelemetryQueryEngine.shared.enrichRunIfNeeded(&run)
-                        state.update(run: run)
-                        state.expand(notificationTriggered: true)
-                        return "{\"ok\": true, \"updatedFrom\": \"json\"}\n"
-                    }
+                    return "{\"ok\": false, \"error\": \"no published telemetry snapshot\"}\n"
                 }
-                return "{\"ok\": false, \"error\": \"invalid payload\"}\n"
+                if let run = latestPublishedRun() {
+                    state.update(run: run, notificationTriggered: notify)
+                    return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
+                }
+                return "{\"ok\": false, \"error\": \"no published telemetry snapshot\"}\n"
             } else if cmd == "quit" || cmd == "stop" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     NSApplication.shared.terminate(nil)

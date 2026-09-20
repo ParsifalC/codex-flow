@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "target_host": "codex-desktop",
+  "scope": "development-installation-only",
+  "probe_entry": "real-userpromptsubmit-additional-context",
+  "validated_on": "2026-09-19",
+  "automatic_writes_enabled": true,
+  "goal_plan_stop_chain_verified": true,
+  "same_turn_receipt_delivery_verified": true,
+  "status": "supported_probe"
+}

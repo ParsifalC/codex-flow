@@ -104,6 +104,8 @@ def policy_int(section_name: str, key_name: str, default: int) -> int:
 
 
 def telemetry_notifications_enabled() -> bool:
+    if not telemetry_writes_enabled():
+        return False
     value = os.environ.get("CODEX_FLOW_TELEMETRY_NOTIFICATIONS")
     if value is not None:
         normalized = value.strip().lower()
@@ -112,6 +114,15 @@ def telemetry_notifications_enabled() -> bool:
         if normalized in {"1", "true", "yes", "on"}:
             return True
     return policy_bool("telemetry", "notifications", False)
+
+
+def telemetry_writes_enabled() -> bool:
+    """Shared entry guard for telemetry state and notification writes.
+
+    Historical reads remain available when collection is disabled. Call this
+    before creating directories, taking locks, or contacting an IPC consumer.
+    """
+    return policy_bool("telemetry", "enabled", True)
 
 
 def telemetry_retention_days() -> int:
@@ -144,28 +155,73 @@ def atomic_json(path: Path, value: Any) -> None:
 
 
 @contextmanager
-def state_lock(key: str):
-    STATE_ROOT.mkdir(parents=True, exist_ok=True)
-    lock = STATE_ROOT / ("." + key.replace("/", "_") + ".lock")
-    deadline = time.monotonic() + LOCK_TIMEOUT
+def state_lock(key: str, *, state_root: Path | None = None):
+    """Hold a recoverable OS lock; callers must never write on a false result.
+
+    The fixed file is deliberately never unlinked: deleting an open lock file
+    can create two independent owners. OS ownership ends when the process exits.
+    """
+    if not telemetry_writes_enabled():
+        yield False
+        return
+    try:
+        if os.name == "posix":
+            import fcntl
+
+            def acquire(handle):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def release(handle):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        elif os.name == "nt":
+            import msvcrt
+
+            def acquire(handle):
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def release(handle):
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            yield False
+            return
+    except ImportError:
+        yield False
+        return
+
+    root = STATE_ROOT if state_root is None else Path(state_root)
+    handle = None
     acquired = False
-    while True:
-        try:
-            lock.mkdir()
-            acquired = True
-            break
-        except FileExistsError:
-            if time.monotonic() >= deadline:
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        lock = root / ("." + key.replace("/", "_").replace("\\", "_") + ".lck")
+        handle = lock.open("a+b")
+        if os.name == "nt" and lock.stat().st_size == 0:
+            handle.write(b"\0")
+            handle.flush()
+        deadline = time.monotonic() + LOCK_TIMEOUT
+        while True:
+            try:
+                acquire(handle)
+                acquired = True
                 break
-            time.sleep(0.025)
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.025)
+    except OSError:
+        acquired = False
     try:
         yield acquired
     finally:
-        if acquired:
-            try:
-                lock.rmdir()
-            except OSError:
-                pass
+        if handle is not None:
+            if acquired:
+                try:
+                    release(handle)
+                except OSError:
+                    pass
+            handle.close()
 
 
 def read_json_object(path: Path) -> dict[str, Any] | None:
@@ -214,6 +270,7 @@ def load_run(event: dict[str, Any], key: str | None = None) -> dict[str, Any]:
         "parent": {"model": event.get("model")},
         "workers": {},
         "started_at_ms": now_ms(),
+        "publication_required": True,
     }
 
 

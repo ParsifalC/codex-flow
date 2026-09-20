@@ -10,19 +10,53 @@ error instead of treating the failure as a disabled switch.
 
 1. Read the installed FlowPilot skill at
    `{{CODEX_HOME}}/skills/flow-pilot/SKILL.md` completely.
-2. Show the global strategy state, then consume the one-shot bypass when the
-   state is enabled:
+2. Show the global strategy state. For a new task only, consume the one-shot
+   bypass when the state is enabled; same-task follow-ups keep the existing
+   task receipt, plan, and ledger and never consume another bypass:
 
    ```text
    python3 "{{CODEX_HOME}}/codex-flow/strategy_runtime.py" --policy "{{CODEX_HOME}}/codex-flow.toml" show --json
    python3 "{{CODEX_HOME}}/codex-flow/strategy_runtime.py" --policy "{{CODEX_HOME}}/codex-flow.toml" consume-bypass
    ```
 
-3. Treat the receipt as authoritative for this task. `enabled=false` or a
+3. Treat the strategy gate receipt as authoritative for this task. `enabled=false` or a
    consumed bypass means ordinary execution for this task. Never infer the
-   enabled state from an earlier turn. If FlowPilot remains enabled, profile
-   the task and let its planner choose direct execution or delegation; do not
+   enabled state from an earlier turn. If FlowPilot remains enabled, follow
+   the turn-context sequence below, then profile the task and let its planner
+   choose direct execution or delegation; do not
    use uncertainty about the task as a reason to skip the gate.
+
+4. Only for a FlowPilot-participating parent turn with telemetry enabled and
+   a receipt delivered through a verified host context protocol, save a
+   1–80 Unicode-codepoint goal of at most two sentences to a UTF-8 file and call:
+
+   ```text
+   codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --text-file <utf8-goal-file>
+   ```
+
+   This happens after the gate and before TaskProfile/planner work. Preserve
+   the user's original message. Use concise, accurate, plain language focused
+   on the user's desired outcome; omit jargon and process narration. The first successful goal is immutable for
+   this turn. Bind it only to the receipt's `session_id + turn_id`: project is
+   `cwd`, chat is `session_id`, and turn is `turn_id`.
+
+5. Save the planner's complete returned ExecutionPlan JSON to a file, then
+   call `codex-flow telemetry context write-plan --receipt-file
+   <host-receipt-file> --plan-file <full-plan-json-file> --origin compiled`.
+   On a same-task follow-up, use that turn's new host receipt, record its own
+   goal, and save the existing plan with `--origin reused`. A legitimate
+   re-profile uses `--origin replanned`; it never resets the task ledger or
+   its original budget plan.
+
+Automatic goal/plan writes require a locally verified and enabled host transport.
+On such installations, use the exact receipt supplied through the verified
+Desktop UserPromptSubmit `hookSpecificOutput.additionalContext` protocol.
+Unverified installations keep automatic writes disabled and show “未记录”. Do not discover a
+receipt by scanning state, infer one from `CODEX_*`, `last.json`, or an active
+turn, or treat `systemMessage` as a supported transport. Missing/invalid
+receipts and telemetry-disabled results do not interrupt the main task.
+Do not pass parent receipts to workers or forge goals/plans for disabled or
+bypassed tasks. Metadata writes do not publish details; only parent Stop does.
 
 Conversation-only answers and work explicitly assigned to a subagent are
 excluded. Follow-ups in the same task preserve the existing plan and

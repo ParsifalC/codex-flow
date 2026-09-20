@@ -236,9 +236,15 @@ def render_summary(run: dict[str, Any]) -> str:
 
     skills = run.get("skills_used") or []
     tools = run.get("tools_used") or []
-    summary_info = run.get("summary_info") or {}
+    result = run.get("result") or {}
+    result_text = result.get("text") if (
+        run.get("publication") and result.get("source") == "parent_final"
+        and result.get("turn_id") == run.get("turn_id")
+    ) else None
+    if not isinstance(result_text, str):
+        result_text = None
 
-    if skills or tools or summary_info.get("conclusion"):
+    if skills or tools or result_text:
         lines.append(T(
             "  ├─ Insights & Trajectory ───────────────────────────────────────────┤",
             "  ├─ 执行详情与技能洞察 ──────────────────────────────────────────────┤",
@@ -249,11 +255,11 @@ def render_summary(run: dict[str, Any]) -> str:
         if tools:
             tools_str = ", ".join(f"{t.get('name')} (×{t.get('count', 1)})" for t in tools)
             append_wrapped_line(T(f"• Tools / MCP:    {tools_str}", f"• 工具 / MCP:     {tools_str}"))
-        if summary_info.get("conclusion"):
-            conc = " ".join(summary_info["conclusion"].split())
-            if len(conc) > 100:
-                conc = conc[:97] + "..."
-            append_wrapped_line(T(f"• Conclusion:     {conc}", f"• 交付结论:       {conc}"))
+        if result_text:
+            preview = " ".join(result_text.split())
+            if len(preview) > 100:
+                preview = preview[:97] + "..."
+            append_wrapped_line(T(f"• Result:         {preview}", f"• 结果:           {preview}"))
 
     lines.append("  ╰───────────────────────────────────────────────────────────────────╯")
     lines.append(T(

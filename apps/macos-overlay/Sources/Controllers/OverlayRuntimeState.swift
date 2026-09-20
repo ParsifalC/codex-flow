@@ -68,7 +68,7 @@ struct OverlayRuntimeState {
     }
 }
 
-/// Filters the rectangular 76x76 NSHostingView down to what the user can
+/// Filters the rectangular compact NSHostingView down to what the user can
 /// actually see. This prevents the transparent host from behaving as a hover
 /// target after the compact view changes shape.
 enum OverlayCompactHitRegion {
@@ -82,7 +82,7 @@ enum OverlayCompactHitRegion {
         if expanded { return true }
 
         if docked {
-            let pillSize = NSSize(width: 44, height: 56)
+            let pillSize = NSSize(width: 40, height: 58)
             let pillRect = NSRect(
                 x: hostBounds.maxX - pillSize.width,
                 y: hostBounds.midY - pillSize.height / 2,
@@ -92,11 +92,8 @@ enum OverlayCompactHitRegion {
             return pillRect.contains(point)
         }
 
-        let center = NSPoint(x: hostBounds.midX, y: hostBounds.midY)
-        let dx = point.x - center.x
-        let dy = point.y - center.y
-        let radius: CGFloat = 31 // 58pt circle + a small allowance for its glow.
-        return dx * dx + dy * dy <= radius * radius
+        let rect = hostBounds.insetBy(dx: 9, dy: 9)
+        return NSBezierPath(roundedRect: rect, xRadius: 18, yRadius: 18).contains(point)
     }
 }
 

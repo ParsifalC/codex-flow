@@ -5,11 +5,15 @@ on:
     paths:
       - 'apps/macos-overlay/**'
       - 'bin/codex-flow'
+      - 'tests/overlay-language.sh'
+      - 'tests/overlay-account.sh'
       - '.github/workflows/macos-overlay.yml'
   pull_request:
     paths:
       - 'apps/macos-overlay/**'
       - 'bin/codex-flow'
+      - 'tests/overlay-language.sh'
+      - 'tests/overlay-account.sh'
       - '.github/workflows/macos-overlay.yml'
 
 jobs:
@@ -41,8 +45,36 @@ jobs:
             apps/macos-overlay/Tests/TelemetryQueryEngineConcurrencyTests.swift \
             -o "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
           "$RUNNER_TEMP/telemetry-query-engine-concurrency-tests"
+      - name: Test telemetry watcher recovery and filesystem reattachment
+        run: |
+          swiftc \
+            apps/macos-overlay/Sources/Models/TelemetryData.swift \
+            apps/macos-overlay/Sources/Services/TelemetryWatcher.swift \
+            apps/macos-overlay/Tests/TelemetryWatcherTests.swift \
+            -o "$RUNNER_TEMP/telemetry-watcher-tests"
+          "$RUNNER_TEMP/telemetry-watcher-tests"
+      - name: Test published turn context model and query
+        run: |
+          set -euo pipefail
+          FLOW_BUILD_ROOT="$(mktemp -d)"
+          trap 'rm -rf "$FLOW_BUILD_ROOT"' EXIT
+          export CODEX_HOME="$FLOW_BUILD_ROOT/codex-home"
+          swiftc \
+            apps/macos-overlay/Sources/Models/TelemetryData.swift \
+            apps/macos-overlay/Sources/Services/TelemetryQueryEngine.swift \
+            apps/macos-overlay/Tests/TelemetryTurnContextTests.swift \
+            -o "$FLOW_BUILD_ROOT/telemetry-turn-context-tests"
+          "$FLOW_BUILD_ROOT/telemetry-turn-context-tests"
       - name: Compile native overlay
         run: bash apps/macos-overlay/build.sh
+      - name: Verify startup snapshot recovery ordering
+        run: bash tests/overlay-startup.sh
+      - name: Verify language settings preserve the policy
+        run: bash tests/overlay-language.sh
+      - name: Verify account tab renders without crashing
+        run: bash tests/overlay-account.sh
+      - name: Verify status client is read-only
+        run: bash tests/overlay-read-only-status.sh
       - name: Smoke test overlay lifecycle
         shell: bash
         run: |

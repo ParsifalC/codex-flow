@@ -5,313 +5,116 @@ public struct BubbleView: View {
     @ObservedObject var state: OverlayState
     @ObservedObject private var localization = AppLocalization.shared
     @ObservedObject private var updateService = FlowPilotUpdateService.shared
-    @State private var isHovered: Bool = false
-    @State private var breathePhase: CGFloat = 0.0
-    @State private var shimmerAngle: Double = 0.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var isHovered = false
 
-    public init(state: OverlayState) {
-        self.state = state
-    }
+    public init(state: OverlayState) { self.state = state }
 
     public var body: some View {
-        ZStack {
-            if state.isDocked {
-                dockTabView
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            } else {
-                fullBubbleView
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-
-            if updateService.hasUpdateBadge {
-                residentUpdateBadge
-                    .offset(x: updateBadgeOffsetX, y: -22)
-                    .transition(.scale(scale: 0.7).combined(with: .opacity))
-                    .allowsHitTesting(false)
-            }
-        }
-        .frame(width: 76, height: 76)
-        .animation(.spring(response: 0.16, dampingFraction: 0.82), value: state.isDocked)
-        .animation(.spring(response: 0.22, dampingFraction: 0.78), value: updateService.hasUpdateBadge)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                breathePhase = 1.0
-            }
-        }
-    }
-
-    private func handleHover(_ hovered: Bool) {
-        withAnimation(.easeInOut(duration: 0.25)) {
-            isHovered = hovered
-        }
-        if hovered {
-            withAnimation(.linear(duration: 2.0).repeatForever(autoreverses: false)) {
-                shimmerAngle = 360.0
-            }
-        } else {
-            shimmerAngle = 0.0
-        }
-    }
-
-    private var updateBadgeOffsetX: CGFloat {
-        if !state.isDocked { return -20 }
-        return state.dockEdge == .right ? 27 : -27
-    }
-
-    private var residentUpdateBadge: some View {
-        ZStack {
-            Circle()
-                .fill(updateService.isRestartRequired ? Color.orange : Color.red)
-                .frame(width: 12, height: 12)
-                .overlay(Circle().stroke(Color.black.opacity(0.78), lineWidth: 1.2))
-                .shadow(
-                    color: (updateService.isRestartRequired ? Color.orange : Color.red).opacity(0.7),
-                    radius: 3
-                )
-
-            Image(systemName: updateService.isRestartRequired ? "arrow.clockwise" : "arrow.down")
-                .font(.system(size: 6, weight: .black))
-                .foregroundColor(.white)
-        }
-        .accessibilityLabel(updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
-    }
-
-    // MARK: - Dedicated Edge Dock Tab View
-    private var dockTabView: some View {
         HStack(spacing: 0) {
-            if state.dockEdge == .right {
-                Spacer(minLength: 0)
-                dockPillContent(isRight: true)
+            if state.isDocked && state.dockEdge == .right { Spacer(minLength: 0) }
+            tile
+            if state.isDocked && state.dockEdge != .right { Spacer(minLength: 0) }
+        }
+        .frame(width: 166, height: 76)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isHovered)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: state.isDocked)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("FlowPilot")
+        .accessibilityValue(statusText)
+        .accessibilityHint(L("Open task details", "打开任务详情"))
+        .help("FlowPilot · " + statusText)
+    }
+
+    private var tile: some View {
+        HStack(spacing: state.isDocked ? 3 : 10) {
+            ResultBeacon(hasResult: state.latestRun != nil, isUnread: state.hasUnreadResult)
+                .frame(width: state.isDocked ? 19 : 26, height: state.isDocked ? 19 : 26)
+            if !state.isDocked {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting", "等待结果") : L("Completed", "最近完成")))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.94))
+                    if let run = state.latestRun {
+                        Text(run.totalTokens > 0 ? run.formattedTotalTokens + " tokens" : L("Tokens unavailable", "消耗未记录"))
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }.lineLimit(1)
             } else {
-                dockPillContent(isRight: false)
-                Spacer(minLength: 0)
+                Image(systemName: state.dockEdge == .right ? "chevron.left" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
             }
         }
-        .frame(width: 76, height: 76)
-    }
-
-    private func dockPillContent(isRight: Bool) -> some View {
-        VStack(spacing: 2.5) {
-            HStack(spacing: 3) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 6.5, height: 6.5)
-                    .shadow(color: statusColor.opacity(0.9), radius: 2)
-
-                Image(systemName: "sparkles")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.cyan, .purple],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-
-            Text(state.latestRun?.formattedCompactTokens ?? L("Ready", "就绪"))
-                .font(.system(size: 9.0, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-
-            HStack(spacing: 2) {
-                if isRight {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(.cyan.opacity(0.9))
-                }
-
-                Text(state.isTaskRunning ? L("RUN", "运行") : L("OK", "正常"))
-                    .font(.system(size: 7.5, weight: .black, design: .rounded))
-                    .foregroundColor(statusColor)
-
-                if !isRight {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(.cyan.opacity(0.9))
-                }
+        .frame(width: state.isDocked ? 40 : 148, height: 58)
+        .background {
+            ZStack {
+                if !reduceTransparency { VisualEffectBackground() }
+                Color(red: 0.10, green: 0.15, blue: 0.19).opacity(reduceTransparency ? 1 : 0.8)
+                LinearGradient(colors: [.cyan.opacity(isHovered ? 0.18 : 0.08), .clear], startPoint: .topLeading, endPoint: .bottomTrailing)
             }
         }
-        .padding(.vertical, 7)
-        .padding(.horizontal, 5)
-        .frame(width: 44, height: 56)
-        .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.14, green: 0.16, blue: 0.22).opacity(0.96),
-                            Color(red: 0.08, green: 0.09, blue: 0.13).opacity(0.98)
-                        ],
-                        startPoint: isRight ? .leading : .trailing,
-                        endPoint: isRight ? .trailing : .leading
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.cyan.opacity(0.7),
-                            Color.purple.opacity(0.5),
-                            Color.white.opacity(0.15)
-                        ],
-                        startPoint: isRight ? .leading : .trailing,
-                        endPoint: isRight ? .trailing : .leading
-                    ),
-                    lineWidth: 1.2
-                )
-        )
-        .shadow(color: statusGlowColor.opacity(0.45), radius: 4)
-        .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .onHover { handleHover($0) }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(isHovered ? 0.32 : 0.17), lineWidth: 1)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if updateService.hasUpdateBadge {
+                Image(systemName: updateService.isRestartRequired ? "arrow.clockwise" : "arrow.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(updateService.isRestartRequired ? .orange : .cyan)
+                    .padding(6)
+            }
+        }
+        .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onHover { isHovered = $0 }
     }
 
-    // MARK: - Full Circular Bubble View
-    private var fullBubbleView: some View {
+    private var statusText: String {
+        let task = state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting for a result", "等待结果") : L("Latest turn completed", "最近轮次已完成"))
+        if updateService.hasUpdateBadge {
+            return task + " · " + (updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
+        }
+        return task
+    }
+
+}
+
+private struct ResultBeacon: View {
+    let hasResult: Bool
+    let isUnread: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Group {
+            if isUnread && !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                    let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
+                    let breath = (1 - cos(phase * 2 * .pi)) / 2
+                    beacon(breath: breath)
+                }
+            } else {
+                beacon(breath: 0)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func beacon(breath: Double) -> some View {
         ZStack {
             Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            Color(red: 0.14, green: 0.16, blue: 0.22).opacity(0.92),
-                            Color(red: 0.06, green: 0.07, blue: 0.10).opacity(0.97)
-                        ],
-                        center: .center,
-                        startRadius: 4,
-                        endRadius: 29
-                    )
-                )
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isHovered ? 0.25 : 0.12), lineWidth: 0.8)
-                )
-                .frame(width: 58, height: 58)
-
-            Circle()
-                .strokeBorder(
-                    borderGradient,
-                    lineWidth: isHovered ? 2.0 : 1.6
-                )
-                .rotationEffect(.degrees(isHovered ? shimmerAngle : 0))
-                .shadow(
-                    color: statusGlowColor.opacity(isHovered ? 0.85 : (state.isTaskRunning ? 0.7 : 0.3)),
-                    radius: isHovered ? 4 : 2
-                )
-                .frame(width: 58, height: 58)
-
-            VStack(spacing: 2) {
-                ZStack {
-                    if state.isTaskRunning || isHovered {
-                        Circle()
-                            .stroke(statusColor.opacity(isHovered ? 0.6 : 0.4), lineWidth: 1.2)
-                            .frame(width: 28, height: 28)
-                            .scaleEffect(1.0 + breathePhase * (isHovered ? 0.25 : 0.35))
-                            .opacity(1.0 - breathePhase)
-                    }
-
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: isHovered ? [.white, .cyan, .purple] : [.cyan, .indigo, .purple],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: .cyan.opacity(isHovered ? 0.7 : 0.3), radius: isHovered ? 3 : 1.5)
-                }
-                .frame(height: 22)
-
-                HStack(spacing: 2) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 6.5, weight: .bold))
-                        .foregroundColor(statusColor)
-
-                    Text(state.latestRun?.formattedCompactTokens ?? L("Ready", "就绪"))
-                        .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.95))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1.5)
-                .background(
-                    Capsule()
-                        .fill(Color.black.opacity(0.65))
-                        .overlay(
-                            Capsule()
-                                .stroke(Color.white.opacity(isHovered ? 0.3 : 0.15), lineWidth: 0.5)
-                        )
-                )
+                .strokeBorder(Color.cyan.opacity(isUnread ? 0.45 + breath * 0.35 : 0.3), lineWidth: 1.5)
+                .scaleEffect(isUnread ? 0.88 + breath * 0.12 : 0.88)
+            if hasResult {
+                Circle()
+                    .fill(Color.cyan.opacity(isUnread ? 1 : 0.55))
+                    .padding(7)
+                    .shadow(color: .cyan.opacity(isUnread ? 0.3 + breath * 0.3 : 0), radius: 3)
             }
-
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-                .overlay(
-                    Circle()
-                        .stroke(Color.black.opacity(0.7), lineWidth: 1.2)
-                )
-                .shadow(color: statusColor.opacity(isHovered ? 0.9 : 0.7), radius: isHovered ? 3 : 1.5)
-                .offset(x: 20, y: -20)
         }
-        .frame(width: 58, height: 58)
-        .contentShape(Circle())
-        .onHover { handleHover($0) }
-    }
-
-    private var borderGradient: AnyShapeStyle {
-        if state.isTaskRunning {
-            return AnyShapeStyle(
-                AngularGradient(
-                    colors: [.cyan, .blue, .teal, .cyan],
-                    center: .center
-                )
-            )
-        } else if let run = state.latestRun, run.isError {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [.orange, .red],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        } else {
-            return AnyShapeStyle(
-                AngularGradient(
-                    colors: [
-                        Color.cyan.opacity(0.8),
-                        Color.purple.opacity(0.8),
-                        Color.pink.opacity(0.8),
-                        Color.cyan.opacity(0.8)
-                    ],
-                    center: .center
-                )
-            )
-        }
-    }
-
-    private var statusColor: Color {
-        if state.isTaskRunning {
-            return .cyan
-        } else if let run = state.latestRun {
-            if run.isError {
-                return .orange
-            }
-            return Color(red: 0.2, green: 0.85, blue: 0.45)
-        }
-        return Color(red: 0.2, green: 0.85, blue: 0.45)
-    }
-
-    private var statusGlowColor: Color {
-        if state.isTaskRunning {
-            return .cyan
-        } else if let run = state.latestRun, run.isError {
-            return .red
-        }
-        return Color(red: 0.2, green: 0.85, blue: 0.45)
     }
 }

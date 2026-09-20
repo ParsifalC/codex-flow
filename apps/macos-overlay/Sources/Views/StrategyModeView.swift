@@ -56,30 +56,11 @@ public struct StrategyModeSnapshot {
     public let profiles: [StrategyProfileInfo]
 }
 
-private final class StrategyCommandCapture {
-    private let lock = NSLock()
-    private var data = Data()
-
-    func append(_ chunk: Data) {
-        guard !chunk.isEmpty else { return }
-        lock.lock()
-        data.append(chunk)
-        lock.unlock()
-    }
-
-    func string() -> String {
-        lock.lock()
-        let snapshot = data
-        lock.unlock()
-        return String(data: snapshot, encoding: .utf8) ?? ""
-    }
-}
-
 public enum StrategyModeService {
     public static func load() throws -> StrategyModeSnapshot {
         // `strategy show` deliberately returns 2 when the stored value is invalid.
         // Accept that status so the app can still offer a supported profile to repair it.
-        let show = try run(["strategy", "show", "--json"], acceptedExitCodes: [0, 2])
+        let show = try FlowPilotCommand.run(["strategy", "show", "--json"], acceptedExitCodes: [0, 2])
         guard let data = show.stdout.data(using: .utf8),
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let configured = json["strategy"] as? String else {
@@ -89,7 +70,7 @@ public enum StrategyModeService {
         let enabled = (json["enabled"] as? NSNumber)?.boolValue ?? true
         let routing = json["routing"] as? String
         let valid = (json["valid"] as? NSNumber)?.boolValue ?? false
-        let profilesOutput = try run(["strategy", "profiles"])
+        let profilesOutput = try FlowPilotCommand.run(["strategy", "profiles"])
         let profiles = parseProfiles(profilesOutput.stdout)
         guard !profiles.isEmpty else {
             throw serviceError(L("No strategy profiles were reported by codex-flow.", "codex-flow 未返回可用策略模式。"))
@@ -110,7 +91,7 @@ public enum StrategyModeService {
             throw serviceError(L("Unsupported strategy: \(profile)", "不支持的策略：\(profile)"))
         }
 
-        _ = try run(["strategy", "set", profile])
+        _ = try FlowPilotCommand.run(["strategy", "set", profile])
         let verified = try load()
         guard verified.configured == profile, verified.valid else {
             throw serviceError(L("Strategy change could not be verified.", "策略切换后无法验证配置结果。"))
@@ -119,7 +100,7 @@ public enum StrategyModeService {
     }
 
     public static func setEnabled(_ enabled: Bool) throws -> StrategyModeSnapshot {
-        _ = try run(["strategy", enabled ? "enable" : "disable"])
+        _ = try FlowPilotCommand.run(["strategy", enabled ? "enable" : "disable"])
         let verified = try load()
         guard verified.enabled == enabled else {
             throw serviceError(L(
@@ -131,8 +112,8 @@ public enum StrategyModeService {
     }
 
     public static func armTemporaryBypass() throws {
-        _ = try run(["strategy", "bypass-once"])
-        let pending = try run(["strategy", "bypass-pending"]).stdout
+        _ = try FlowPilotCommand.run(["strategy", "bypass-once"])
+        let pending = try FlowPilotCommand.run(["strategy", "bypass-pending"]).stdout
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard pending == "true" else {
             throw serviceError(L(
@@ -140,94 +121,6 @@ public enum StrategyModeService {
                 "临时关闭策略分发后无法验证一次性状态。"
             ))
         }
-    }
-
-    private struct CommandResult {
-        let stdout: String
-        let stderr: String
-    }
-
-    private static func run(
-        _ arguments: [String],
-        acceptedExitCodes: Set<Int32> = [0]
-    ) throws -> CommandResult {
-        let process = Process()
-        let output = Pipe()
-        let error = Pipe()
-        let environment = ProcessInfo.processInfo.environment
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let codexHome = environment["CODEX_HOME"]
-            .map(URL.init(fileURLWithPath:))
-            ?? home.appendingPathComponent(".codex")
-
-        // FlowPilot is commonly launched by Finder or a login item, where the
-        // process PATH does not include ~/.local/bin. Resolve the CLI locations
-        // used by install.sh directly before falling back to PATH lookup.
-        var candidates: [URL] = []
-        if let configuredBinDir = environment["CODEX_FLOW_BIN_DIR"], !configuredBinDir.isEmpty {
-            candidates.append(URL(fileURLWithPath: configuredBinDir).appendingPathComponent("codex-flow"))
-        }
-        candidates.append(home.appendingPathComponent(".local/bin/codex-flow"))
-        candidates.append(codexHome.appendingPathComponent("codex-flow/bin/codex-flow"))
-        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/codex-flow"))
-        candidates.append(URL(fileURLWithPath: "/usr/local/bin/codex-flow"))
-
-        if let installedCLI = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) {
-            process.executableURL = installedCLI
-            process.arguments = arguments
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["codex-flow"] + arguments
-        }
-
-        let stdoutCapture = StrategyCommandCapture()
-        let stderrCapture = StrategyCommandCapture()
-        let stdoutEOF = DispatchSemaphore(value: 0)
-        let stderrEOF = DispatchSemaphore(value: 0)
-
-        process.standardOutput = output
-        process.standardError = error
-        output.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty {
-                handle.readabilityHandler = nil
-                stdoutEOF.signal()
-            } else {
-                stdoutCapture.append(data)
-            }
-        }
-        error.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty {
-                handle.readabilityHandler = nil
-                stderrEOF.signal()
-            } else {
-                stderrCapture.append(data)
-            }
-        }
-        defer {
-            output.fileHandleForReading.readabilityHandler = nil
-            error.fileHandleForReading.readabilityHandler = nil
-        }
-
-        try process.run()
-        process.waitUntilExit()
-
-        // stdout/stderr are drained concurrently while the process runs, so a
-        // verbose child cannot fill a pipe and deadlock waitUntilExit(). Give
-        // the EOF callbacks a bounded moment to flush their final chunks.
-        _ = stdoutEOF.wait(timeout: .now() + 1.0)
-        _ = stderrEOF.wait(timeout: .now() + 1.0)
-
-        let stdout = stdoutCapture.string()
-        let stderr = stderrCapture.string()
-        guard acceptedExitCodes.contains(process.terminationStatus) else {
-            let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw serviceError(detail.isEmpty
-                ? L("codex-flow strategy command failed.", "codex-flow 策略命令执行失败。")
-                : detail)
-        }
-        return CommandResult(stdout: stdout, stderr: stderr)
     }
 
     private static func parseProfiles(_ raw: String) -> [StrategyProfileInfo] {
@@ -260,20 +153,20 @@ public struct StrategyModeCard: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 5) {
                 Label(L("Global strategy mode", "全局策略模式"), systemImage: "slider.horizontal.3")
-                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.82))
                 Spacer()
                 if let snapshot {
                     if let routing = snapshot.routing, !routing.isEmpty {
                         Text(localizedRoutingName(routing))
-                            .font(.system(size: 6.8, weight: .bold, design: .rounded))
-                            .foregroundColor(.white.opacity(0.42))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     Text(localizedConfiguredName(snapshot))
-                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundColor(statusColor(snapshot))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -281,8 +174,8 @@ public struct StrategyModeCard: View {
                 }
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.48))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 .buttonStyle(.plain)
                 .disabled(isLoading || applyingProfile != nil || applyingEnabled)
@@ -292,38 +185,38 @@ public struct StrategyModeCard: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text(L("Reading strategy…", "正在读取策略…"))
-                        .font(.system(size: 8.5))
-                        .foregroundColor(.white.opacity(0.45))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 .frame(maxWidth: .infinity, minHeight: 48)
             } else if let snapshot {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L("Enable strategy dispatch", "启用策略分发"))
-                            .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundColor(.white.opacity(0.84))
                         Text(L(
-                            "Turn off FlowPilot automatic planning and Worker dispatch while keeping the selected profile.",
-                            "关闭 FlowPilot 自动策略规划和 Worker 分发，同时保留当前策略配置。"
+                            "Plan tasks and coordinate agents using your selected mode.",
+                            "按所选模式规划任务并协调 Agent 执行。"
                         ))
-                        .font(.system(size: 7.2))
-                        .foregroundColor(.white.opacity(0.36))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.7))
                     }
                     Spacer()
                     if applyingEnabled {
                         ProgressView().controlSize(.mini)
                     }
-                    Toggle("", isOn: strategyEnabledBinding)
+                    Toggle(L("Enable strategy dispatch", "启用策略分发"), isOn: strategyEnabledBinding)
                         .labelsHidden()
                         .toggleStyle(SleekSwitchToggleStyle(tint: .cyan))
                         .disabled(isLoading || applyingProfile != nil || applyingEnabled)
                 }
-                .padding(7)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.025)))
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.025)))
 
                 if !snapshot.valid {
                     Text(L("The stored strategy is invalid. Choose a supported mode below to repair it.", "当前保存的策略无效，请在下方选择一个受支持模式进行修复。"))
-                        .font(.system(size: 7.8, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.orange.opacity(0.88))
                 }
 
@@ -336,31 +229,31 @@ public struct StrategyModeCard: View {
 
                 HStack(alignment: .top, spacing: 4) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 7.5))
+                        .font(.system(size: 13))
                         .padding(.top, 1)
-                    Text(L("The master switch has global priority. When enabled, repository `.codex-flow.toml` may still override profile/routing; when disabled, repository policy cannot re-enable automatic dispatch.", "总开关具有全局最高优先级。开启时，仓库 `.codex-flow.toml` 仍可覆盖 profile/routing；关闭时，仓库策略不能重新开启自动分发。"))
-                        .font(.system(size: 7.5))
+                    Text(L("Applies to all projects. Project settings can override the mode, but cannot turn on a disabled strategy.", "适用于所有项目。项目可使用自己的模式，但不能覆盖关闭状态。"))
+                        .font(.system(size: 13))
                 }
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(.white.opacity(0.7))
 
                 if let message {
                     Text(message)
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundColor(isError ? .orange : .green)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
                 Text(message ?? L("Strategy data unavailable", "策略数据暂不可用"))
-                    .font(.system(size: 8.5, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.orange.opacity(0.85))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(9)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color.white.opacity(0.04))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
         )
         .onAppear(perform: refresh)
         .confirmationDialog(
@@ -425,36 +318,36 @@ public struct StrategyModeCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     Image(systemName: profile.iconName)
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(profile.accent)
                     Text(profile.localizedName)
-                        .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(selected ? 0.95 : 0.72))
                     Spacer()
                     if pending {
                         ProgressView().controlSize(.mini)
                     } else if selected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 8.5))
+                            .font(.system(size: 13))
                             .foregroundColor(profile.accent)
                     }
                 }
                 HoverRevealText(
                     profile.localizedDescription,
-                    font: .system(size: 7.3),
-                    foregroundColor: .white.opacity(0.38),
+                    font: .system(size: 13),
+                    foregroundColor: .white.opacity(0.7),
                     lineLimit: 2,
                     popoverWidth: 320
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(7)
-            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 10)
                     .fill(selected ? profile.accent.opacity(0.12) : Color.white.opacity(0.025))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 7)
+                        RoundedRectangle(cornerRadius: 10)
                             .stroke(selected ? profile.accent.opacity(0.45) : Color.white.opacity(0.055), lineWidth: 0.7)
                     )
             )

@@ -98,6 +98,8 @@ from .repair import (
     repair_history,
     repair_run,
 )
+from .publication import PublicationResult, publish_parent_stop, publish_late_worker, recover_last
+from .turn_result import extract_parent_final
 from .latency import (
     LATENCY_FILE_NAME,
     LATENCY_SCHEMA_VERSION,
@@ -163,6 +165,11 @@ __all__ = [
     "extract_transcript_insights",
     "quota_delta",
     "collect_hook",
+    "PublicationResult",
+    "publish_parent_stop",
+    "publish_late_worker",
+    "recover_last",
+    "extract_parent_final",
     "merge_worker_values",
     "reconcile_orphan_workers",
     "run_maintenance",

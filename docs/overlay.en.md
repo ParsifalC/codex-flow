@@ -16,39 +16,59 @@ The **FlowPilot Overlay** is a 100% native macOS desktop companion built with **
 
 ---
 
-## Visual Architecture & 3 View Modes
+## Compact entry and four pages
+
+Turn goals, results, and orchestration are keyed by `session_id + turn_id`, not
+a chat-wide goal. New records require `publication` before appearing in details.
+Legacy completed history remains readable without backfilling missing fields.
+Host receipt delivery is verified per installation; see [telemetry compatibility](telemetry.en.md#store-goals-plans-and-results-per-turn).
+
+Task, History, Analytics, and Account tabs retain more, pin, collapse, switch,
+and copy actions. Task, History, and Account hide 300-minute (five-hour) quota
+windows while retaining collection and other periods. Native glass uses
+`NSVisualEffectView`, with an opaque fallback for reduced transparency.
+More → Language offers system, Chinese, and English; the saved setting applies immediately.
+Turn goals display in full without an expand button. Execution details start expanded;
+the full plan JSON remains optional. Plan counts describe staffing by task stage,
+while participation counts describe agents recorded this turn. Reusing a plan does
+not imply rerunning every stage. Statistics aggregate locally recorded completed
+turns in the selected period, not account-wide usage across devices.
+The panel is 420 pt wide, with 13–14 pt body/settings text, 16 pt goals, and
+secondary text of at least 12 pt. Long content wraps or scrolls; account reset
+times do not shrink to fit.
+
+This release targets native macOS UI. Windows keeps Python/CLI compatibility;
+its visual specification uses higher-opacity acrylic surfaces, or solid colors
+and clear borders without system material or in high-contrast mode. The
+[HTML preview](../apps/macos-overlay/flowpilot-overlay-navigation.html) does not
+prove a native Windows overlay exists or was verified. Older promotional images
+may still show the previous content model.
 
 ![FlowPilot 3-State Poster](assets/promo/flowpilot_promo_poster.png)
 
-### 1. 🟢 Micro Capsule (Idle & Ambient State)
-- **Ultra-Lightweight Footprint**: 68px frosted glass floating bubble with dynamic macOS `ultraThinMaterial`.
-- **Live Aura & Breathing Ring**: Dynamic rainbow gradient border with real-time status pulses:
-  - 🟢 **Idle / Success**: Green indicator, ready for new tasks.
-  - 🔵 **Running**: Cyan breathing pulse with live elapsed timer.
-  - 🟠 **Alert / Error**: Orange pulse alerting on failed runs or high rate limits.
-- **Token Badge**: Live token counter badge (e.g. `198.2k`) for the latest turn.
-- **Auto Half-Tuck**: Smart screen-edge docking and anti-overflow magnetic snapping.
+### 1. Compact entry
+- **Status**: Shows “New result”, “Completed”, or “Waiting”, plus the latest completed turn’s token usage.
+- **Unread indicator**: Clears when that turn is explicitly opened. Automatic expansion does not acknowledge it.
+- **Docking**: The 148×58pt glass capsule reduces to an icon, unread dot, and arrow at the edge.
+- **Accessibility**: Respects reduced transparency and reduced motion.
 
 ---
 
-### 2. ⚡️ Inspector (Live Telemetry & Quota Monitor)
-- **Task Objective & Outcome Card**: Smart extraction and presentation of the current task `Objective` and delivery `Conclusion / Outcome`.
-- **3 KPI Ring Gauges**: High-precision circular gauges for **Duration** (`1m 4s`), **Tokens** (`198.2k`), and **Cost Estimation**.
-- **Execution Trajectory & Logs**: Collapsible step trajectory (19+ steps) and detailed log stream.
-- **Account Rate Limits & Quotas**: Real-time 5m / 1h / 1d / 7d quota progression bars (`usedPercent`), per-turn quota deltas (`+1 pp`), and reset countdown timers.
-- **Agent Topology Tree**: Hierarchical display of the Parent Orchestrator model and Worker subagents.
-- **Token Distribution Bar**: Proportional breakdown of Prompt, Cached, Output, and Reasoning tokens.
-- **Skills & MCP Badges**: Automatic discovery and badge labeling of activated skills and MCP server tools.
-- **Historical View Navigation**: Browse any past run with one-click `[⚡️ Jump to Live]` to return to real-time tracking.
+### 2. Inspector (Completed Turn Details)
+- **Turn Goal and Result**: Read the goal only from `turn_context.goal` and the parent final only from `result`. Missing fields display “Not recorded”. Details appear only after parent Stop publishes the turn.
+- **Orchestration Configuration**: Execution details start collapsed. Show strategy, routing, and review settings, with planned counts separate from observed participants.
+- **Run Facts**: Compact duration, token, and actual participant counts appear after the goal and result.
+- **Complete Plan**: Expand the full JSON inside execution details, including plan origin and revision. Long goals and results can be expanded separately.
+- **Account Information**: The Account tab retains other quota windows and reset times. Five-hour windows are filtered only from presentation.
+- **Historical View Navigation**: Browse completed turns or return to the latest published snapshot. Each turn retains its own goal and result.
 
 ---
 
-### 3. 📜 History (Multi-Dimensional Chat & Session Timeline)
-- **Dimension 1 (Project Filter & Time Scope)**: Filter by individual project/repository or toggle `All` / `Today`.
-- **Dimension 2 (Chat Accordion)**: Groups multi-turn runs into chronological chat sessions (`#1`, `#2`, `#3`), displaying total tokens, aggregated duration, and max worker concurrency.
-- **Dimension 3 (Session Turns Stream)**: Expandable turn-level timeline with turn numbers (`#1.1`, `#1.2`), precise timestamps, execution durations, worker tags, and per-turn quota deltas (`+1%` / `-1%`).
-- **Instant Keyword Search**: Live filtering across chat titles, branch names, and turn prompts.
-- **One-Click Drilldown**: Clicking any session turn immediately switches to the Inspector view for that turn.
+### 3. History
+- **Projects and chats**: Groups by project path, then expands each chat into turns.
+- **Time filter**: Switch between All and Today, or refresh manually.
+- **Turn rows**: Show the goal, turn identifier, completion time, duration, and token usage.
+- **Search and details**: Search projects, chats, or goals; select a turn to open the shared task details.
 
 ---
 
@@ -67,7 +87,7 @@ The **FlowPilot Overlay** is a 100% native macOS desktop companion built with **
 FlowPilot includes native privacy protection (`isPrivacyMode`) to prevent internal project names, confidential prompts, or proprietary data from leaking during presentations, recordings, or screenshot captures.
 
 When enabled:
-- Task **Objective** and **Outcome** descriptions are smoothly blurred using native Gaussian filters (`blur(radius: 4.5)`).
+- Turn **Goal** and **Result** use the native privacy display rules.
 - Session **prompts** and **titles** in header bars and history rows are frosted.
 - **Project and repository names** in headers, history, and analytics cards are desensitized.
 
@@ -119,6 +139,7 @@ codex-flow overlay collapse     # Collapse to micro capsule
 codex-flow overlay tab inspector
 codex-flow overlay tab history
 codex-flow overlay tab analytics
+codex-flow overlay tab account
 
 # Historical view
 codex-flow overlay show 1       # Jump to specific task
