@@ -83,7 +83,7 @@ Strategy and routing are orthogonal.
 
 Keep the strategy gate receipt separate from the host turn receipt. Only a
 FlowPilot-participating parent turn, with telemetry enabled and a receipt
-delivered by a verified host context protocol, records this metadata. Project
+delivered by the current host UserPromptSubmit hook, records this metadata. Project
 is `cwd`, chat is `session_id`, and turn is `turn_id`. Each turn has its own
 goal; do not rewrite the user's message or transcript to record it.
 
@@ -103,14 +103,13 @@ different text returns `goal_conflict`. File arguments preserve quotes,
 newlines, and Unicode without shell interpolation. Never copy a parent
 receipt into a Worker handoff, export, summary, or log.
 
-Automatic goal/plan writes are enabled only on installations whose real Codex
-Desktop probe verified receipt delivery, same-turn CLI writes, and parent Stop
-binding. The verified Desktop UserPromptSubmit hook supplies the exact receipt
-through `hookSpecificOutput.additionalContext`. Use only that supplied receipt.
-Unverified or unsupported hosts show “未记录”. Do not fabricate receipt JSON,
-scan `turn-receipts`, use `last.json` or a unique active turn, or infer identity
-from `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, or other `CODEX_*` variables.
-`systemMessage` and arbitrary hook JSON do not prove host context support.
+Codex Desktop automatically supplies the exact current-turn receipt through the
+UserPromptSubmit hook's `hookSpecificOutput.additionalContext`; no probe or
+manual enable step is required. Use only that supplied receipt. Hosts that do
+not deliver one show “未记录”. Do not fabricate receipt JSON, scan
+`turn-receipts`, use `last.json` or a unique active turn, or infer identity from
+`CODEX_THREAD_ID`, `CODEX_SESSION_ID`, or other `CODEX_*` variables.
+`systemMessage` and arbitrary hook JSON do not prove a receipt was delivered.
 
 Missing, wrong-turn, expired, or child receipts reject writes with a JSON
 `error` and exit 2. `telemetry.enabled=false` returns `status=disabled` with

@@ -174,7 +174,7 @@ def _context_cli(args: list[str]) -> int:
               "  write-goal --receipt-file PATH --text-file PATH\n"
               "  write-plan --receipt-file PATH --plan-file PATH "
               "--origin compiled|reused|replanned\n"
-              "  enable-desktop-transport (requires a completed local Desktop probe)\n\n"
+              "  enable-desktop-transport (legacy compatibility diagnostic)\n\n"
               "Use an explicit host receipt and UTF-8 input files.")
         return 0
     if not telemetry_writes_enabled():

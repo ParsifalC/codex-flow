@@ -36,33 +36,24 @@ run and last writes, use `codex-flow telemetry recover-last --quiet`. Recovery
 does not send a completion notification. Disabled telemetry performs no state,
 lock, or IPC writes; historical reads remain available.
 
-**Compatibility is verified per installation.** The development installation has
-passed real Desktop receipt delivery, same-turn goal/full-plan writes, and parent
-Stop publication, and has explicitly enabled automatic delivery locally. New
-installations remain off until verified; other hosts need their own validation.
-Missing receipt/final evidence displays “Not recorded” rather than guessing from
-the latest turn, user prompt, or last assistant message. Python/CLI retain
-Windows-compatible code; native Windows locking still needs CI or device validation.
+**Host delivery is automatic.** Each real Codex Desktop parent
+`UserPromptSubmit` registers and delivers the exact current-turn receipt through
+`hookSpecificOutput.additionalContext`; users do not need to arm a probe or run
+an enable command. Hosts that cannot deliver a receipt display “Not recorded”
+rather than guessing from the latest turn, user prompt, or last assistant
+message. Python/CLI retain Windows-compatible code; native Windows locking still
+needs CI or device validation.
 
-The repository includes a one-turn Desktop probe in `tests/turn-context-desktop-probe.py`.
-Explicitly select a chat and working directory with `arm --session-id <id> --cwd <absolute-path>`.
-The default wait expires after 30 minutes. Add `--wait-for-next-turn` for manual
-validation across sessions; it still accepts only one parent turn in the selected chat and directory.
-The next real parent turn can receive its receipt path through
-`UserPromptSubmit.hookSpecificOutput.additionalContext`. A real user message must
-trigger the hook. `status` succeeds only after same-turn goal, full plan, and
-parent Stop publication match. Synthetic hooks and unit tests do not establish
-Desktop support, and the probe never enables global automatic writes.
-
-After `status` reports `supported_probe`, enable automatic delivery for this
-installation explicitly. An unverified probe returns `host_transport_unverified`
-without creating transport configuration:
+The repository still includes `tests/turn-context-desktop-probe.py` as an
+optional diagnostic for transcript format and receipt binding. Normal usage does
+not require it. The legacy command remains available for compatibility
+diagnostics, but it is not a prerequisite for automatic recording:
 
 ```bash
 codex-flow telemetry context enable-desktop-transport
 ```
 
-`bash tests/turn-context-host.sh` checks the installation’s actual Desktop probe
+`bash tests/turn-context-host.sh` only reads the optional Desktop diagnostic
 status. It never launches an extra model task or treats a CLI marker as Desktop evidence.
 
 Overlay startup uses `recover-last --quiet` to avoid IPC alerts while restoring history.

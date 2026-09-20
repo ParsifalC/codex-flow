@@ -52,7 +52,8 @@ fi
 
 SWIFT_COMPILER=(swiftc)
 if [[ -n "$developer_dir" ]]; then
-    SWIFT_COMPILER=(env "DEVELOPER_DIR=$developer_dir" xcrun swiftc)
+    swiftui_plugin_dir="$developer_dir/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins"
+    SWIFT_COMPILER=(env "DEVELOPER_DIR=$developer_dir" xcrun swiftc -plugin-path "$swiftui_plugin_dir")
     echo "Using SwiftUI macro-capable Xcode toolchain: $developer_dir"
 fi
 

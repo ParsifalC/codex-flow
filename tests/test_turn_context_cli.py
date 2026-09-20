@@ -125,6 +125,31 @@ publish_parent_stop(run_key=run_key(event),observed=event,completed_at_ms=123,
         self.assertEqual(json.loads(self.cli("enable-desktop-transport").stdout)["status"], "disabled")
         self.assertEqual(before, self.state_snapshot(self.home / "codex-flow"))
 
+    def test_default_desktop_parent_hook_delivers_without_probe_or_enable(self):
+        code = """
+import json, sys
+from pathlib import Path
+from telemetry_core.host_transport import hook_context
+home = Path(sys.argv[1])
+transcript = home / 'desktop.jsonl'
+transcript.write_text(json.dumps({'type': 'session_meta', 'payload': {
+    'id': 'chat-a', 'source': 'vscode', 'originator': 'Codex Desktop', 'thread_source': 'user'}}) + '\\n', encoding='utf-8')
+for turn_id in ('turn-1', 'turn-2'):
+    event = {'hook_event_name': 'UserPromptSubmit', 'session_id': 'chat-a', 'turn_id': turn_id,
+             'cwd': str(home), 'transcript_path': str(transcript)}
+    output = hook_context(event)
+    assert output and output['hookSpecificOutput']['hookEventName'] == 'UserPromptSubmit'
+    assert 'additionalContext' in output['hookSpecificOutput']
+receipts = list((home / 'codex-flow/telemetry/turn-receipts').glob('*.json'))
+assert len(receipts) == 2
+assert {(json.loads(path.read_text())['session_id'], json.loads(path.read_text())['turn_id']) for path in receipts} == {
+    ('chat-a', 'turn-1'), ('chat-a', 'turn-2')}
+assert not (home / 'codex-flow/telemetry/desktop-context-transport.json').exists()
+"""
+        result = subprocess.run([sys.executable, "-c", code, str(self.home)], env=self.env,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_enable_rejects_damaged_probe_without_writing_transport(self):
         root = self.home / "codex-flow/telemetry"
         root.mkdir(parents=True)
