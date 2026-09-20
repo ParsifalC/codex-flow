@@ -53,6 +53,7 @@ critical_effort = "xhigh"
 [worker]
 model_policy = "latest-efficient"
 model = "auto"
+model_provider = "auto"
 resolved_model = "gpt-5.6-luna"
 min_reasoning_effort = "xhigh"
 reasoning_policy = "adaptive"
@@ -95,6 +96,27 @@ quality_intent = normal
 ```
 
 `quality_intent` 不写入持久化配置；它属于当前任务 TaskProfile，默认 `normal`。
+
+### Worker 模型 Provider
+
+`[worker].model_provider` 是可选的持久化 Worker 运行时配置，默认值为
+`"auto"`。`auto` 会保留 Codex 主机的既有 provider/model 默认行为；设置为
+明确的 provider（例如 `"anthropic"`）时，codex-flow 会把 Worker 的解析后
+`model` 与 `model_provider` 写入三个受管 Agent 文件：
+`~/.codex/agents/worker-explorer.toml`、`worker-implementer.toml` 和
+`worker-reviewer.toml`。因此 Parent 可以继续使用自己的 provider，而 Worker
+可以单独接入 Claude 等 provider。升级时会保留已有的显式 provider；改回
+`auto` 会移除这两个受管字段，让主机默认值重新生效。
+
+```toml
+[worker]
+model = "claude-sonnet-4-5"
+model_provider = "anthropic"
+```
+
+安装器也支持环境变量 `CODEX_FLOW_WORKER_MODEL_PROVIDER`。Provider 配置属于
+持久化 Worker/Agent 运行时，不会加入单次任务的 ExecutionPlan，也不会改变
+policy schema v4。
 
 安装或更新会迁移到 schema v4，同时保留已有支持字段。也就是说：**已有用户的自定义 reasoning matrix 不会因为升级而被新默认值覆盖**；新默认值主要影响全新安装或用户显式重置后的配置。
 
@@ -523,6 +545,7 @@ planned_worker_count
 | `CODEX_FLOW_PARENT_MIN_EFFORT` | `high` | Parent reasoning floor |
 | `CODEX_FLOW_WORKER_MODEL_POLICY` | `latest-efficient` | Worker baseline capability policy |
 | `CODEX_FLOW_WORKER_MODEL` | `auto` | Worker baseline model request |
+| `CODEX_FLOW_WORKER_MODEL_PROVIDER` | `auto` | Worker managed-agent model provider；`auto` 保留主机默认值 |
 | `CODEX_FLOW_WORKER_MIN_EFFORT` | `xhigh` | Worker baseline reasoning floor |
 | `CODEX_FLOW_REASONING_ROLLOUT_MODE` | `shadow` | efficient delegated Worker rollout mode |
 | `CODEX_FLOW_REASONING_ROLLOUT_MINIMUM` | `high` | rollout minimum floor |

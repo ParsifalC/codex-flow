@@ -28,6 +28,14 @@ assert PKG_SPEC and PKG_SPEC.loader
 packager = importlib.util.module_from_spec(PKG_SPEC)
 PKG_SPEC.loader.exec_module(packager)
 
+RUNTIME_SPEC = importlib.util.spec_from_file_location(
+    "codex_flow_runtime_config", ROOT / "scripts" / "update_runtime_config.py"
+)
+assert RUNTIME_SPEC and RUNTIME_SPEC.loader
+runtime_config = importlib.util.module_from_spec(RUNTIME_SPEC)
+sys.modules[RUNTIME_SPEC.name] = runtime_config
+RUNTIME_SPEC.loader.exec_module(runtime_config)
+
 
 class UpdaterTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -92,6 +100,40 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue(updater.is_newer("1.8.0", "1.8.0-beta.3"))
         self.assertFalse(updater.is_newer("1.8.0-beta.1", "1.8.0"))
         self.assertTrue(updater.is_newer("2.0", "1.99.99"))
+
+    def test_worker_agent_provider_is_explicit_or_omitted(self) -> None:
+        defaults = self.root / "defaults.toml"
+        defaults.write_text(
+            '[models]\nworker_model = "fixture-worker"\n'
+            '[reasoning.worker]\nminimum = "xhigh"\n'
+            '[runtime]\nmax_concurrent_threads = 4\n',
+            encoding="utf-8",
+        )
+        agents = self.codex_home / "agents"
+        agents.mkdir()
+        for name in runtime_config.MANAGED_AGENT_FILES:
+            (agents / name).write_text(
+                'name = "fixture"\nmodel = "old-model"\n'
+                'model_provider = "old-provider"\n',
+                encoding="utf-8",
+            )
+
+        policy = self.codex_home / "worker-policy.toml"
+        policy.write_text(
+            '[worker]\nmodel = "claude-sonnet"\nmodel_provider = "anthropic"\n',
+            encoding="utf-8",
+        )
+        runtime_config.reconcile(self.codex_home / "runtime.toml", policy, defaults, agents)
+        for name in runtime_config.MANAGED_AGENT_FILES:
+            text = (agents / name).read_text(encoding="utf-8")
+            self.assertIn('model = "claude-sonnet"', text)
+            self.assertIn('model_provider = "anthropic"', text)
+
+        policy.write_text('[worker]\nmodel = "auto"\nmodel_provider = "auto"\n', encoding="utf-8")
+        runtime_config.reconcile(self.codex_home / "runtime.toml", policy, defaults, agents)
+        for name in runtime_config.MANAGED_AGENT_FILES:
+            text = (agents / name).read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?m)^model(?:_provider)?\s*=")
 
     def test_check_writes_shared_state_and_menu_label(self) -> None:
         manifest_path = self.root / "manifest.json"

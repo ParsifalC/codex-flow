@@ -1105,17 +1105,27 @@ def _reconcile_runtime_config(package_root: Path) -> None:
         raise RuntimeError("release package is missing runtime config reconciler")
     if not defaults.exists():
         raise RuntimeError("release package is missing policy defaults")
+    command = [
+        sys.executable,
+        str(reconciler),
+        "--config",
+        str(_codex_home() / "config.toml"),
+        "--policy",
+        str(_policy_path()),
+        "--defaults",
+        str(defaults),
+    ]
+    # The optional flag keeps rollback compatible with packages produced
+    # before worker provider support while allowing current packages to
+    # reconcile the managed agent templates as part of OTA.
+    try:
+        supports_agents_dir = "--agents-dir" in reconciler.read_text(encoding="utf-8")
+    except OSError:
+        supports_agents_dir = False
+    if supports_agents_dir:
+        command.extend(["--agents-dir", str(_codex_home() / "agents")])
     subprocess.run(
-        [
-            sys.executable,
-            str(reconciler),
-            "--config",
-            str(_codex_home() / "config.toml"),
-            "--policy",
-            str(_policy_path()),
-            "--defaults",
-            str(defaults),
-        ],
+        command,
         check=True,
         env=os.environ.copy(),
     )
@@ -1340,8 +1350,8 @@ def _install_package(package_root: Path, version: str, manifest: dict[str, Any])
     shutil.copytree(package_root, staged_version)
     try:
         applied_migrations = _run_migrations(staged_version)
-        _reconcile_runtime_config(staged_version)
         _sync_managed_runtime(staged_version)
+        _reconcile_runtime_config(staged_version)
         _run_health_check()
         atomic_write_json(_migration_state_path(), {"applied": applied_migrations})
         if target_version.exists():
@@ -1455,8 +1465,8 @@ def _rollback_unlocked() -> UpdateState:
             assert historical_backup is not None
             _restore_snapshot(historical_backup)
         else:
-            _reconcile_runtime_config(package_root)
             _sync_managed_runtime(package_root)
+            _reconcile_runtime_config(package_root)
         _run_health_check()
         atomic_write_text(state_dir / "version", previous + "\n")
         atomic_write_text(state_dir / "current-version", previous + "\n")

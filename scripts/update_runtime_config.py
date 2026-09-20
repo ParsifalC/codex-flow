@@ -11,6 +11,14 @@ import tempfile
 from pathlib import Path
 
 
+MANAGED_AGENT_FILES = (
+    "worker-explorer.toml",
+    "worker-implementer.toml",
+    "worker-reviewer.toml",
+)
+MANAGED_AGENT_KEYS = ("model", "model_provider")
+
+
 def read_value(text: str, section: str, key: str) -> str | None:
     section_match = re.search(
         rf"(?ms)^\[{re.escape(section)}\]\s*\n(.*?)(?=^\[[^\n]+\]\s*$|\Z)", text
@@ -22,7 +30,13 @@ def read_value(text: str, section: str, key: str) -> str | None:
         return None
     value = re.sub(r"\s+#.*$", "", key_match.group(1)).strip()
     if len(value) >= 2 and value[0] == value[-1] == '"':
-        return value[1:-1]
+        try:
+            # TOML basic-string escapes overlap with JSON's, and decoding here
+            # prevents a previously escaped quote/backslash from being escaped
+            # a second time when we render managed values.
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value[1:-1]
     return value
 
 
@@ -73,7 +87,56 @@ def quoted(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def reconcile(config: Path, policy: Path, defaults: Path) -> None:
+def _set_agent_values(text: str, values: dict[str, str | None]) -> str:
+    """Set or remove codex-flow-owned top-level agent keys.
+
+    Agent templates are intentionally kept free of model settings so Codex's
+    host defaults remain authoritative for the normal ``auto`` path.  When a
+    provider is explicitly selected, this small line-oriented reconciler adds
+    the provider and resolved model without disturbing the rest of the agent
+    instructions.
+    """
+
+    for key, value in values.items():
+        key_re = re.compile(rf"(?m)^[ \t]*{re.escape(key)}[ \t]*=.*(?:\r?\n|$)")
+        if value is None:
+            text = key_re.sub("", text)
+            continue
+        line = f"{key} = {value}\n"
+        if key_re.search(text):
+            text = key_re.sub(line, text, count=1)
+        else:
+            if text and not text.endswith(("\n", "\r")):
+                text += "\n"
+            text += line
+    return text
+
+
+def _reconcile_agent_files(agents_dir: Path, model: str, provider: str) -> None:
+    values: dict[str, str | None]
+    if provider == "auto":
+        values = {key: None for key in MANAGED_AGENT_KEYS}
+    else:
+        values = {"model": quoted(model), "model_provider": quoted(provider)}
+
+    for name in MANAGED_AGENT_FILES:
+        path = agents_dir / name
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except OSError:
+            # A partial/older release may not ship all templates.  The next
+            # install or OTA sync will create them; do not make reconciliation
+            # fail solely because a managed file is absent.
+            continue
+        atomic_write(path, _set_agent_values(text, values))
+
+
+def reconcile(
+    config: Path,
+    policy: Path,
+    defaults: Path,
+    agents_dir: Path | None = None,
+) -> None:
     policy_text = policy.read_text(encoding="utf-8-sig")
     defaults_text = defaults.read_text(encoding="utf-8-sig")
     try:
@@ -82,6 +145,7 @@ def reconcile(config: Path, policy: Path, defaults: Path) -> None:
         config_text = ""
 
     requested_model = read_value(policy_text, "worker", "model") or "auto"
+    requested_provider = read_value(policy_text, "worker", "model_provider") or "auto"
     default_model = read_value(defaults_text, "models", "worker_model")
     if not default_model:
         raise RuntimeError("release defaults are missing [models].worker_model")
@@ -118,6 +182,8 @@ def reconcile(config: Path, policy: Path, defaults: Path) -> None:
 
     atomic_write(policy, policy_text)
     atomic_write(config, config_text)
+    if agents_dir is not None:
+        _reconcile_agent_files(agents_dir, resolved_model, requested_provider)
 
 
 def main() -> int:
@@ -125,8 +191,9 @@ def main() -> int:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--defaults", required=True, type=Path)
+    parser.add_argument("--agents-dir", type=Path)
     args = parser.parse_args()
-    reconcile(args.config, args.policy, args.defaults)
+    reconcile(args.config, args.policy, args.defaults, args.agents_dir)
     return 0
 
 

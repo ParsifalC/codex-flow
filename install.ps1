@@ -42,6 +42,7 @@ $defaultsText = Read-Utf8NoBom $Defaults
 $existingText = if (Test-Path $Policy) { Read-Utf8NoBom $Policy } else { '' }
 
 $DefaultWorkerModel = Get-TomlValue $defaultsText 'models' 'worker_model'
+$DefaultWorkerModelProvider = Get-TomlValue $defaultsText 'models' 'worker_model_provider'
 $DefaultWorkerPolicy = Get-TomlValue $defaultsText 'models' 'worker_policy'
 $DefaultParentPolicy = Get-TomlValue $defaultsText 'models' 'parent_policy'
 $DefaultParentMinModel = Get-TomlValue $defaultsText 'models' 'parent_min_model'
@@ -82,6 +83,7 @@ $ExistingParentComplexEffort = Existing-OrDefault $existingText 'parent' 'comple
 $ExistingParentCriticalEffort = Existing-OrDefault $existingText 'parent' 'critical_effort' $DefaultParentCriticalEffort
 $ExistingWorkerPolicy = Existing-OrDefault $existingText 'worker' 'model_policy' $DefaultWorkerPolicy
 $ExistingWorkerModel = Existing-OrDefault $existingText 'worker' 'model' 'auto'
+$ExistingWorkerModelProvider = Existing-OrDefault $existingText 'worker' 'model_provider' $DefaultWorkerModelProvider
 $ExistingWorkerMinEffort = Existing-OrDefault $existingText 'worker' 'min_reasoning_effort' $DefaultWorkerMinEffort
 $ExistingWorkerRoutineEffort = Existing-OrDefault $existingText 'worker' 'routine_effort' $DefaultWorkerRoutineEffort
 $ExistingWorkerComplexEffort = Existing-OrDefault $existingText 'worker' 'complex_effort' $DefaultWorkerComplexEffort
@@ -117,6 +119,7 @@ $ParentCriticalEffort = if ($env:CODEX_FLOW_PARENT_CRITICAL_EFFORT) { $env:CODEX
 $WorkerModelPolicy = if ($env:CODEX_FLOW_WORKER_MODEL_POLICY) { $env:CODEX_FLOW_WORKER_MODEL_POLICY } else { $ExistingWorkerPolicy }
 $WorkerRequested = if ($env:CODEX_FLOW_WORKER_MODEL) { $env:CODEX_FLOW_WORKER_MODEL } else { $ExistingWorkerModel }
 $WorkerModel = if ($WorkerRequested -eq 'auto') { $DefaultWorkerModel } else { $WorkerRequested }
+$WorkerModelProvider = if ($env:CODEX_FLOW_WORKER_MODEL_PROVIDER) { $env:CODEX_FLOW_WORKER_MODEL_PROVIDER } else { $ExistingWorkerModelProvider }
 $WorkerMinEffort = if ($env:CODEX_FLOW_WORKER_MIN_EFFORT) { $env:CODEX_FLOW_WORKER_MIN_EFFORT } else { $ExistingWorkerMinEffort }
 $WorkerRoutineEffort = if ($env:CODEX_FLOW_WORKER_ROUTINE_EFFORT) { $env:CODEX_FLOW_WORKER_ROUTINE_EFFORT } else { $ExistingWorkerRoutineEffort }
 $WorkerComplexEffort = if ($env:CODEX_FLOW_WORKER_COMPLEX_EFFORT) { $env:CODEX_FLOW_WORKER_COMPLEX_EFFORT } else { $ExistingWorkerComplexEffort }
@@ -166,6 +169,7 @@ if ($UpdateNotifyCli -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_NOTIFY
 if ($UpdateNotifyApp -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_NOTIFY_APP must be true or false' }
 if ($UpdateAutoInstall -notin @('true','false')) { throw 'CODEX_FLOW_UPDATE_AUTO_INSTALL must be true or false' }
 if ($UpdateInterval -notmatch '^[1-9][0-9]*$') { throw 'CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS must be a positive integer' }
+if ([string]::IsNullOrWhiteSpace($WorkerModelProvider) -or $WorkerModelProvider -match '[\r\n]') { throw 'CODEX_FLOW_WORKER_MODEL_PROVIDER must be a non-empty single-line value' }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $CodexHome 'agents'),(Join-Path $CodexHome 'skills/flow-pilot'),$StateDir,(Join-Path $StateDir 'state'),(Join-Path $StateDir 'versions'),$BinDir | Out-Null
 $InstructionHelper = Join-Path $StateDir 'manage-instructions.py'
@@ -231,6 +235,7 @@ critical_effort = "$ParentCriticalEffort"
 [worker]
 model_policy = "$WorkerModelPolicy"
 model = "$WorkerRequested"
+model_provider = "$WorkerModelProvider"
 resolved_model = "$WorkerModel"
 min_reasoning_effort = "$WorkerMinEffort"
 reasoning_policy = "adaptive"
@@ -269,6 +274,8 @@ Write-Utf8NoBom $Policy $PolicyText
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-explorer.toml') (Join-Path $CodexHome 'agents/worker-explorer.toml') -Force
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-implementer.toml') (Join-Path $CodexHome 'agents/worker-implementer.toml') -Force
 Copy-Item (Join-Path $RootDir 'templates/agents/worker-reviewer.toml') (Join-Path $CodexHome 'agents/worker-reviewer.toml') -Force
+& python3 (Join-Path $RootDir 'scripts/update_runtime_config.py') --config $Config --policy $Policy --defaults $Defaults --agents-dir (Join-Path $CodexHome 'agents')
+if ($LASTEXITCODE -ne 0) { throw 'Worker agent runtime configuration reconciliation failed' }
 Copy-Item (Join-Path $RootDir 'templates/skills/flow-pilot/SKILL.md') (Join-Path $CodexHome 'skills/flow-pilot/SKILL.md') -Force
 Remove-Item (Join-Path $CodexHome 'agents/luna-explorer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorAction SilentlyContinue

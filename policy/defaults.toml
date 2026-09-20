@@ -9,6 +9,7 @@ parent_min_model = "auto"
 parent_recommended_model = "gpt-5.6-sol"
 worker_policy = "latest-efficient"
 worker_model = "gpt-5.6-luna"
+worker_model_provider = "auto"
 
 # FlowPilot is the strategy runtime. The default profile preserves the historical
 # codex-flow objective while offloading more deep execution to cheap workers.
