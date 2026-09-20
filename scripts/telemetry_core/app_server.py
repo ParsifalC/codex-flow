@@ -342,6 +342,12 @@ def quota_windows(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
     codex = by_id.get("codex")
     if not isinstance(codex, dict):
         codex = {}
+    # Transcript token_count events carry the selected limit directly, while
+    # app-server responses wrap it in ``rateLimits`` or ``rateLimitsByLimitId``.
+    if not legacy and not codex and any(
+        isinstance(snapshot.get(slot), dict) for slot in ("primary", "secondary")
+    ):
+        legacy = snapshot
 
     candidates: list[tuple[tuple[int, int], str, dict[str, Any]]] = []
     for slot_index, slot in enumerate(("primary", "secondary")):
@@ -355,7 +361,12 @@ def quota_windows(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
         duration = _first_quota_number(
             codex_window,
             legacy_window,
-            ("windowDurationMins", "windowMinutes", "window_duration_mins"),
+            (
+                "windowDurationMins",
+                "windowMinutes",
+                "window_duration_mins",
+                "window_minutes",
+            ),
             integer=True,
         )
         reset = _first_quota_number(codex_window, legacy_window, ("resetsAt", "resets_at"))
@@ -886,6 +897,84 @@ def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | Non
                 return None
     result["source"] = "transcript"
     return result
+
+
+def transcript_turn_quota(
+    path_value: Any, turn_id: Any
+) -> list[dict[str, Any]] | None:
+    """Return the last account quota sample recorded during one transcript turn.
+
+    The app-server quota request can time out at turn completion, while the
+    transcript's token-count events still carry the account watermark.  Keep
+    the fallback bound to the exact turn and retain the source timestamp so
+    callers can label the value as estimated.
+    """
+    if not isinstance(path_value, str) or not path_value or not turn_id:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+
+    target_turn = str(turn_id)
+    current_turn: str | None = None
+    last_sample: list[dict[str, Any]] | None = None
+
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "event_msg":
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                kind = payload.get("type")
+                explicit_turn = payload.get("turn_id")
+                explicit_turn_id = str(explicit_turn) if explicit_turn is not None else None
+
+                if kind == "task_started":
+                    current_turn = explicit_turn_id
+                    continue
+
+                if kind == "token_count":
+                    belongs_to_target = (
+                        explicit_turn_id == target_turn
+                        if explicit_turn_id is not None
+                        else current_turn == target_turn
+                    )
+                    if not belongs_to_target:
+                        continue
+                    raw_snapshot = payload.get("rate_limits")
+                    if raw_snapshot is None:
+                        raw_snapshot = payload.get("rateLimits")
+                    if not isinstance(raw_snapshot, dict):
+                        continue
+                    if isinstance(raw_snapshot.get("result"), dict):
+                        raw_snapshot = raw_snapshot["result"]
+                    windows = quota_windows(raw_snapshot)
+                    if not windows:
+                        continue
+                    timestamp = record.get("timestamp") or payload.get("timestamp")
+                    sampled_at_ms = _transcript_timestamp_ms(timestamp)
+                    if sampled_at_ms is not None:
+                        windows = [
+                            {**window, "sampled_at_ms": sampled_at_ms}
+                            for window in windows
+                        ]
+                    last_sample = windows
+                    continue
+
+                if kind in {"task_complete", "turn_aborted"}:
+                    completed_turn = explicit_turn_id or current_turn
+                    if completed_turn == current_turn:
+                        current_turn = None
+    except (OSError, UnicodeError):
+        return None
+
+    return last_sample
 
 
 def merge_usage(

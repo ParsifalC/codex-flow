@@ -28,6 +28,59 @@ assert snapshot["rateLimitsByLimitId"]["codex"]
 assert len(calls) == 1, calls
 PY
 
+# When the finish app-server snapshot is unavailable, recover the last exact
+# turn watermark from token_count events and keep it explicitly estimated.
+python3 - "$TMP/quota-transcript.jsonl" "$ROOT_DIR/scripts" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[2])
+from telemetry_core.app_server import transcript_turn_quota
+from telemetry_core.repair import repair_run
+
+def event(kind, **payload):
+    return {"timestamp": "2026-09-20T02:10:42.000Z", "type": "event_msg", "payload": {"type": kind, **payload}}
+
+records = [
+    event("task_started", turn_id="turn-a"),
+    event("token_count", info={}, rate_limits={
+        "limit_id": "codex",
+        "primary": {"used_percent": 0.0, "window_minutes": 10080, "resets_at": 1},
+    }),
+    event("token_count", info={}, rate_limits={
+        "limit_id": "codex",
+        "primary": {"used_percent": 18.0, "window_minutes": 10080, "resets_at": 2},
+    }),
+    event("task_complete", turn_id="turn-a"),
+    event("task_started", turn_id="turn-b"),
+    event("token_count", info={}, rate_limits={
+        "limit_id": "codex",
+        "primary": {"used_percent": 21.0, "window_minutes": 10080, "resets_at": 3},
+    }),
+]
+path = sys.argv[1]
+with open(path, "w", encoding="utf-8") as stream:
+    for record in records:
+        stream.write(json.dumps(record) + "\n")
+
+quota = transcript_turn_quota(path, "turn-a")
+assert quota and quota[0]["used_percent"] == 18.0, quota
+assert quota[0]["sampled_at_ms"] > 0, quota
+assert transcript_turn_quota(path, "turn-b")[0]["used_percent"] == 21.0
+
+run = {
+    "turn_id": "turn-a",
+    "transcript_path": path,
+    "quota_before": [{"slot": "primary", "used_percent": 0.0, "window_duration_mins": 10080}],
+    "quota_after": [],
+    "quota_change_during_run": [],
+}
+repair_run(run)
+assert run["quota_after_source"] == "transcript_estimate", run
+assert run["quota_after"][0]["used_percent"] == 18.0, run
+assert run["quota_change_during_run"][0]["delta_percentage_points"] == 18.0, run
+PY
+
 cat > "$TMP/fake-app-server.py" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
@@ -458,4 +511,3 @@ stats_out="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats)"
 stats_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats --project work --json)"
 python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["project_filter"] == "work" and s["total_runs"] >= 1' <<<"$stats_json"
 printf 'telemetry CLI query and project stats tests passed\n'
-

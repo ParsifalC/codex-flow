@@ -20,6 +20,7 @@ from .app_server import (
     quota_windows,
     session_index_metadata,
     transcript_turn_started_at,
+    transcript_turn_quota,
     transcript_turn_usage,
     usage_delta,
     usage_summary,
@@ -1124,10 +1125,6 @@ def collect_hook(event: dict[str, Any]) -> None:
                 if server.available
                 else None
             )
-            run["quota_after"] = quota_after
-            run["quota_change_during_run"] = quota_delta(
-                run.get("quota_before", []), quota_after
-            )
             try:
                 from .quota_ledger import get_db, record_observation, export_quota_summary, resolve_account_id
                 resolved_account = resolve_account_id(event.get("account_id"))
@@ -1166,6 +1163,28 @@ def collect_hook(event: dict[str, Any]) -> None:
                         transcript_path = resolved
             if transcript_path:
                 run["transcript_path"] = transcript_path
+
+            # The app-server finish read can time out after the transcript has
+            # already recorded a final account watermark. Keep this exact-turn
+            # value as an explicitly estimated after snapshot so the UI can
+            # show it without treating it as canonical attribution.
+            quota_after_source = None
+            if not quota_after:
+                transcript_quota = transcript_turn_quota(
+                    transcript_path,
+                    event.get("turn_id"),
+                )
+                if transcript_quota:
+                    quota_after = transcript_quota
+                    quota_after_source = "transcript_estimate"
+            run["quota_after"] = quota_after
+            run["quota_change_during_run"] = quota_delta(
+                run.get("quota_before", []), quota_after
+            )
+            if quota_after_source:
+                run["quota_after_source"] = quota_after_source
+            else:
+                run.pop("quota_after_source", None)
 
             transcript_usage = transcript_turn_usage(
                 transcript_path,

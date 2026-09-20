@@ -488,10 +488,17 @@ public struct HistoryChatRow: View {
             let deltaMagnitude = abs(obs) < 0.95
                 ? String(format: "%.1f%%", abs(obs))
                 : String(format: "%.0f%%", abs(obs))
-            Text(formatted)
+            let marker = chat.hasEstimatedQuota ? "≈" : ""
+            let helpText = chat.hasEstimatedQuota
+                ? (obs > 0
+                    ? String(format: L("Quota consumed (Estimated from transcript): %@", "配额消耗（基于原始日志估算）：%@"), deltaMagnitude)
+                    : String(format: L("Quota restored (Estimated from transcript): %@", "配额恢复（基于原始日志估算）：%@"), deltaMagnitude))
+                : String(format: L("Observed account change during execution: %@ (Attribution pending)", "执行期间账户变化：%@（归因待完成）"), deltaMagnitude)
+            let estimateLabel = chat.hasEstimatedQuota ? L(" est.", " 估") : ""
+            Text("\(marker)\(formatted)\(estimateLabel)")
                 .font(.system(size: 7.5, weight: .medium))
                 .foregroundColor(.white.opacity(0.45))
-                .help(String(format: L("Observed account change during execution: %@ (Attribution pending)", "执行期间账户变化：%@（归因待完成）"), deltaMagnitude))
+                .help(helpText)
         }
     }
 
@@ -696,10 +703,17 @@ public struct HistoryRunRow: View {
             let deltaMagnitude = abs(obs) < 0.95
                 ? String(format: "%.1f%%", abs(obs))
                 : String(format: "%.0f%%", abs(obs))
-            Text(formatted)
+            let marker = run.isQuotaEstimated ? "≈" : ""
+            let helpText = run.isQuotaEstimated
+                ? (obs > 0
+                    ? String(format: L("Quota consumed (Estimated from transcript): %@", "配额消耗（基于原始日志估算）：%@"), deltaMagnitude)
+                    : String(format: L("Quota restored (Estimated from transcript): %@", "配额恢复（基于原始日志估算）：%@"), deltaMagnitude))
+                : String(format: L("Observed account change during execution: %@ (Attribution pending)", "执行期间账户变化：%@（归因待完成）"), deltaMagnitude)
+            let estimateLabel = run.isQuotaEstimated ? L(" est.", " 估") : ""
+            Text("\(marker)\(formatted)\(estimateLabel)")
                 .font(.system(size: 7.2, weight: .medium))
                 .foregroundColor(.white.opacity(0.45))
-                .help(String(format: L("Observed account change during execution: %@ (Attribution pending)", "执行期间账户变化：%@（归因待完成）"), deltaMagnitude))
+                .help(helpText)
         }
     }
 
