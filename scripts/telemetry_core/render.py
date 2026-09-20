@@ -223,19 +223,28 @@ def render_summary(run: dict[str, Any]) -> str:
             if reset:
                 reset_pieces.append(f"{label} {reset}")
         if pieces:
+            estimated_note = run.get("quota_after_source") == "transcript_estimate"
+            quota_label_en = "Account Quota (Estimated from transcript)" if estimated_note else "Account Quota"
+            quota_label_zh = "账户额度（基于原始日志估算）" if estimated_note else "账户额度"
             lines.append(T(
                 "  ├─ Quota & Windows ─────────────────────────────────────────────────┤",
                 "  ├─ 额度与时间窗 ───────────────────────────────────────────────────┤",
             ))
-            append_wrapped_line(T(f"• Account Quota:  {' | '.join(pieces)}", f"• 账户额度:       {' | '.join(pieces)}"))
+            append_wrapped_line(T(f"• {quota_label_en}:  {' | '.join(pieces)}", f"• {quota_label_zh}：       {' | '.join(pieces)}"))
             if reset_pieces:
                 append_wrapped_line(T(f"• Resets:         {' | '.join(reset_pieces)}", f"• 重置时间:       {' | '.join(reset_pieces)}"))
 
     skills = run.get("skills_used") or []
     tools = run.get("tools_used") or []
-    summary_info = run.get("summary_info") or {}
+    result = run.get("result") or {}
+    result_text = result.get("text") if (
+        run.get("publication") and result.get("source") == "parent_final"
+        and result.get("turn_id") == run.get("turn_id")
+    ) else None
+    if not isinstance(result_text, str):
+        result_text = None
 
-    if skills or tools or summary_info.get("conclusion"):
+    if skills or tools or result_text:
         lines.append(T(
             "  ├─ Insights & Trajectory ───────────────────────────────────────────┤",
             "  ├─ 执行详情与技能洞察 ──────────────────────────────────────────────┤",
@@ -246,11 +255,11 @@ def render_summary(run: dict[str, Any]) -> str:
         if tools:
             tools_str = ", ".join(f"{t.get('name')} (×{t.get('count', 1)})" for t in tools)
             append_wrapped_line(T(f"• Tools / MCP:    {tools_str}", f"• 工具 / MCP:     {tools_str}"))
-        if summary_info.get("conclusion"):
-            conc = " ".join(summary_info["conclusion"].split())
-            if len(conc) > 100:
-                conc = conc[:97] + "..."
-            append_wrapped_line(T(f"• Conclusion:     {conc}", f"• 交付结论:       {conc}"))
+        if result_text:
+            preview = " ".join(result_text.split())
+            if len(preview) > 100:
+                preview = preview[:97] + "..."
+            append_wrapped_line(T(f"• Result:         {preview}", f"• 结果:           {preview}"))
 
     lines.append("  ╰───────────────────────────────────────────────────────────────────╯")
     lines.append(T(

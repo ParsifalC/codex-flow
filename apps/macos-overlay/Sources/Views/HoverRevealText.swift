@@ -24,7 +24,7 @@ public struct HoverRevealText: View {
 
     public init(
         _ text: String,
-        font: Font = .system(size: 10),
+        font: Font = .system(size: 12),
         foregroundColor: Color = .white,
         lineLimit: Int? = 1,
         truncationMode: Text.TruncationMode = .tail,

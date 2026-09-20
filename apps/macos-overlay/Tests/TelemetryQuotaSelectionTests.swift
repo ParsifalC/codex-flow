@@ -12,7 +12,29 @@ struct TelemetryQuotaSelectionTests {
         testMissingWeeklyWindowDoesNotFallBackToFiveHour()
         testRemainingMetricsStayExplicit()
         testFallbackDeltaComputedFromBeforeAndAfter()
+        testTranscriptQuotaEstimateIsExplicit()
         print("Telemetry quota selection regression tests passed")
+    }
+
+    private static func testTranscriptQuotaEstimateIsExplicit() {
+        let before = [
+            QuotaWindow(slot: "primary", usedPercent: 0.0, windowDurationMins: 10_080)
+        ]
+        let after = [
+            QuotaWindow(slot: "primary", usedPercent: 18.0, windowDurationMins: 10_080)
+        ]
+        let estimated = TaskRun(
+            sessionId: "quota-test-transcript",
+            turnId: UUID().uuidString,
+            status: "completed",
+            quotaBefore: before,
+            quotaAfter: after,
+            quotaAfterSource: "transcript_estimate"
+        )
+
+        precondition(estimated.isQuotaEstimated)
+        precondition(estimated.observedAccountDelta == 18.0)
+        precondition(estimated.canonicalQuotaDelta == nil)
     }
 
     private static func testFallbackDeltaComputedFromBeforeAndAfter() {

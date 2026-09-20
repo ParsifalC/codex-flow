@@ -28,6 +28,59 @@ assert snapshot["rateLimitsByLimitId"]["codex"]
 assert len(calls) == 1, calls
 PY
 
+# When the finish app-server snapshot is unavailable, recover the last exact
+# turn watermark from token_count events and keep it explicitly estimated.
+python3 - "$TMP/quota-transcript.jsonl" "$ROOT_DIR/scripts" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[2])
+from telemetry_core.app_server import transcript_turn_quota
+from telemetry_core.repair import repair_run
+
+def event(kind, **payload):
+    return {"timestamp": "2026-09-20T02:10:42.000Z", "type": "event_msg", "payload": {"type": kind, **payload}}
+
+records = [
+    event("task_started", turn_id="turn-a"),
+    event("token_count", info={}, rate_limits={
+        "limit_id": "codex",
+        "primary": {"used_percent": 0.0, "window_minutes": 10080, "resets_at": 1},
+    }),
+    event("token_count", info={}, rate_limits={
+        "limit_id": "codex",
+        "primary": {"used_percent": 18.0, "window_minutes": 10080, "resets_at": 2},
+    }),
+    event("task_complete", turn_id="turn-a"),
+    event("task_started", turn_id="turn-b"),
+    event("token_count", info={}, rate_limits={
+        "limit_id": "codex",
+        "primary": {"used_percent": 21.0, "window_minutes": 10080, "resets_at": 3},
+    }),
+]
+path = sys.argv[1]
+with open(path, "w", encoding="utf-8") as stream:
+    for record in records:
+        stream.write(json.dumps(record) + "\n")
+
+quota = transcript_turn_quota(path, "turn-a")
+assert quota and quota[0]["used_percent"] == 18.0, quota
+assert quota[0]["sampled_at_ms"] > 0, quota
+assert transcript_turn_quota(path, "turn-b")[0]["used_percent"] == 21.0
+
+run = {
+    "turn_id": "turn-a",
+    "transcript_path": path,
+    "quota_before": [{"slot": "primary", "used_percent": 0.0, "window_duration_mins": 10080}],
+    "quota_after": [],
+    "quota_change_during_run": [],
+}
+repair_run(run)
+assert run["quota_after_source"] == "transcript_estimate", run
+assert run["quota_after"][0]["used_percent"] == 18.0, run
+assert run["quota_change_during_run"][0]["delta_percentage_points"] == 18.0, run
+PY
+
 cat > "$TMP/fake-app-server.py" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
@@ -337,14 +390,24 @@ printf 'telemetry unavailable/zero regression test passed\n'
 
 # A lock timeout must skip the event rather than entering an unlocked
 # critical section or creating a run file.
-mkdir -p "$CODEX_HOME/codex-flow/telemetry"
-mkdir "$CODEX_HOME/codex-flow/telemetry/.locked--turn.lock"
-export CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT=0.01
-locked_output="$(hook '{"hook_event_name":"UserPromptSubmit","session_id":"locked","turn_id":"turn","cwd":"/tmp/work","model":"gpt-parent"}')"
-[[ -z "$locked_output" ]]
-[[ ! -e "$CODEX_HOME/codex-flow/telemetry/runs/locked--turn.json" ]]
-rmdir "$CODEX_HOME/codex-flow/telemetry/.locked--turn.lock"
-unset CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT
+python3 - "$ROOT_DIR/scripts" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from telemetry_core.common import STATE_ROOT, state_lock
+from telemetry_core.turn_context import receipt_digest
+event = {"hook_event_name": "UserPromptSubmit", "session_id": "locked", "turn_id": "turn", "cwd": "/tmp/work"}
+with state_lock("turn-" + receipt_digest("locked", "turn")) as acquired:
+    assert acquired
+    result = subprocess.run(
+        [sys.executable, str(Path(sys.argv[1]) / "telemetry.py")],
+        input=json.dumps(event), text=True, capture_output=True,
+        env={**os.environ, "CODEX_FLOW_TELEMETRY_LOCK_TIMEOUT": "0.01"},
+    )
+    assert result.returncode == 0 and not result.stdout, result
+    assert not (STATE_ROOT / "runs" / "locked--turn.json").exists()
+    assert not (STATE_ROOT / "turn-receipts" / (receipt_digest("locked", "turn") + ".json")).exists()
+PY
 printf 'telemetry lock-timeout regression test passed\n'
 
 # Usage deltas require both snapshots. Group deltas use stable identity and
@@ -459,3 +522,198 @@ stats_json="$(python3 "$ROOT_DIR/scripts/telemetry.py" stats --project work --js
 python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["project_filter"] == "work" and s["total_runs"] >= 1' <<<"$stats_json"
 printf 'telemetry CLI query and project stats tests passed\n'
 
+# Deterministic binding tests use synthetic events only to exercise the local
+# API. They are not evidence that a real host delivers receipts to its parent.
+python3 - "$ROOT_DIR/scripts" "$TMP" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from strategy_runtime import TaskProfile, compile_plan
+from telemetry_core.common import STATE_ROOT
+from telemetry_core.turn_context import context_path, receipt_digest
+script = str(Path(sys.argv[1]) / "telemetry.py")
+base = Path(sys.argv[2])
+def cli(*args, event=None, env=None):
+    return subprocess.run([sys.executable, script, *args], input=json.dumps(event) if event else None,
+                          env=env, text=True, capture_output=True)
+event = {"hook_event_name": "UserPromptSubmit", "session_id": "context-chat", "turn_id": "context-turn", "cwd": "/tmp/work"}
+started = cli(event=event)
+assert started.returncode == 0 and not started.stdout, started
+registry = STATE_ROOT / "turn-receipts" / (receipt_digest("context-chat", "context-turn") + ".json")
+original = json.loads(registry.read_text(encoding="utf-8"))
+assert original["state"] == "active"
+receipt = base / "context-receipt.json"
+receipt.write_text(json.dumps(original), encoding="utf-8")
+text = base / "context-goal.txt"
+text.write_text("本轮目标：保留引号 '$HOME' 和\n换行 🌏", encoding="utf-8")
+plan = base / "context-plan.json"
+plan.write_text(json.dumps(compile_plan(TaskProfile(), routing_mode="delegate").to_dict()), encoding="utf-8")
+goal_args = ("context", "write-goal", "--receipt-file", str(receipt), "--text-file", str(text))
+plan_args = ("context", "write-plan", "--receipt-file", str(receipt), "--plan-file", str(plan), "--origin", "compiled")
+for args in (goal_args, plan_args):
+    result = cli(*args)
+    assert result.returncode == 0, result.stderr
+sidecar = context_path("context-chat", "context-turn")
+before = (sidecar.read_bytes(), sidecar.stat().st_mtime_ns)
+for args in (goal_args, plan_args):
+    assert cli(*args).returncode == 0
+assert before == (sidecar.read_bytes(), sidecar.stat().st_mtime_ns)
+text.write_text("冲突目标", encoding="utf-8")
+result = cli(*goal_args)
+assert result.returncode == 2 and json.loads(result.stderr)["error"] == "goal_conflict", result
+for field, bad, code in (("session_id", "wrong-chat", "receipt_expired"), ("turn_id", "wrong-turn", "receipt_expired"), ("role", "worker", "receipt_role_forbidden")):
+    receipt.write_text(json.dumps({**original, field: bad}), encoding="utf-8")
+    result = cli(*goal_args)
+    assert result.returncode == 2 and json.loads(result.stderr)["error"] == code, result
+receipt.unlink()
+result = cli(*goal_args)
+assert result.returncode == 2 and json.loads(result.stderr)["error"] == "receipt_missing"
+receipt.write_text(json.dumps(original), encoding="utf-8")
+stopped = cli(event={**event, "hook_event_name": "Stop"})
+assert stopped.returncode == 0
+assert json.loads(registry.read_text())["state"] == "sealed"
+result = cli(*plan_args)
+assert result.returncode == 2 and json.loads(result.stderr)["error"] == "receipt_expired"
+run = json.loads((STATE_ROOT / "runs" / "context-chat--context-turn.json").read_text())
+assert run["publication_required"] is True
+assert "receipt_id" not in json.dumps(run)
+assert original["receipt_id"] not in stopped.stdout
+
+disabled_home = base / "disabled-home"
+disabled_home.mkdir()
+(disabled_home / "codex-flow.toml").write_text("[telemetry]\nenabled=false\n", encoding="utf-8")
+env = {**os.environ, "CODEX_HOME": str(disabled_home)}
+for kind in ("UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop"):
+    result = cli(event={**event, "hook_event_name": kind}, env=env)
+    assert result.returncode == 0 and not result.stdout
+result = cli(*goal_args, env=env)
+assert result.returncode == 0 and json.loads(result.stdout)["status"] == "disabled"
+assert list(disabled_home.iterdir()) == [disabled_home / "codex-flow.toml"]
+PY
+printf 'telemetry receipt/sidecar/disabled-write tests passed\n'
+
+# Exercise the public CLI with the observed Desktop format, out-of-order Stops,
+# and two independent context sidecars. No host receipt transport is assumed.
+python3 - "$ROOT_DIR" "$TMP" <<'PY'
+import json, os, subprocess, sys, time
+from pathlib import Path
+root, base = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / "scripts"))
+from telemetry_core.turn_context import receipt_digest
+from strategy_runtime import TaskProfile, compile_plan
+home = base / "publication-home"
+home.mkdir()
+env = {**os.environ, "CODEX_HOME": str(home)}
+state = home / "codex-flow/telemetry"
+fixture = json.loads((root / "tests/fixtures/turn-context/transcript-format.json").read_text())
+records = [fixture["parent_metadata"], *fixture["records"]]
+completed = int(time.time() * 1000) - 2000
+for row in records:
+    payload = row.get("payload", {})
+    if payload.get("type") == "task_complete":
+        row["timestamp"] = completed + (1000 if payload["turn_id"] == "turn-2" else 0)
+transcript = base / "publication-parent.jsonl"
+transcript.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in records) + "\n")
+before = transcript.read_bytes()
+script = ["bash", str(root / "bin/codex-flow"), "telemetry"]
+def call(*args, event=None):
+    command = [sys.executable, str(root / "scripts/telemetry.py")] if event else script + list(args)
+    proc = subprocess.run(command, input=json.dumps(event) if event else None,
+                          env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    return proc
+events = {}
+plan = base / "publication-plan.json"
+plan.write_text(json.dumps(compile_plan(TaskProfile(), routing_mode="delegate").to_dict()))
+for turn in ("turn-1", "turn-2"):
+    event = {"hook_event_name": "UserPromptSubmit", "session_id": "chat-a", "turn_id": turn,
+             "cwd": "/tmp/project", "transcript_path": str(transcript), "user_prompt": "用户原文"}
+    events[turn] = event
+    call(event=event)
+    receipt = state / "turn-receipts" / (receipt_digest("chat-a", turn) + ".json")
+    goal = base / (turn + "-goal.txt")
+    goal.write_text("目标 " + turn)
+    call("context", "write-goal", "--receipt-file", str(receipt), "--text-file", str(goal))
+    call("context", "write-plan", "--receipt-file", str(receipt), "--plan-file", str(plan), "--origin", "compiled")
+    run = json.loads((state / "runs" / ("chat-a--" + turn + ".json")).read_text())
+    assert "result" not in run and "turn_context" not in run and "publication" not in run, run
+assert not (state / "last.json").exists()
+for turn in ("turn-2", "turn-1"):
+    call(event={**events[turn], "hook_event_name": "Stop", "last_assistant_message": "不可使用的替代结果"})
+run1 = json.loads((state / "runs/chat-a--turn-1.json").read_text())
+run2 = json.loads((state / "runs/chat-a--turn-2.json").read_text())
+assert run1["result"]["text"] == "旧轮结果", run1
+assert run2["result"]["text"] == "本轮最终结果", run2
+for turn, run in (("turn-1", run1), ("turn-2", run2)):
+    assert run["turn_context"]["goal"]["text"] == "目标 " + turn, run
+    assert run["turn_context"]["orchestration"]["execution_plan"] == json.loads(plan.read_text()), run
+    assert "receipt_id" not in json.dumps(run), run
+assert json.loads((state / "last.json").read_text())["turn_id"] == "turn-2"
+last_before = (state / "last.json").read_bytes()
+call(event={**events["turn-2"], "hook_event_name": "Stop"})
+assert last_before == (state / "last.json").read_bytes()
+assert json.loads(last_before)["publication"] == {"revision": 1, "completed_at_ms": completed + 1000}
+(state / "last.json").unlink()
+recovered = call("recover-last", "--json")
+assert json.loads(recovered.stdout)["last_updated"] is True
+assert json.loads(recovered.stdout)["notify"] is False
+assert (state / "last.json").read_bytes() == last_before
+assert transcript.read_bytes() == before
+PY
+printf 'telemetry exact-turn publication/replay/recovery CLI tests passed\n'
+
+# The acceptance fixture exercises two chats with overlapping turn IDs.
+python3 - "$ROOT_DIR" "$TMP" <<'PY'
+import json, os, subprocess, sys, time
+from pathlib import Path
+root, base = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / "scripts"))
+from telemetry_core.turn_context import receipt_digest
+rows = [json.loads(line) for line in (root / "tests/fixtures/turn-context/e2e-two-chats.jsonl").read_text(encoding="utf-8").splitlines()]
+home = base / "two-chats-home"
+env = {**os.environ, "CODEX_HOME": str(home)}
+state = home / "codex-flow/telemetry"
+completed = int(time.time() * 1000) - 5000
+transcripts = {}
+events = {}
+def call(*args, event=None):
+    proc = subprocess.run([sys.executable, str(root / "scripts/telemetry.py"), *args],
+        input=json.dumps(event) if event else None, env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    return proc
+for session in sorted({row["session_id"] for row in rows}):
+    records = [{"type": "session_meta", "payload": {"id": session, "session_id": session,
+        "source": "vscode", "thread_source": "user", "originator": "Codex Desktop"}}]
+    for row in [r for r in rows if r["session_id"] == session]:
+        records.extend([
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": row["turn_id"]}},
+            {"type": "turn_context", "payload": {"turn_id": row["turn_id"]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "用户原文 '$HOME' 🌏"}]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": row["result"]}]}},
+            {"type": "event_msg", "timestamp": completed + row["completed_offset_ms"], "payload": {"type": "task_complete", "turn_id": row["turn_id"]}},
+        ])
+    path = base / (session + ".jsonl")
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n", encoding="utf-8")
+    transcripts[session] = path, path.read_bytes()
+for row in rows:
+    session, turn = row["session_id"], row["turn_id"]
+    event = {"hook_event_name": "UserPromptSubmit", "session_id": session, "turn_id": turn,
+        "cwd": "/tmp/two-chats", "transcript_path": str(transcripts[session][0]), "user_prompt": "用户原文 '$HOME' 🌏"}
+    events[(session, turn)] = event
+    call(event=event)
+    goal = base / (session + "--" + turn + ".txt")
+    goal.write_text(row["goal"], encoding="utf-8")
+    receipt = state / "turn-receipts" / (receipt_digest(session, turn) + ".json")
+    call("context", "write-goal", "--receipt-file", str(receipt), "--text-file", str(goal))
+assert not (state / "last.json").exists()
+for row in sorted(rows, key=lambda r: r["completed_offset_ms"], reverse=True):
+    call(event={**events[(row["session_id"], row["turn_id"])], "hook_event_name": "Stop"})
+    run = json.loads((state / "runs" / (row["session_id"] + "--" + row["turn_id"] + ".json")).read_text())
+    assert run["turn_context"]["goal"]["text"] == row["goal"], run
+    assert run["result"]["text"] == row["result"], run
+last = json.loads((state / "last.json").read_text())
+assert (last["session_id"], last["turn_id"]) == ("e2e-chat-b", "turn-2"), last
+for path, original in transcripts.values():
+    assert path.read_bytes() == original
+PY
+printf 'telemetry two-chat four-turn acceptance fixture passed\n'

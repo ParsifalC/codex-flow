@@ -23,7 +23,7 @@ answers and work explicitly assigned to a subagent are outside this entry
 caller.
 
 When the entry caller is present, first read this installed skill completely,
-then run `show --json` and, only when enabled, `consume-bypass` below before
+then run `show --json` and, only for a new task when enabled, `consume-bypass` below before
 repository exploration or technical action. Treat the output as a task-local
 receipt. `enabled=false` or a `true` bypass receipt means ordinary execution
 for this task. Never infer enabled state from an earlier turn. Same-task
@@ -42,7 +42,9 @@ python3 ~/.codex/codex-flow/strategy_runtime.py \
   show --json
 ```
 
-If enabled, atomically consume any one-shot bypass:
+If enabled and this is a new task, atomically consume any one-shot bypass.
+On same-task follow-ups, retain the task's gate receipt and do not consume it
+again or reset the current plan/ledger:
 
 ```bash
 python3 ~/.codex/codex-flow/strategy_runtime.py \
@@ -76,6 +78,46 @@ Persistent dimensions are independent:
 `adaptive` — let the deterministic planner choose from the TaskProfile.
 
 Strategy and routing are orthogonal.
+
+## 0.1 Parent turn metadata, after the gate
+
+Keep the strategy gate receipt separate from the host turn receipt. Only a
+FlowPilot-participating parent turn, with telemetry enabled and a receipt
+delivered by a verified host context protocol, records this metadata. Project
+is `cwd`, chat is `session_id`, and turn is `turn_id`. Each turn has its own
+goal; do not rewrite the user's message or transcript to record it.
+
+After the gate above and **before** TaskProfile/planner work, write the current
+turn's goal (1–80 Unicode codepoints, at most two sentences; prefer one sentence) to a UTF-8 file, then run:
+
+```text
+codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --text-file <utf8-goal-file>
+```
+
+Write the goal in concise, accurate, plain language: state the concrete outcome the user wants.
+Prefer familiar words; omit process narration, jargon, and repeated background.
+For example: “恢复语言切换，让目标和执行信息更易读。”
+
+The first successful goal is immutable. Identical text is idempotent;
+different text returns `goal_conflict`. File arguments preserve quotes,
+newlines, and Unicode without shell interpolation. Never copy a parent
+receipt into a Worker handoff, export, summary, or log.
+
+Automatic goal/plan writes are enabled only on installations whose real Codex
+Desktop probe verified receipt delivery, same-turn CLI writes, and parent Stop
+binding. The verified Desktop UserPromptSubmit hook supplies the exact receipt
+through `hookSpecificOutput.additionalContext`. Use only that supplied receipt.
+Unverified or unsupported hosts show “未记录”. Do not fabricate receipt JSON,
+scan `turn-receipts`, use `last.json` or a unique active turn, or infer identity
+from `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, or other `CODEX_*` variables.
+`systemMessage` and arbitrary hook JSON do not prove host context support.
+
+Missing, wrong-turn, expired, or child receipts reject writes with a JSON
+`error` and exit 2. `telemetry.enabled=false` returns `status=disabled` with
+exit 0 and no telemetry writes. Continue the main task in either case. A
+disabled strategy or consumed bypass never produces a fabricated goal or
+ExecutionPlan. Parent Stop alone publishes details; these commands only
+persist sidecar metadata.
 
 ## 1. Build only the semantic TaskProfile
 
@@ -133,6 +175,21 @@ Task-only overrides may append:
 ```
 
 If the planner/registry is unavailable, treat that as an installation/runtime failure. Do not reconstruct its policy from this skill.
+
+After compilation, preserve the actual, complete returned ExecutionPlan JSON
+in a UTF-8 file. With the same eligible host receipt used for the goal, run:
+
+```text
+codex-flow telemetry context write-plan --receipt-file <host-receipt-file> --plan-file <full-plan-json-file> --origin compiled
+```
+
+Do not handwrite a substitute plan or save only its strategy/schema version.
+On a same-task follow-up, use the new turn's host receipt and goal while
+retaining the existing ExecutionPlan and task ledger; write that complete
+plan with `--origin reused`. If material evidence requires re-profiling, write
+the new complete planner output with `--origin replanned`. Neither path
+consumes bypass again or initializes another task budget. Identical canonical
+plan JSON is idempotent; changed plan JSON increments its sidecar revision.
 
 ## 3. ExecutionPlan is the hard boundary
 

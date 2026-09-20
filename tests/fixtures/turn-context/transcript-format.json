@@ -1,0 +1,22 @@
+{
+  "evidence": "Sanitized structure observed in Codex Desktop parent and worker rollouts; receipt delivery is unverified.",
+  "parent_metadata": {"type": "session_meta", "payload": {"id": "chat-a", "source": "vscode", "originator": "Codex Desktop", "thread_source": "user"}},
+  "worker_metadata": {"type": "session_meta", "payload": {"id": "worker-a", "source": {"subagent": {"thread_spawn": {"parent_thread_id": "chat-a"}}}, "thread_source": "subagent"}},
+  "records": [
+    {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn-1"}},
+    {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "旧轮结果"}]}},
+    {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "turn-1"}},
+    {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn-2"}},
+    {"type": "turn_context", "payload": {"turn_id": "turn-2"}},
+    {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "本轮请求"}]}},
+    {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "commentary", "content": [{"type": "output_text", "text": "处理中"}]}},
+    {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "commentary", "content": [{"type": "output_text", "text": "继续处理"}]}},
+    {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "final_answer", "agent_id": "worker-a", "content": [{"type": "output_text", "text": "worker 结果"}]}},
+    {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "同一轮补充消息"}]}},
+    {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "本轮最终结果"}]}},
+    {"timestamp": "2026-09-18T08:00:02Z", "type": "event_msg", "payload": {"type": "task_complete", "turn_id": "turn-2"}},
+    {"type": "turn_context", "payload": {"turn_id": "turn-3"}},
+    {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "下一轮结果"}]}},
+    {"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": "turn-3"}}
+  ]
+}

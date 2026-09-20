@@ -10,7 +10,64 @@
 
 ---
 
-## Design Principles
+## Store goals, plans, and results per turn
+
+A project uses `cwd`, a chat uses `session_id`, and a turn uses `turn_id`.
+Goals belong to `session_id + turn_id`. New turns never replace earlier goals
+or rewrite the user's messages.
+
+With an explicit receipt delivered by the host to this parent turn, use UTF-8 files:
+
+```bash
+codex-flow telemetry context write-goal --receipt-file receipt.json --text-file goal.txt
+codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file plan.json --origin compiled
+```
+
+Goals accept 1–80 Unicode code points and at most two sentences and become immutable after the first write.
+Repeated identical writes are idempotent. Plans retain the complete schema-11
+planner JSON. Use `--origin reused` when continuing the same task's existing plan;
+do not reset its budget. Public run snapshots never contain the receipt secret.
+
+Only parent Stop publishes `turn_context`, the exact parent-turn `result`, and
+`publication`. Its revision identifies a complete snapshot; its completion time
+is fixed on first publication. Replayed Stops do not notify twice, and late
+workers cannot move `last.json` back to an older turn. After a crash between the
+run and last writes, use `codex-flow telemetry recover-last --quiet`. Recovery
+does not send a completion notification. Disabled telemetry performs no state,
+lock, or IPC writes; historical reads remain available.
+
+**Compatibility is verified per installation.** The development installation has
+passed real Desktop receipt delivery, same-turn goal/full-plan writes, and parent
+Stop publication, and has explicitly enabled automatic delivery locally. New
+installations remain off until verified; other hosts need their own validation.
+Missing receipt/final evidence displays “Not recorded” rather than guessing from
+the latest turn, user prompt, or last assistant message. Python/CLI retain
+Windows-compatible code; native Windows locking still needs CI or device validation.
+
+The repository includes a one-turn Desktop probe in `tests/turn-context-desktop-probe.py`.
+Explicitly select a chat and working directory with `arm --session-id <id> --cwd <absolute-path>`.
+The default wait expires after 30 minutes. Add `--wait-for-next-turn` for manual
+validation across sessions; it still accepts only one parent turn in the selected chat and directory.
+The next real parent turn can receive its receipt path through
+`UserPromptSubmit.hookSpecificOutput.additionalContext`. A real user message must
+trigger the hook. `status` succeeds only after same-turn goal, full plan, and
+parent Stop publication match. Synthetic hooks and unit tests do not establish
+Desktop support, and the probe never enables global automatic writes.
+
+After `status` reports `supported_probe`, enable automatic delivery for this
+installation explicitly. An unverified probe returns `host_transport_unverified`
+without creating transport configuration:
+
+```bash
+codex-flow telemetry context enable-desktop-transport
+```
+
+`bash tests/turn-context-host.sh` checks the installation’s actual Desktop probe
+status. It never launches an extra model task or treats a CLI marker as Desktop evidence.
+
+Overlay startup uses `recover-last --quiet` to avoid IPC alerts while restoring history.
+
+## Keep collection independent of the main task
 
 1. **Zero LLM Invocation**: The telemetry collector and formatter are written in pure Python. No secondary LLM calls are made to summarize runs.
 2. **Turn-Based Isolation**: Each user interaction turn is tracked as a single atomic `flow run`.
@@ -125,7 +182,7 @@ codex-flow telemetry repair
 
 **Backfill Principles**:
 - **Preserve Existing Data**: Only fills in missing fields; never overwrites valid existing data.
-- **No Guesswork**: Quota deltas are only calculated when both `quota_before` and `quota_after` snapshots exist. Missing quota snapshots are marked as impossible rather than estimated.
+- **Explicit Estimates**: The app-server finish snapshot remains preferred. If it times out but the exact turn's transcript contains a final `token_count.rate_limits` watermark, telemetry backfills `quota_after` with `quota_after_source=transcript_estimate`. The UI and summary label it as estimated; it is evidence for that run only and is excluded from canonical quota attribution and cumulative statistics.
 - **Idempotent**: Repeated execution safely reports `repaired: 0`.
 - **Authoritative Sync**: Safely updates `last.json` if the repaired run matches the latest session and turn ID.
 

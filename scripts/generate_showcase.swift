@@ -167,6 +167,7 @@ private enum ShowcaseMockData {
     }
 
     static let strategy = StrategyModeSnapshot(
+        enabled: true,
         configured: "balanced",
         routing: "adaptive",
         valid: true,
@@ -1418,11 +1419,9 @@ func runGenerator() {
     let engine = TelemetryQueryEngine.shared
     let allRuns = engine.loadAllRuns()
 
-    var latestRun = engine.loadLatestRun() ?? allRuns.first ?? TaskRun.previewSample
-    engine.enrichRunIfNeeded(&latestRun)
+    let latestRun = engine.loadLatestRun() ?? allRuns.first ?? TaskRun.previewSample
 
     let historyChats = engine.fetchChatHistory(limit: 20)
-    let historyRuns = engine.fetchHistory(limit: 50)
     let stats = engine.computeStats(days: 30, project: nil)
 
     let stateInspector = OverlayState()
@@ -1435,7 +1434,6 @@ func runGenerator() {
     let stateHistoryFull = OverlayState()
     stateHistoryFull.latestRun = latestRun
     stateHistoryFull.historyChats = historyChats
-    stateHistoryFull.historyRuns = historyRuns
     stateHistoryFull.activeTab = .history
     stateHistoryFull.isExpanded = true
     stateHistoryFull.isPrivacyMode = true
@@ -1444,7 +1442,6 @@ func runGenerator() {
     let stateHistoryPoster = OverlayState()
     stateHistoryPoster.latestRun = latestRun
     stateHistoryPoster.historyChats = Array(historyChats.prefix(3))
-    stateHistoryPoster.historyRuns = historyRuns
     stateHistoryPoster.activeTab = .history
     stateHistoryPoster.isExpanded = true
     stateHistoryPoster.isPrivacyMode = true
@@ -1464,7 +1461,6 @@ func runGenerator() {
 
     let stateBubble = OverlayState()
     stateBubble.latestRun = latestRun
-    stateBubble.isTaskRunning = false
     stateBubble.isExpanded = false
     stateBubble.isPrivacyMode = true
 

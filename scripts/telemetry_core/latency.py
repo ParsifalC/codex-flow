@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .common import STATE_ROOT
+from .common import STATE_ROOT, telemetry_writes_enabled
 
 LATENCY_SCHEMA_VERSION = 1
 LATENCY_FILE_NAME = "latency.jsonl"
@@ -428,6 +428,8 @@ def record_latency_event(
     lock_file: Path | str | None = None,
 ) -> dict[str, Any]:
     """Validate, redact, and append one event under a process lock."""
+    if not telemetry_writes_enabled():
+        return {"status": "disabled"}
     normalized = _normalize(event)
     path = latency_file(state_file)
     _ensure_parent(path.parent)
@@ -520,8 +522,13 @@ def _group_report(events: list[dict[str, Any]], key: tuple[Any, ...]) -> dict[st
 def latency_report(*, state_file: Path | str | None = None) -> dict[str, Any]:
     """Return a stable nearest-rank report; this function never mutates policy."""
     path = latency_file(state_file)
-    lock_path = _sidecar(path, LATENCY_LOCK_FILE_NAME)
-    with _exclusive_lock(lock_path):
+    if telemetry_writes_enabled():
+        lock_path = _sidecar(path, LATENCY_LOCK_FILE_NAME)
+        with _exclusive_lock(lock_path):
+            events = _read_events(path)
+    else:
+        # Historical reads stay available without creating state directories
+        # or creating/removing even a stale lock while telemetry is disabled.
         events = _read_events(path)
     grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for event in events:

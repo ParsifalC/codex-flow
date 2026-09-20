@@ -14,6 +14,7 @@ from .app_server import (
     quota_windows,
     session_index_metadata,
     transcript_turn_metadata,
+    transcript_turn_quota,
     transcript_turn_usage,
     usage_delta,
     usage_group_identities,
@@ -97,6 +98,8 @@ from .repair import (
     repair_history,
     repair_run,
 )
+from .publication import PublicationResult, publish_parent_stop, publish_late_worker, recover_last
+from .turn_result import extract_parent_final
 from .latency import (
     LATENCY_FILE_NAME,
     LATENCY_SCHEMA_VERSION,
@@ -153,6 +156,7 @@ __all__ = [
     "usage_summary",
     "usage_delta",
     "transcript_turn_metadata",
+    "transcript_turn_quota",
     "transcript_turn_usage",
     "merge_usage",
     "usage_group_identities",
@@ -161,6 +165,11 @@ __all__ = [
     "extract_transcript_insights",
     "quota_delta",
     "collect_hook",
+    "PublicationResult",
+    "publish_parent_stop",
+    "publish_late_worker",
+    "recover_last",
+    "extract_parent_final",
     "merge_worker_values",
     "reconcile_orphan_workers",
     "run_maintenance",

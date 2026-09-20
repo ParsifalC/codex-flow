@@ -342,6 +342,12 @@ def quota_windows(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
     codex = by_id.get("codex")
     if not isinstance(codex, dict):
         codex = {}
+    # Transcript token_count events carry the selected limit directly, while
+    # app-server responses wrap it in ``rateLimits`` or ``rateLimitsByLimitId``.
+    if not legacy and not codex and any(
+        isinstance(snapshot.get(slot), dict) for slot in ("primary", "secondary")
+    ):
+        legacy = snapshot
 
     candidates: list[tuple[tuple[int, int], str, dict[str, Any]]] = []
     for slot_index, slot in enumerate(("primary", "secondary")):
@@ -355,7 +361,12 @@ def quota_windows(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
         duration = _first_quota_number(
             codex_window,
             legacy_window,
-            ("windowDurationMins", "windowMinutes", "window_duration_mins"),
+            (
+                "windowDurationMins",
+                "windowMinutes",
+                "window_duration_mins",
+                "window_minutes",
+            ),
             integer=True,
         )
         reset = _first_quota_number(codex_window, legacy_window, ("resetsAt", "resets_at"))
@@ -888,6 +899,92 @@ def transcript_turn_usage(path_value: Any, turn_id: Any) -> dict[str, Any] | Non
     return result
 
 
+def transcript_turn_quota(
+    path_value: Any, turn_id: Any
+) -> list[dict[str, Any]] | None:
+    """Return the last account quota sample recorded during one transcript turn.
+
+    ``token_count`` events carry the account watermark even when the app-server
+    account/rateLimits/read call is unavailable.  A task_started event opens the
+    turn interval; an explicit turn_id on a token_count event is also accepted
+    so newer transcript writers can correlate the sample directly.  Samples
+    from other turns are ignored and the transcript timestamp is retained as
+    ``sampled_at_ms`` on every normalized window.
+    """
+    if not isinstance(path_value, str) or not path_value or not turn_id:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+
+    target_turn = str(turn_id)
+    current_turn: str | None = None
+    last_sample: list[dict[str, Any]] | None = None
+
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "event_msg":
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                kind = payload.get("type")
+                explicit_turn = payload.get("turn_id")
+                explicit_turn_id = (
+                    str(explicit_turn) if explicit_turn is not None else None
+                )
+
+                if kind == "task_started":
+                    current_turn = explicit_turn_id
+                    continue
+
+                if kind == "token_count":
+                    belongs_to_target = (
+                        explicit_turn_id == target_turn
+                        if explicit_turn_id is not None
+                        else current_turn == target_turn
+                    )
+                    if not belongs_to_target:
+                        continue
+                    raw_snapshot = payload.get("rate_limits")
+                    if raw_snapshot is None:
+                        raw_snapshot = payload.get("rateLimits")
+                    if not isinstance(raw_snapshot, dict):
+                        continue
+                    # A few transcript writers wrap the account response under
+                    # the same key used by the JSON-RPC result.
+                    if isinstance(raw_snapshot.get("result"), dict):
+                        raw_snapshot = raw_snapshot["result"]
+                    windows = quota_windows(raw_snapshot)
+                    if not windows:
+                        continue
+                    timestamp = record.get("timestamp")
+                    if timestamp is None:
+                        timestamp = payload.get("timestamp")
+                    sampled_at_ms = _transcript_timestamp_ms(timestamp)
+                    if sampled_at_ms is not None:
+                        windows = [
+                            {**window, "sampled_at_ms": sampled_at_ms}
+                            for window in windows
+                        ]
+                    last_sample = windows
+                    continue
+
+                if kind in {"task_complete", "turn_aborted"}:
+                    completed_turn = explicit_turn_id or current_turn
+                    if completed_turn == current_turn:
+                        current_turn = None
+    except (OSError, UnicodeError):
+        return None
+
+    return last_sample
+
+
 def merge_usage(
     transcript_usage: dict[str, Any] | None,
     service_usage: dict[str, Any] | None,
@@ -967,7 +1064,7 @@ def apply_participant_metadata(
 def extract_transcript_insights(
     transcript_path: Any, turn_id: Any = None
 ) -> dict[str, Any] | None:
-    """Extract skills used, tools/MCP calls, trajectory steps, logs, and summary from a session transcript."""
+    """Extract operational evidence; goals and finals have separate proven sources."""
     if not isinstance(transcript_path, str) or not transcript_path:
         return None
     path = Path(transcript_path)
@@ -978,8 +1075,6 @@ def extract_transcript_insights(
     tools: dict[str, dict[str, Any]] = {}
     trajectory: list[dict[str, Any]] = []
     logs: list[dict[str, Any]] = []
-    goal: str | None = None
-    conclusion: str | None = None
 
     try:
         with path.open("r", encoding="utf-8") as stream:
@@ -1056,32 +1151,6 @@ def extract_transcript_insights(
                                 "message": f"[{tool_name}] {inp_summary}",
                             }
                         )
-                    elif p_type == "message":
-                        role = payload.get("role")
-                        content = payload.get("content", [])
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict):
-                                text_parts.append(
-                                    item.get("text") or item.get("output_text") or ""
-                                )
-                        msg_text = "".join(text_parts).strip()
-                        if role == "user" and msg_text:
-                            clean_prompt = msg_text
-                            if "<USER_REQUEST>" in clean_prompt:
-                                m = re.search(
-                                    r"<USER_REQUEST>(.*?)</USER_REQUEST>",
-                                    clean_prompt,
-                                    re.DOTALL,
-                                )
-                                if m:
-                                    clean_prompt = m.group(1).strip()
-                            if "## My request:" in clean_prompt:
-                                clean_prompt = clean_prompt.split("## My request:", 1)[1].strip()
-                            if not clean_prompt.startswith("<") or not goal:
-                                goal = clean_prompt
-                        elif role == "assistant" and msg_text:
-                            conclusion = msg_text
                 elif (
                     record_type == "event_msg"
                     and payload.get("type") == "item_completed"
@@ -1125,10 +1194,6 @@ def extract_transcript_insights(
         "tools_used": tools_list,
         "trajectory": trajectory[-20:],
         "logs": logs[-30:],
-        "summary_info": {
-            "goal": goal[:300] if goal else None,
-            "conclusion": conclusion[:500] if conclusion else None,
-        },
     }
 
 

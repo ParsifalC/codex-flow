@@ -1,0 +1,620 @@
+{
+  "schema_version": 1,
+  "preview": true,
+  "selected": {
+    "session_id": "overlay-chat",
+    "turn_id": "turn-2"
+  },
+  "runs": [
+    {
+      "schema_version": 1,
+      "session_id": "overlay-chat",
+      "turn_id": "turn-1",
+      "cwd": "/demo/codex-flow",
+      "session_title": "浮窗开发",
+      "branch": "codex/intent-orchestration-overlay",
+      "publication_required": true,
+      "started_at_ms": 1789710720000,
+      "finished_at_ms": 1789711200000,
+      "parent": {
+        "usage_delta": {
+          "total_tokens": 12800,
+          "output_tokens": 2100
+        },
+        "model": "gpt-6-astra"
+      },
+      "workers": {
+        "worker-a": {
+          "agent_id": "worker-a",
+          "status": "completed"
+        },
+        "worker-b": {
+          "agent_id": "worker-b",
+          "status": "completed"
+        }
+      },
+      "turn_context": {
+        "schema_version": 1,
+        "session_id": "overlay-chat",
+        "turn_id": "turn-1",
+        "goal": {
+          "text": "整理悬浮窗的信息层级，保留四个页面与常用操作。",
+          "source": "flow-pilot",
+          "recorded_at_ms": 1789710400000
+        },
+        "orchestration": {
+          "origin": "compiled",
+          "revision": 1,
+          "recorded_at_ms": 1789710410000,
+          "execution_plan": {
+            "schema_version": 11,
+            "strategy": "quality",
+            "routing": "delegate",
+            "review_modifier": "auto",
+            "fanout_modifier": "auto",
+            "quality_intent": "normal",
+            "parent_capability_policy": "latest-capable",
+            "parent_model_floor": "auto",
+            "parent_reasoning": "xhigh",
+            "reasoning_rollout": null,
+            "explorer_capability_policy": "latest-efficient",
+            "explorer_model": "gpt-5.6-luna",
+            "explorer_reasoning": "max",
+            "implementer_capability_policy": "latest-efficient",
+            "implementer_model": "gpt-5.6-luna",
+            "implementer_reasoning": "max",
+            "reviewer_capability_policy": "latest-efficient",
+            "reviewer_model": "gpt-5.6-luna",
+            "reviewer_reasoning": "max",
+            "worker_budget": {
+              "max_explorers": 4,
+              "max_implementers": 3,
+              "max_reviewers": 2,
+              "max_total_workers": 6,
+              "speculation": "high"
+            },
+            "task_budget": {
+              "soft_timeout_seconds": 5400,
+              "hard_timeout_seconds": 8700,
+              "max_work_units": 3,
+              "max_implementation_attempts": 6,
+              "max_replans": 3,
+              "max_replacements": 3,
+              "max_review_attempts": 4,
+              "parent_finalization_seconds": 300
+            },
+            "exploration_workers": 2,
+            "implementation_workers": 2,
+            "reviewer_workers": 2,
+            "planned_worker_count": 6,
+            "exploration_stage": {
+              "join_policy": "quorum",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 2400,
+              "cancel_if_superseded": true,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "parent_delta",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "implementation_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 1,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3600,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "replan",
+              "soft_timeout_seconds": 2400,
+              "checkpoint_rearm_seconds": 480,
+              "max_worker_repair_attempts": 3,
+              "work_unit_mode": "bounded",
+              "minimum_work_units": 1,
+              "join_between_work_units": true,
+              "maximum_work_units": 3,
+              "require_write_paths": true
+            },
+            "review_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3000,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "retry_review",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "review_mode": "independent+parent",
+            "max_repair_cycles": 2,
+            "max_concurrent_threads": 2,
+            "escalate_on_failure": true,
+            "quota_pressure": "low",
+            "repo_policy": null,
+            "context_mode": "compact-fresh",
+            "notes": [
+              "parallel writable execution authorized across 2 proven isolated workstreams",
+              "required completion extends task hard deadline to 8700s without shortening the 5400s general-work window"
+            ]
+          }
+        }
+      },
+      "result": {
+        "text": "已梳理四个页面及操作入口，形成可供确认的界面仿真。",
+        "source": "parent_final",
+        "turn_id": "turn-1",
+        "truncated": false
+      },
+      "publication": {
+        "revision": 1,
+        "completed_at_ms": 1789711200000
+      }
+    },
+    {
+      "schema_version": 1,
+      "session_id": "overlay-chat",
+      "turn_id": "turn-2",
+      "cwd": "/demo/codex-flow",
+      "session_title": "浮窗开发",
+      "branch": "codex/intent-orchestration-overlay",
+      "publication_required": true,
+      "started_at_ms": 1789719600000,
+      "finished_at_ms": 1789720200000,
+      "parent": {
+        "usage_delta": {
+          "total_tokens": 14600,
+          "output_tokens": 2300
+        },
+        "model": "gpt-6-astra"
+      },
+      "workers": {
+        "worker-a": {
+          "agent_id": "worker-a",
+          "status": "completed"
+        },
+        "worker-b": {
+          "agent_id": "worker-b",
+          "status": "completed"
+        }
+      },
+      "turn_context": {
+        "schema_version": 1,
+        "session_id": "overlay-chat",
+        "turn_id": "turn-2",
+        "goal": {
+          "text": "保留四个页面和主要操作，重构浮窗层级与毛玻璃样式，并适配 Windows 降级。按轮次展示目标、结果和运行事实，编排默认折叠，缺失信息不回填。",
+          "source": "flow-pilot",
+          "recorded_at_ms": 1789719400000
+        },
+        "orchestration": {
+          "origin": "reused",
+          "revision": 1,
+          "recorded_at_ms": 1789719410000,
+          "execution_plan": {
+            "schema_version": 11,
+            "strategy": "quality",
+            "routing": "delegate",
+            "review_modifier": "auto",
+            "fanout_modifier": "auto",
+            "quality_intent": "normal",
+            "parent_capability_policy": "latest-capable",
+            "parent_model_floor": "auto",
+            "parent_reasoning": "xhigh",
+            "reasoning_rollout": null,
+            "explorer_capability_policy": "latest-efficient",
+            "explorer_model": "gpt-5.6-luna",
+            "explorer_reasoning": "max",
+            "implementer_capability_policy": "latest-efficient",
+            "implementer_model": "gpt-5.6-luna",
+            "implementer_reasoning": "max",
+            "reviewer_capability_policy": "latest-efficient",
+            "reviewer_model": "gpt-5.6-luna",
+            "reviewer_reasoning": "max",
+            "worker_budget": {
+              "max_explorers": 4,
+              "max_implementers": 3,
+              "max_reviewers": 2,
+              "max_total_workers": 6,
+              "speculation": "high"
+            },
+            "task_budget": {
+              "soft_timeout_seconds": 5400,
+              "hard_timeout_seconds": 8700,
+              "max_work_units": 3,
+              "max_implementation_attempts": 6,
+              "max_replans": 3,
+              "max_replacements": 3,
+              "max_review_attempts": 4,
+              "parent_finalization_seconds": 300
+            },
+            "exploration_workers": 2,
+            "implementation_workers": 2,
+            "reviewer_workers": 2,
+            "planned_worker_count": 6,
+            "exploration_stage": {
+              "join_policy": "quorum",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 2400,
+              "cancel_if_superseded": true,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "parent_delta",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "implementation_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 1,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3600,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "replan",
+              "soft_timeout_seconds": 2400,
+              "checkpoint_rearm_seconds": 480,
+              "max_worker_repair_attempts": 3,
+              "work_unit_mode": "bounded",
+              "minimum_work_units": 1,
+              "join_between_work_units": true,
+              "maximum_work_units": 3,
+              "require_write_paths": true
+            },
+            "review_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3000,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "retry_review",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "review_mode": "independent+parent",
+            "max_repair_cycles": 2,
+            "max_concurrent_threads": 2,
+            "escalate_on_failure": true,
+            "quota_pressure": "low",
+            "repo_policy": null,
+            "context_mode": "compact-fresh",
+            "notes": [
+              "parallel writable execution authorized across 2 proven isolated workstreams",
+              "required completion extends task hard deadline to 8700s without shortening the 5400s general-work window"
+            ]
+          }
+        }
+      },
+      "result": {
+        "text": "已完成这一轮的展示方案。目标与结果现在独立呈现，历史记录按照项目、对话和轮次组织，点击任意已完成轮次都能查看对应快照。用户原始消息没有被修改，也没有用来填补缺失的目标。\n\n四个页面保留原有导航位置。置顶和收起可以切换，更多菜单保留更新、隐私、GitHub、控制台和复制摘要。复制只包含当前选中轮次保存的内容，长文本在界面中折叠，但复制时保留全文。\n\n执行详情默认收起。展开后可以查看实际计划中的策略、路由、审查方式和各角色计划人数，同时单独标出真正参与的子 Agent 数量。两类人数有不同含义，不会互相替代；缺少计划时不生成编排理由。\n\n视觉上延续轻透的 macOS 毛玻璃、较实的 Windows 磨砂以及纯色模式。文字区域增加底色和行距，控制元素保持清晰的键盘焦点。这里是 HTML 效果仿真，不能代替原生窗口、多屏和系统辅助功能的验收。\n\n后续实现仍需要真实宿主验证同轮凭证传递。未验证的宿主应继续显示未记录，不能猜测最新或唯一活动轮次。生产界面需要在确认这份仿真后再实施。\n\n本段用于验证较长结果的阅读体验：展开内容后应保持正常换行，不挤压导航；切换到另一轮时折叠状态应恢复；再次复制仍应包含对应轮次的完整结果，不带入先前轮次的文字。",
+        "source": "parent_final",
+        "turn_id": "turn-2",
+        "truncated": false
+      },
+      "publication": {
+        "revision": 1,
+        "completed_at_ms": 1789720200000
+      }
+    },
+    {
+      "schema_version": 1,
+      "session_id": "docs-chat",
+      "turn_id": "turn-1",
+      "cwd": "/demo/docs-site",
+      "session_title": "开发文档",
+      "branch": "docs/onboarding",
+      "publication_required": true,
+      "started_at_ms": 1789634880000,
+      "finished_at_ms": 1789635600000,
+      "parent": {
+        "usage_delta": {
+          "total_tokens": 16400,
+          "output_tokens": 2500
+        },
+        "model": "gpt-5.6-sol"
+      },
+      "workers": {},
+      "turn_context": {
+        "schema_version": 1,
+        "session_id": "docs-chat",
+        "turn_id": "turn-1",
+        "goal": {
+          "text": "整理开发者首次参与项目需要了解的结构与启动步骤。",
+          "source": "flow-pilot",
+          "recorded_at_ms": 1789634800000
+        },
+        "orchestration": {
+          "origin": "compiled",
+          "revision": 1,
+          "recorded_at_ms": 1789634810000,
+          "execution_plan": {
+            "schema_version": 11,
+            "strategy": "quality",
+            "routing": "delegate",
+            "review_modifier": "auto",
+            "fanout_modifier": "auto",
+            "quality_intent": "normal",
+            "parent_capability_policy": "latest-capable",
+            "parent_model_floor": "auto",
+            "parent_reasoning": "xhigh",
+            "reasoning_rollout": null,
+            "explorer_capability_policy": "latest-efficient",
+            "explorer_model": "gpt-5.6-luna",
+            "explorer_reasoning": "max",
+            "implementer_capability_policy": "latest-efficient",
+            "implementer_model": "gpt-5.6-luna",
+            "implementer_reasoning": "max",
+            "reviewer_capability_policy": "latest-efficient",
+            "reviewer_model": "gpt-5.6-luna",
+            "reviewer_reasoning": "max",
+            "worker_budget": {
+              "max_explorers": 4,
+              "max_implementers": 3,
+              "max_reviewers": 2,
+              "max_total_workers": 6,
+              "speculation": "high"
+            },
+            "task_budget": {
+              "soft_timeout_seconds": 5400,
+              "hard_timeout_seconds": 8700,
+              "max_work_units": 3,
+              "max_implementation_attempts": 6,
+              "max_replans": 3,
+              "max_replacements": 3,
+              "max_review_attempts": 4,
+              "parent_finalization_seconds": 300
+            },
+            "exploration_workers": 2,
+            "implementation_workers": 2,
+            "reviewer_workers": 2,
+            "planned_worker_count": 6,
+            "exploration_stage": {
+              "join_policy": "quorum",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 2400,
+              "cancel_if_superseded": true,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "parent_delta",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "implementation_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 1,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3600,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "replan",
+              "soft_timeout_seconds": 2400,
+              "checkpoint_rearm_seconds": 480,
+              "max_worker_repair_attempts": 3,
+              "work_unit_mode": "bounded",
+              "minimum_work_units": 1,
+              "join_between_work_units": true,
+              "maximum_work_units": 3,
+              "require_write_paths": true
+            },
+            "review_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3000,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "retry_review",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "review_mode": "independent+parent",
+            "max_repair_cycles": 2,
+            "max_concurrent_threads": 2,
+            "escalate_on_failure": true,
+            "quota_pressure": "low",
+            "repo_policy": null,
+            "context_mode": "compact-fresh",
+            "notes": [
+              "parallel writable execution authorized across 2 proven isolated workstreams",
+              "required completion extends task hard deadline to 8700s without shortening the 5400s general-work window"
+            ]
+          }
+        }
+      },
+      "result": {
+        "text": "已补充目录说明、启动命令和调试入口。",
+        "source": "parent_final",
+        "turn_id": "turn-1",
+        "truncated": false
+      },
+      "publication": {
+        "revision": 1,
+        "completed_at_ms": 1789635600000
+      }
+    },
+    {
+      "schema_version": 1,
+      "session_id": "docs-chat",
+      "turn_id": "turn-2",
+      "cwd": "/demo/docs-site",
+      "session_title": "开发文档",
+      "branch": "docs/onboarding",
+      "publication_required": true,
+      "started_at_ms": 1789713960000,
+      "finished_at_ms": 1789714800000,
+      "parent": {
+        "usage_delta": {
+          "total_tokens": 18200,
+          "output_tokens": 2700
+        },
+        "model": "gpt-5.6-sol"
+      },
+      "workers": {},
+      "turn_context": {
+        "schema_version": 1,
+        "session_id": "docs-chat",
+        "turn_id": "turn-2",
+        "goal": {
+          "text": "在上轮开发指南基础上，补充测试范围与常见失败的定位方法。",
+          "source": "flow-pilot",
+          "recorded_at_ms": 1789714000000
+        },
+        "orchestration": {
+          "origin": "reused",
+          "revision": 1,
+          "recorded_at_ms": 1789714010000,
+          "execution_plan": {
+            "schema_version": 11,
+            "strategy": "quality",
+            "routing": "delegate",
+            "review_modifier": "auto",
+            "fanout_modifier": "auto",
+            "quality_intent": "normal",
+            "parent_capability_policy": "latest-capable",
+            "parent_model_floor": "auto",
+            "parent_reasoning": "xhigh",
+            "reasoning_rollout": null,
+            "explorer_capability_policy": "latest-efficient",
+            "explorer_model": "gpt-5.6-luna",
+            "explorer_reasoning": "max",
+            "implementer_capability_policy": "latest-efficient",
+            "implementer_model": "gpt-5.6-luna",
+            "implementer_reasoning": "max",
+            "reviewer_capability_policy": "latest-efficient",
+            "reviewer_model": "gpt-5.6-luna",
+            "reviewer_reasoning": "max",
+            "worker_budget": {
+              "max_explorers": 4,
+              "max_implementers": 3,
+              "max_reviewers": 2,
+              "max_total_workers": 6,
+              "speculation": "high"
+            },
+            "task_budget": {
+              "soft_timeout_seconds": 5400,
+              "hard_timeout_seconds": 8700,
+              "max_work_units": 3,
+              "max_implementation_attempts": 6,
+              "max_replans": 3,
+              "max_replacements": 3,
+              "max_review_attempts": 4,
+              "parent_finalization_seconds": 300
+            },
+            "exploration_workers": 2,
+            "implementation_workers": 2,
+            "reviewer_workers": 2,
+            "planned_worker_count": 6,
+            "exploration_stage": {
+              "join_policy": "quorum",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 2400,
+              "cancel_if_superseded": true,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "parent_delta",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "implementation_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 1,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3600,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "replan",
+              "soft_timeout_seconds": 2400,
+              "checkpoint_rearm_seconds": 480,
+              "max_worker_repair_attempts": 3,
+              "work_unit_mode": "bounded",
+              "minimum_work_units": 1,
+              "join_between_work_units": true,
+              "maximum_work_units": 3,
+              "require_write_paths": true
+            },
+            "review_stage": {
+              "join_policy": "required",
+              "min_successful_workers": 2,
+              "idle_timeout_seconds": 300,
+              "hard_timeout_seconds": 3000,
+              "cancel_if_superseded": false,
+              "cancel_stragglers_after_quorum": false,
+              "fallback_policy": "retry_review",
+              "soft_timeout_seconds": null,
+              "checkpoint_rearm_seconds": null,
+              "max_worker_repair_attempts": null,
+              "work_unit_mode": "single",
+              "minimum_work_units": 1,
+              "join_between_work_units": false,
+              "maximum_work_units": null,
+              "require_write_paths": false
+            },
+            "review_mode": "independent+parent",
+            "max_repair_cycles": 2,
+            "max_concurrent_threads": 2,
+            "escalate_on_failure": true,
+            "quota_pressure": "low",
+            "repo_policy": null,
+            "context_mode": "compact-fresh",
+            "notes": [
+              "parallel writable execution authorized across 2 proven isolated workstreams",
+              "required completion extends task hard deadline to 8700s without shortening the 5400s general-work window"
+            ]
+          }
+        }
+      },
+      "result": {
+        "text": "已补充测试命令和排错说明，并核对文档内的相对路径。",
+        "source": "parent_final",
+        "turn_id": "turn-2",
+        "truncated": false
+      },
+      "publication": {
+        "revision": 1,
+        "completed_at_ms": 1789714800000
+      }
+    }
+  ]
+}

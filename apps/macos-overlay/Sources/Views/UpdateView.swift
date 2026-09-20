@@ -30,7 +30,7 @@ public struct FlowPilotUpdateView: View {
             actionButtons
         }
         .padding(14)
-        .frame(width: 330)
+        .frame(width: 380)
         .onAppear {
             service.refreshFromDisk()
             service.requestCachedCheck()
@@ -51,7 +51,7 @@ public struct FlowPilotUpdateView: View {
                 Text(L("Software Update", "软件更新"))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                 Text(service.statusText)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
@@ -85,9 +85,9 @@ public struct FlowPilotUpdateView: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("Automatic Updates", "自动更新"))
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                 Text(L("Automatically download, install, and restart", "发现新版本时自动下载安装并重启"))
-                    .font(.system(size: 8))
+                    .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
             Spacer()
@@ -120,7 +120,7 @@ public struct FlowPilotUpdateView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text(L("What's New", "更新内容"))
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                     Spacer()
                     if let urlString = service.snapshot.releaseURL, let url = URL(string: urlString) {
                         Link(destination: url) {
@@ -128,7 +128,7 @@ public struct FlowPilotUpdateView: View {
                                 Text(L("Changelog", "更新日志"))
                                 Image(systemName: "arrow.up.right")
                             }
-                            .font(.system(size: 8.5, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.cyan)
                         }
                     }
@@ -136,7 +136,7 @@ public struct FlowPilotUpdateView: View {
 
                 ScrollView(.vertical, showsIndicators: true) {
                     Text(notes)
-                        .font(.system(size: 9.5, weight: .regular))
+                        .font(.system(size: 12, weight: .regular))
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
@@ -160,12 +160,12 @@ public struct FlowPilotUpdateView: View {
         if let error = service.actionError, !error.isEmpty {
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 12))
                     .foregroundColor(.orange)
                     .padding(.top, 1)
                 ScrollView(.vertical, showsIndicators: true) {
                     Text(error)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.orange)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -178,7 +178,7 @@ public struct FlowPilotUpdateView: View {
             )
         } else if let message = service.actionMessage, !message.isEmpty {
             Text(message)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.secondary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -190,10 +190,10 @@ public struct FlowPilotUpdateView: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: 12))
                     .foregroundColor(.orange)
                 Text(restartExplanation)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -211,7 +211,7 @@ public struct FlowPilotUpdateView: View {
                             }
                             Text(service.isAutoRestartScheduled ? L("Restarting…", "正在重启…") : L("Restart FlowPilot", "重启 FlowPilot"))
                         }
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(
@@ -235,7 +235,7 @@ public struct FlowPilotUpdateView: View {
                             }
                             Text(L("I've restarted Codex", "我已重启 Codex"))
                         }
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.bordered)
                     .disabled(
@@ -268,7 +268,7 @@ public struct FlowPilotUpdateView: View {
                     }
                     Text(L("Check Again", "重新检查"))
                 }
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .frame(maxWidth: .infinity, minHeight: 28)
             }
             .buttonStyle(.bordered)
@@ -291,7 +291,7 @@ public struct FlowPilotUpdateView: View {
                     }
                     Text(service.isInstalling ? L("Updating…", "更新中…") : L("Update Now", "立即更新"))
                 }
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .frame(maxWidth: .infinity, minHeight: 28)
             }
             .buttonStyle(.borderedProminent)
@@ -341,11 +341,11 @@ public struct FlowPilotUpdateView: View {
     private func versionRow(title: String, value: String) -> some View {
         HStack {
             Text(title)
-                .font(.system(size: 9.5, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.secondary)
             Spacer()
             Text(value)
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(.system(size: 12, weight: .bold, design: .rounded))
                 .lineLimit(1)
         }
     }
