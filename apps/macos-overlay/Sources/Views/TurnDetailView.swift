@@ -14,9 +14,20 @@ public struct TurnDetailView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 16) {
-                narrative(L("This turn’s goal", "本轮目标"), hint: L("Extracted need", "需求提炼"), text: run.publishedGoal, accent: true)
+                narrative(
+                    L("This turn’s goal", "本轮目标"),
+                    hint: run.isLegacyGoalFallback ? L("Legacy history", "历史兼容") : L("Extracted need", "需求提炼"),
+                    text: run.publishedGoal,
+                    accent: true
+                )
                 Divider().overlay(Color.white.opacity(0.08))
-                narrative(L("Result", "结果"), hint: nil, text: run.publishedConclusion, expanded: $resultExpanded, accent: false)
+                narrative(
+                    L("Result", "结果"),
+                    hint: run.isLegacyConclusionFallback ? L("Legacy history", "历史兼容") : nil,
+                    text: run.publishedConclusion,
+                    expanded: $resultExpanded,
+                    accent: false
+                )
                 if run.result?.truncated == true {
                     Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                 }

@@ -170,7 +170,7 @@ codex-flow telemetry repair --dry-run
 codex-flow telemetry repair
 ```
 
-目标、计划和结果不通过历史修复生成；缺失内容继续显示“未记录”。
+目标、计划和结果不通过历史修复生成，也不会把旧摘要回写成新的发布字段。原生浮窗读取时优先使用新字段；旧记录缺少 `turn_context.goal` 或 `result` 时，兼容读取已有 `summary_info.goal/conclusion`，并标记“历史兼容”。两处都没有数据时才显示“未记录”。
 
 **可恢复性判定原则**：
 - **不覆盖**：仅回填缺失字段，绝不覆盖已有有效数据。

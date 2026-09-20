@@ -182,6 +182,7 @@ codex-flow telemetry repair
 
 **Backfill Principles**:
 - **Preserve Existing Data**: Only fills in missing fields; never overwrites valid existing data.
+- **Legacy Display Compatibility**: Repair does not generate goals, plans, or results and never writes legacy summaries into new publication fields. The native overlay prefers the new fields; old records without `turn_context.goal` or `result` display `summary_info.goal/conclusion` with a legacy-history label. “Not recorded” is shown only when both sources are absent.
 - **Explicit Estimates**: The app-server finish snapshot remains preferred. If it times out but the exact turn's transcript contains a final `token_count.rate_limits` watermark, telemetry backfills `quota_after` with `quota_after_source=transcript_estimate`. The UI and summary label it as estimated; it is evidence for that run only and is excluded from canonical quota attribution and cumulative statistics.
 - **Idempotent**: Repeated execution safely reports `repaired: 0`.
 - **Authoritative Sync**: Safely updates `last.json` if the repaired run matches the latest session and turn ID.

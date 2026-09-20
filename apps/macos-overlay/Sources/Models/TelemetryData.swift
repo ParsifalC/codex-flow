@@ -559,6 +559,18 @@ public struct TaskSummaryInfo: Codable {
     }
 }
 
+/// Identifies which persisted field supplied a displayed goal or conclusion.
+///
+/// `legacySummary` is a read-only compatibility path for runs written before
+/// per-turn publication existed. It is intentionally never copied into the
+/// new `turn_context` or `result` fields.
+public enum PublishedTextSource: String, Equatable {
+    case turnContext
+    case result
+    case legacySummary
+    case missing
+}
+
 /// Recursive JSON keeps the original schema-11 execution plan intact while
 /// allowing the native overlay to remain independent of planner revisions.
 public enum JSONValue: Codable, Equatable {
@@ -994,18 +1006,67 @@ public struct TaskRun: Codable, Identifiable {
         publishedConclusion
     }
 
-    public var publishedGoal: String? {
-        guard let text = turnContext?.goal?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private static func nonEmptyText(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return text
     }
 
+    /// The exact per-turn goal, when the new publication schema recorded one.
+    public var publishedGoalFromTurnContext: String? {
+        Self.nonEmptyText(turnContext?.goal?.text)
+    }
+
+    /// The old transcript-derived summary retained in legacy run files.
+    /// This is display-only compatibility data and is never treated as a
+    /// newly published turn fact.
+    public var legacyGoal: String? {
+        Self.nonEmptyText(summaryInfo?.goal)
+    }
+
+    /// The exact parent-final result, when the new publication schema recorded one.
+    public var publishedConclusionFromResult: String? {
+        Self.nonEmptyText(result?.text)
+    }
+
+    /// The old transcript-derived summary retained in legacy run files.
+    /// This is display-only compatibility data and is never treated as a
+    /// newly published turn fact.
+    public var legacyConclusion: String? {
+        Self.nonEmptyText(summaryInfo?.conclusion)
+    }
+
+    /// Prefer exact per-turn publication and fall back to the legacy summary
+    /// only for historical records that do not have the new field.
+    public var publishedGoal: String? {
+        publishedGoalFromTurnContext ?? legacyGoal
+    }
+
+    /// Prefer the exact parent final and fall back to the legacy summary only
+    /// for historical records that do not have the new field.
     public var publishedConclusion: String? {
-        guard let text = result?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return text
+        publishedConclusionFromResult ?? legacyConclusion
+    }
+
+    public var publishedGoalSource: PublishedTextSource {
+        if publishedGoalFromTurnContext != nil { return .turnContext }
+        if legacyGoal != nil { return .legacySummary }
+        return .missing
+    }
+
+    public var publishedConclusionSource: PublishedTextSource {
+        if publishedConclusionFromResult != nil { return .result }
+        if legacyConclusion != nil { return .legacySummary }
+        return .missing
+    }
+
+    public var isLegacyGoalFallback: Bool {
+        publishedGoalSource == .legacySummary
+    }
+
+    public var isLegacyConclusionFallback: Bool {
+        publishedConclusionSource == .legacySummary
     }
     
     public var turnPreview: String {

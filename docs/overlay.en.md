@@ -20,7 +20,10 @@ The **FlowPilot Overlay** is a 100% native macOS desktop companion built with **
 
 Turn goals, results, and orchestration are keyed by `session_id + turn_id`, not
 a chat-wide goal. New records require `publication` before appearing in details.
-Legacy completed history remains readable without backfilling missing fields.
+Legacy completed history remains readable. New fields take priority; when an old
+record has no `turn_context.goal` or `result`, the UI reads the existing
+`summary_info.goal/conclusion` for display and marks it as legacy history. Those
+values are never written back as new publication fields.
 Host receipt delivery is verified per installation; see [telemetry compatibility](telemetry.en.md#store-goals-plans-and-results-per-turn).
 
 Task, History, Analytics, and Account tabs retain more, pin, collapse, switch,
@@ -55,7 +58,7 @@ may still show the previous content model.
 ---
 
 ### 2. Inspector (Completed Turn Details)
-- **Turn Goal and Result**: Read the goal only from `turn_context.goal` and the parent final only from `result`. Missing fields display “Not recorded”. Details appear only after parent Stop publishes the turn.
+- **Turn Goal and Result**: New records read the goal from `turn_context.goal` and the parent final from `result`; old history without those fields falls back to `summary_info.goal/conclusion` and is marked as legacy history. If both sources are absent, the UI shows “Not recorded”. New turns appear only after parent Stop publishes them.
 - **Orchestration Configuration**: Execution details start collapsed. Show strategy, routing, and review settings, with planned counts separate from observed participants.
 - **Run Facts**: Compact duration, token, and actual participant counts appear after the goal and result.
 - **Complete Plan**: Expand the full JSON inside execution details, including plan origin and revision. Long goals and results can be expanded separately.

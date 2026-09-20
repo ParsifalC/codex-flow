@@ -6,7 +6,7 @@ func L(_ english: String, _ chinese: String) -> String { english }
 struct TelemetryTurnContextTests {
     static func main() throws {
         try testPublishedSnapshotRoundTrips()
-        try testLegacySnapshotRemainsReadableWithoutPublishedLabels()
+        try testLegacySnapshotFallsBackWithoutChangingPublishedFields()
         try testQueryExcludesUnpublishedNewRuns()
         testPublicationOrderingAndNotifications()
         print("Turn context model/query tests passed")
@@ -49,7 +49,7 @@ struct TelemetryTurnContextTests {
         precondition(decoded.id == run.id)
     }
 
-    private static func testLegacySnapshotRemainsReadableWithoutPublishedLabels() throws {
+    private static func testLegacySnapshotFallsBackWithoutChangingPublishedFields() throws {
         let json = """
         {"session_id":"legacy","turn_id":"turn-1","finished_at_ms":20,
          "summary_info":{"goal":"old transcript goal","conclusion":"old transcript conclusion"},
@@ -60,8 +60,25 @@ struct TelemetryTurnContextTests {
         precondition(run.turnContext == nil)
         precondition(run.result == nil)
         precondition(run.publication == nil)
-        precondition(run.publishedGoal == nil)
-        precondition(run.publishedConclusion == nil)
+        precondition(run.publishedGoal == "old transcript goal")
+        precondition(run.publishedConclusion == "old transcript conclusion")
+        precondition(run.publishedGoalSource == .legacySummary)
+        precondition(run.publishedConclusionSource == .legacySummary)
+        precondition(run.isLegacyGoalFallback)
+        precondition(run.isLegacyConclusionFallback)
+
+        let exact = TaskRun(
+            sessionId: "legacy", turnId: "turn-1",
+            summaryInfo: TaskSummaryInfo(goal: "old goal", conclusion: "old conclusion"),
+            turnContext: TurnContext(goal: TurnGoal(text: "exact goal")),
+            result: TurnResult(text: "exact conclusion")
+        )
+        precondition(exact.publishedGoal == "exact goal")
+        precondition(exact.publishedConclusion == "exact conclusion")
+        precondition(exact.publishedGoalSource == .turnContext)
+        precondition(exact.publishedConclusionSource == .result)
+        precondition(!exact.isLegacyGoalFallback)
+        precondition(!exact.isLegacyConclusionFallback)
     }
 
     private static func testQueryExcludesUnpublishedNewRuns() throws {

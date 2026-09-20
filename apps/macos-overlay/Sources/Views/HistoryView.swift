@@ -204,6 +204,12 @@ private struct HistoryRunRow: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
                     Text(L("Turn", "轮次") + " · " + String((run.turnId ?? "—").prefix(8)))
+                    if run.isLegacyGoalFallback {
+                        Text(L("Legacy", "历史兼容"))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .help(L("Goal recovered from the historical summary", "目标来自历史摘要兼容读取"))
+                    }
                     Spacer()
                     Text(run.localizedFormattedDate)
                 }
