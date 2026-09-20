@@ -174,7 +174,7 @@ codex-flow telemetry repair
 
 **可恢复性判定原则**：
 - **不覆盖**：仅回填缺失字段，绝不覆盖已有有效数据。
-- **不猜测**：Quota Delta 仅在 `quota_before` 与 `quota_after` 均已保存时计算回填；若缺少任意一侧则视为信息已丢失，不估算、不倒推。
+- **估算有标记**：结束时优先使用 app-server 快照；若该请求超时但本轮 transcript 的 `token_count.rate_limits` 已记录结束前账户水位，则按精确 `turn_id` 回填 `quota_after`，并写入 `quota_after_source=transcript_estimate`。界面和摘要会标注“估算”；该值只用于本轮观察，不进入 canonical quota attribution 或累计统计。
 - **幂等性**：重复执行时显示 `repaired: 0`。
 - **状态同步**：若修复的 run 对应当前的最新任务，同步原子更新 `last.json`。
 

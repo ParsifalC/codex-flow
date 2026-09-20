@@ -13,6 +13,7 @@ from .app_server import (
     extract_transcript_insights,
     find_session_transcript,
     quota_delta,
+    transcript_turn_quota,
     transcript_turn_usage,
 )
 from .common import (
@@ -34,7 +35,8 @@ def repair_run(
     Principles:
     1. Only fills missing fields, never overwrites existing valid data.
     2. Safe skips when transcript is missing or unreadable.
-    3. Backfills quota delta only if both before and after snapshots exist.
+    3. Recovers a missing after snapshot from the exact turn transcript and
+       marks it as an estimate; canonical attribution remains separate.
     """
     if not isinstance(run, dict):
         return run
@@ -87,6 +89,13 @@ def repair_run(
                     parent["usage_delta"] = recovered_usage
                     if report is not None:
                         report["tokens_restored"] = True
+
+        existing_after = run.get("quota_after")
+        if not isinstance(existing_after, list) or not existing_after:
+            recovered_quota = transcript_turn_quota(transcript_path, turn_id)
+            if recovered_quota:
+                run["quota_after"] = recovered_quota
+                run["quota_after_source"] = "transcript_estimate"
 
     parent_model = (run.get("parent") or {}).get("model") if isinstance(run.get("parent"), dict) else None
     if (run.get("cwd") == "/" or (parent_model == "gpt-5.6-terra" and not has_valid_transcript)) and not run.get("is_system_task"):

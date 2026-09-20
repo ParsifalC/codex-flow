@@ -22,6 +22,7 @@ from .app_server import (
     quota_delta,
     quota_windows,
     session_index_metadata,
+    transcript_turn_quota,
     transcript_turn_started_at,
     transcript_turn_usage,
     usage_delta,
@@ -1292,6 +1293,33 @@ def collect_hook(event: dict[str, Any]) -> None:
                 if server.available
                 else None
             )
+            transcript_path = run.get("transcript_path") or event.get("transcript_path")
+            if not transcript_path or not Path(transcript_path).is_file():
+                thread_path = (
+                    run.get("thread", {}).get("path")
+                    if isinstance(run.get("thread"), dict)
+                    else None
+                )
+                if thread_path and Path(thread_path).is_file():
+                    transcript_path = thread_path
+                else:
+                    resolved = find_session_transcript(event.get("session_id"))
+                    if resolved:
+                        transcript_path = resolved
+            if transcript_path:
+                run["transcript_path"] = transcript_path
+            if not quota_after:
+                transcript_quota = transcript_turn_quota(
+                    transcript_path,
+                    event.get("turn_id"),
+                )
+                if transcript_quota:
+                    quota_after = transcript_quota
+                    run["quota_after_source"] = "transcript_estimate"
+                else:
+                    run.pop("quota_after_source", None)
+            else:
+                run.pop("quota_after_source", None)
             run["quota_after"] = quota_after
             run["quota_change_during_run"] = quota_delta(
                 run.get("quota_before", []), quota_after
@@ -1299,7 +1327,7 @@ def collect_hook(event: dict[str, Any]) -> None:
             try:
                 from .quota_ledger import get_db, record_observation, export_quota_summary, resolve_account_id
                 resolved_account = resolve_account_id(event.get("account_id"))
-                for w in quota_after:
+                for w in quota_after if run.get("quota_after_source") != "transcript_estimate" else []:
                     if w.get("window_duration_mins") == 10080 and isinstance(w.get("used_percent"), (int, float)):
                         with get_db() as db_conn:
                             record_observation(
@@ -1319,19 +1347,6 @@ def collect_hook(event: dict[str, Any]) -> None:
             service_delta = usage_delta(
                 run["parent"].get("usage_before"), parent_after
             )
-            transcript_path = run.get("transcript_path") or event.get("transcript_path")
-            if not transcript_path or not Path(transcript_path).is_file():
-                thread_path = (
-                    run.get("thread", {}).get("path")
-                    if isinstance(run.get("thread"), dict)
-                    else None
-                )
-                if thread_path and Path(thread_path).is_file():
-                    transcript_path = thread_path
-                else:
-                    resolved = find_session_transcript(event.get("session_id"))
-                    if resolved:
-                        transcript_path = resolved
             if transcript_path:
                 run["transcript_path"] = transcript_path
 

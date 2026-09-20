@@ -182,7 +182,7 @@ codex-flow telemetry repair
 
 **Backfill Principles**:
 - **Preserve Existing Data**: Only fills in missing fields; never overwrites valid existing data.
-- **No Guesswork**: Quota deltas are only calculated when both `quota_before` and `quota_after` snapshots exist. Missing quota snapshots are marked as impossible rather than estimated.
+- **Explicit Estimates**: The app-server finish snapshot remains preferred. If it times out but the exact turn's transcript contains a final `token_count.rate_limits` watermark, telemetry backfills `quota_after` with `quota_after_source=transcript_estimate`. The UI and summary label it as estimated; it is evidence for that run only and is excluded from canonical quota attribution and cumulative statistics.
 - **Idempotent**: Repeated execution safely reports `repaired: 0`.
 - **Authoritative Sync**: Safely updates `last.json` if the repaired run matches the latest session and turn ID.
 

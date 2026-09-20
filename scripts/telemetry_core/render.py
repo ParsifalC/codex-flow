@@ -223,11 +223,14 @@ def render_summary(run: dict[str, Any]) -> str:
             if reset:
                 reset_pieces.append(f"{label} {reset}")
         if pieces:
+            estimated_note = run.get("quota_after_source") == "transcript_estimate"
+            quota_label_en = "Account Quota (Estimated from transcript)" if estimated_note else "Account Quota"
+            quota_label_zh = "账户额度（基于原始日志估算）" if estimated_note else "账户额度"
             lines.append(T(
                 "  ├─ Quota & Windows ─────────────────────────────────────────────────┤",
                 "  ├─ 额度与时间窗 ───────────────────────────────────────────────────┤",
             ))
-            append_wrapped_line(T(f"• Account Quota:  {' | '.join(pieces)}", f"• 账户额度:       {' | '.join(pieces)}"))
+            append_wrapped_line(T(f"• {quota_label_en}:  {' | '.join(pieces)}", f"• {quota_label_zh}：       {' | '.join(pieces)}"))
             if reset_pieces:
                 append_wrapped_line(T(f"• Resets:         {' | '.join(reset_pieces)}", f"• 重置时间:       {' | '.join(reset_pieces)}"))
 

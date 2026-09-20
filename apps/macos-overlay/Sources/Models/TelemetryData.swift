@@ -734,6 +734,7 @@ public struct TaskRun: Codable, Identifiable {
     public var workersList: [ParticipantInfo]?
     public var quotaBefore: [QuotaWindow]?
     public var quotaAfter: [QuotaWindow]?
+    public var quotaAfterSource: String?
     public var quotaChangeDuringRun: [QuotaWindow]?
     public var skillsUsed: [SkillUsage]?
     public var toolsUsed: [ToolCallInfo]?
@@ -763,6 +764,7 @@ public struct TaskRun: Codable, Identifiable {
         case workers
         case quotaBefore = "quota_before"
         case quotaAfter = "quota_after"
+        case quotaAfterSource = "quota_after_source"
         case quotaChangeDuringRun = "quota_change_during_run"
         case skillsUsed = "skills_used"
         case toolsUsed = "tools_used"
@@ -804,6 +806,7 @@ public struct TaskRun: Codable, Identifiable {
         parent = try container.decodeIfPresent(ParticipantInfo.self, forKey: .parent)
         quotaBefore = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaBefore)
         quotaAfter = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaAfter)
+        quotaAfterSource = try container.decodeIfPresent(String.self, forKey: .quotaAfterSource)
         quotaChangeDuringRun = try container.decodeIfPresent([QuotaWindow].self, forKey: .quotaChangeDuringRun)
         skillsUsed = try container.decodeIfPresent([SkillUsage].self, forKey: .skillsUsed)
         toolsUsed = try container.decodeIfPresent([ToolCallInfo].self, forKey: .toolsUsed)
@@ -864,6 +867,7 @@ public struct TaskRun: Codable, Identifiable {
         }
         try container.encodeIfPresent(quotaBefore, forKey: .quotaBefore)
         try container.encodeIfPresent(quotaAfter, forKey: .quotaAfter)
+        try container.encodeIfPresent(quotaAfterSource, forKey: .quotaAfterSource)
         try container.encodeIfPresent(quotaChangeDuringRun, forKey: .quotaChangeDuringRun)
         try container.encodeIfPresent(skillsUsed, forKey: .skillsUsed)
         try container.encodeIfPresent(toolsUsed, forKey: .toolsUsed)
@@ -894,6 +898,7 @@ public struct TaskRun: Codable, Identifiable {
         workers: [ParticipantInfo]? = nil,
         quotaBefore: [QuotaWindow]? = nil,
         quotaAfter: [QuotaWindow]? = nil,
+        quotaAfterSource: String? = nil,
         quotaChangeDuringRun: [QuotaWindow]? = nil,
         skillsUsed: [SkillUsage]? = nil,
         toolsUsed: [ToolCallInfo]? = nil,
@@ -923,6 +928,7 @@ public struct TaskRun: Codable, Identifiable {
         self.workersList = workers
         self.quotaBefore = quotaBefore
         self.quotaAfter = quotaAfter
+        self.quotaAfterSource = quotaAfterSource
         self.quotaChangeDuringRun = quotaChangeDuringRun
         self.skillsUsed = skillsUsed
         self.toolsUsed = toolsUsed
@@ -1197,6 +1203,12 @@ public struct TaskRun: Codable, Identifiable {
     /// Used ONLY for single-run detail inspection/evidence; strictly forbidden for cumulative statistics.
     public var observedAccountDelta: Double? {
         return weeklyQuotaDelta
+    }
+
+    /// The finish snapshot was recovered from the turn transcript rather than
+    /// read successfully from app-server at completion time.
+    public var isQuotaEstimated: Bool {
+        return quotaAfterSource == "transcript_estimate"
     }
 
     /// Canonical quota movement used by task, project, model, chat and trend analytics.

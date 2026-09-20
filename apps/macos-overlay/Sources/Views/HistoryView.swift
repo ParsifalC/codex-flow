@@ -218,6 +218,16 @@ private struct HistoryRunRow: View {
 
                 HStack {
                     Text(run.formattedDuration + " · " + run.formattedTotalTokens + " tokens")
+                    if let quota = run.observedAccountDelta, abs(quota) >= 0.1 {
+                        let formatted = abs(quota) < 0.95
+                            ? String(format: "%+.1f%%", -quota)
+                            : String(format: "%+.0f%%", -quota)
+                        Text("\(run.isQuotaEstimated ? "≈" : "")\(formatted)\(run.isQuotaEstimated ? L(" est.", " 估") : "")")
+                            .foregroundStyle(.white.opacity(0.58))
+                            .help(run.isQuotaEstimated
+                                ? String(format: L("Quota consumed (Estimated from transcript): %.1f%%", "配额消耗（基于原始日志估算）：%.1f%%"), abs(quota))
+                                : String(format: L("Observed account change: %.1f%% (Attribution pending)", "观测到账户变化：%.1f%%（归因待完成）"), abs(quota)))
+                    }
                     Spacer()
                     Image(systemName: "arrow.up.right")
                 }
