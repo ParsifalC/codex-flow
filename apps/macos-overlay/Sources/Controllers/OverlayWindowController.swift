@@ -21,6 +21,10 @@ public class OverlayState: ObservableObject {
     @Published public var isDocked: Bool = false
     @Published public var dockEdge: DockEdge = .right
     @Published public var latestRun: TaskRun? = nil
+    // A completion IPC can refer to an older turn than latestRun. Keep that
+    // event's content for the notification presentation while preserving the
+    // latest snapshot used by the live bubble and history state.
+    @Published public var notificationRun: TaskRun? = nil
     @Published public var isPrivacyMode: Bool = false
 
     @Published public var activeTab: OverlayTab = .inspector
@@ -97,6 +101,7 @@ public class OverlayState: ObservableObject {
         DispatchQueue.main.async {
             self.windowController?.prepareForPresentationChange()
             self.isExpanded = false
+            self.notificationRun = nil
             self.isPinned = false
             self.isDocked = false
             // Reliability first: AppKit frame interpolation while SwiftUI swaps
@@ -131,6 +136,7 @@ public class OverlayState: ObservableObject {
 
     public func inspect(run: TaskRun) {
         DispatchQueue.main.async {
+            self.notificationRun = nil
             self.inspectedRun = run
             self.markResultViewed(run)
             self.activeTab = .inspector
@@ -140,6 +146,7 @@ public class OverlayState: ObservableObject {
 
     public func jumpToLive() {
         DispatchQueue.main.async {
+            self.notificationRun = nil
             self.inspectedRun = nil
             self.markResultViewed(self.latestRun)
             self.activeTab = .inspector
@@ -218,11 +225,14 @@ public class OverlayState: ObservableObject {
             let decision = self.publicationGate.accept(run, notify: notificationTriggered)
             if recovery {
                 // Startup recovery refreshes the restored snapshot silently and
-                // consumes its notification identity. A later IPC hint for the
-                // same revision may refresh, but must not expand the overlay.
+                // keeps its completion identity eligible for a later explicit
+                // completion IPC event.
                 self.publicationGate.seed(run)
             }
-            if decision.notify { self.expand(notificationTriggered: true) }
+            if decision.notify {
+                self.notificationRun = run
+                self.expand(notificationTriggered: true)
+            }
             guard decision.refresh else { return }
             self.latestRun = run
             if self.activeTab == .history {

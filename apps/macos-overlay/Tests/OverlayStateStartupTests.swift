@@ -109,6 +109,11 @@ struct OverlayStateStartupTests {
         precondition(!state.isExpanded, "quiet refresh must not expand the overlay")
         precondition(state.hasUnreadResult, "quiet refresh must preserve unread state")
 
+        var late = run
+        late.publication = PublicationInfo(revision: 2, completedAtMs: 1)
+        try JSONEncoder().encode(late).write(to: lastURL)
+        _ = try send("refresh", socketPath: socketPath)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         let updated = try send("update", socketPath: socketPath)
         precondition(updated.contains("\"ok\": true"), "update must acknowledge success")
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
@@ -122,6 +127,19 @@ struct OverlayStateStartupTests {
         precondition(repeated.contains("\"ok\": true"), "repeated update must acknowledge success")
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         precondition(!state.isExpanded, "repeated update must not reexpand an already presented result")
+        let older = TaskRun(sessionId: "older-chat", turnId: "turn-1", finishedAtMs: 0,
+                            publication: PublicationInfo(revision: 2, completedAtMs: 0))
+        let olderURL = telemetry.appendingPathComponent("older.json")
+        try JSONEncoder().encode(older).write(to: olderURL)
+        _ = try send("update " + olderURL.path, socketPath: socketPath)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        precondition(state.isExpanded)
+        precondition(state.latestRun?.id == run.id)
+        precondition(state.notificationRun?.id == older.id)
+        _ = try send("refresh", socketPath: socketPath)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        precondition(state.notificationRun?.id == older.id)
+
     }
 
     private static func send(_ command: String, socketPath: String) throws -> String {

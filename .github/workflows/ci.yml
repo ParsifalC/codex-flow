@@ -258,5 +258,15 @@ jobs:
           if (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.ps1')) { throw 'custom PowerShell wrapper survived uninstall' }
           $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
           if (-not $config.Contains('# non-ASCII sentinel: ' + $sentinel)) { throw 'non-ASCII config sentinel was not preserved after uninstall' }
+      - name: Native Windows telemetry locks and publication
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          python3 -m unittest discover -s tests -p test_lock_recovery.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python3 tests/test_publication.py PublicationTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python3 tests/test_turn_context.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Installed turn context CLI
         run: ./tests/turn-context-install.ps1

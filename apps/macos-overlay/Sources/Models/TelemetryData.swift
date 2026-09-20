@@ -8,24 +8,57 @@ struct PublishedTurnGate {
     private var latestOrder: (Double, String, String)?
 
     mutating func seed(_ run: TaskRun) {
+        // Startup and filesystem recovery are quiet reads. Register the
+        // snapshot for ordering/revision purposes, but leave its completion
+        // identity eligible for a later explicit completion IPC event.
         _ = accept(run, notify: false)
-        notified.insert(run.id)
     }
 
     mutating func accept(_ run: TaskRun, notify: Bool) -> (refresh: Bool, notify: Bool) {
-        guard let session = run.sessionId, let turn = run.turnId,
-              let publication = run.publication,
-              let completed = publication.completedAtMs else { return (false, false) }
+        guard let session = run.sessionId, !session.isEmpty,
+              let turn = run.turnId, !turn.isEmpty else { return (false, false) }
+        let identity = "\(session.utf8.count):\(session)\(turn)"
+
+        // Legacy records predate ordered publication. They may still be
+        // displayed as quiet history facts, but they never infer a result or
+        // consume a completion notification identity.
+        guard let publication = run.publication else {
+            guard run.publicationRequired != true, !run.isRunning,
+                  let completed = run.finishedAtMs ?? run.startedAtMs else {
+                return (false, false)
+            }
+            let order = (completed, session, turn)
+            if let latestOrder, order < latestOrder { return (false, false) }
+            let refresh = revisions[identity] == nil
+            if refresh {
+                revisions[identity] = 0
+                latestOrder = order
+            }
+            return (refresh, false)
+        }
+
+        guard let completed = publication.completedAtMs ?? run.finishedAtMs ?? run.startedAtMs else {
+            return (false, false)
+        }
         let revision = publication.revision
         let order = (completed, session, turn)
-        if let latestOrder, order < latestOrder { return (false, false) }
-        let previous = revisions[run.id]
-        if let previous, revision < previous { return (false, false) }
-        let refresh = previous == nil || revision > previous!
-        if refresh { revisions[run.id] = revision; latestOrder = order }
-        // A revision > 1 represents data supplementation, not a new completion.
-        let shouldNotify = notify && revision == 1 && !notified.contains(run.id)
-        if shouldNotify || revision > 1 { notified.insert(run.id) }
+
+        // Notification dedupe is per completed turn, independent of revision
+        // and global latest ordering. Compute it before the refresh ordering
+        // guard so an older completion can still notify without rolling back
+        // the latest displayed snapshot.
+        let shouldNotify = notify && !notified.contains(identity)
+        if shouldNotify { notified.insert(identity) }
+
+        if let previous = revisions[identity], revision < previous {
+            return (false, shouldNotify)
+        }
+        if let latestOrder, order < latestOrder {
+            return (false, shouldNotify)
+        }
+        let previous = revisions[identity]
+        let refresh = previous.map { revision > $0 } ?? true
+        if refresh { revisions[identity] = revision; latestOrder = order }
         return (refresh, shouldNotify)
     }
 }

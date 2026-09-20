@@ -116,6 +116,59 @@ public class TelemetryQueryEngine {
         
         return result
     }
+
+    /// Read active records directly from runs/ without applying history
+    /// visibility rules. History intentionally hides in-progress records, but
+    /// update/restart guards must still see an active turn when last.json is a
+    /// completed snapshot from an earlier turn.
+    public func loadActiveRuns() -> [TaskRun] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
+        guard FileManager.default.fileExists(atPath: runsDirURL.path),
+              let files = try? FileManager.default.contentsOfDirectory(
+                  at: runsDirURL,
+                  includingPropertiesForKeys: [.contentModificationDateKey],
+                  options: [.skipsHiddenFiles]
+              ) else {
+            return []
+        }
+
+        var active: [TaskRun] = []
+        for fileURL in files where fileURL.pathExtension == "json" {
+            let stem = fileURL.deletingPathExtension().lastPathComponent
+            let mtime = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+            let run: TaskRun?
+            if let cached = cachedRuns[stem], cached.mtime == mtime {
+                run = cached.run
+            } else if let data = try? Data(contentsOf: fileURL),
+                      var decoded = try? JSONDecoder().decode(TaskRun.self, from: data) {
+                decoded.fileStem = stem
+                cachedRuns[stem] = (mtime, decoded)
+                run = decoded
+            } else {
+                run = nil
+            }
+            if let run, run.isRunning {
+                active.append(run)
+            }
+        }
+
+        active.sort { lhs, rhs in
+            let left = lhs.startedAtMs ?? lhs.finishedAtMs ?? 0
+            let right = rhs.startedAtMs ?? rhs.finishedAtMs ?? 0
+            return left > right
+        }
+        return active
+    }
+
+    public func loadActiveRun() -> TaskRun? {
+        loadActiveRuns().first
+    }
+
+    public func hasActiveRun() -> Bool {
+        loadActiveRun() != nil
+    }
     
     public func loadLatestRun() -> TaskRun? {
         if FileManager.default.fileExists(atPath: lastFileURL.path),

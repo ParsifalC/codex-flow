@@ -94,7 +94,8 @@ class PublicationTests(unittest.TestCase):
             self.stop(observed(session, turn), completed=completed)
         self.assertEqual((self.read()["session_id"], self.read()["turn_id"]), ("chat-b", "t3"))
         old = self.stop(observed("chat-z", "old"), completed=1)
-        self.assertFalse(old.last_updated or old.notify)
+        self.assertFalse(old.last_updated)
+        self.assertTrue(old.notify)
 
     def test_mismatched_existing_identity_cannot_be_overwritten(self):
         common.atomic_json(self.root / "runs/chat-a--turn-2.json", observed("other", "turn-2"))
@@ -293,7 +294,10 @@ class HookPublicationTests(unittest.TestCase):
         wait_for_commands = self._overlay_socket(expected=2)
         self.collector.collect_hook({**self.event, "hook_event_name": "Stop"})
         self.collector.collect_hook({**worker, "hook_event_name": "SubagentStop"})
-        self.assertEqual(wait_for_commands(), ["update", "refresh"])
+        self.assertEqual(wait_for_commands(), [
+            f"update {(self.state / 'runs/chat-a--turn-2.json').resolve()}",
+            "refresh",
+        ])
 
     def test_real_socket_repair_recovery_is_quiet(self):
         self.collector.collect_hook(self.event)

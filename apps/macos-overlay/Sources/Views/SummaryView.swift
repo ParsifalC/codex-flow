@@ -21,7 +21,7 @@ public struct SummaryView: View {
         if state.isPrivacyMode { return L("Hidden conversation", "会话已隐藏") }
         return L("Conversation: ", "会话：") + (currentRun?.thread?.name ?? L("Untitled conversation", "未命名会话"))
     }
-    private var currentRun: TaskRun? { state.inspectedRun ?? state.latestRun }
+    private var currentRun: TaskRun? { state.notificationRun ?? state.inspectedRun ?? state.latestRun }
     public var body: some View {
         VStack(spacing: 0) {
             chrome

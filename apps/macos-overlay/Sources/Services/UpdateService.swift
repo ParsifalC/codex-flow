@@ -177,7 +177,8 @@ public final class FlowPilotUpdateService: ObservableObject {
     private func checkPendingRestartHandoff() {
         guard snapshot.flowPilotRestartRequired == true else { return }
         guard !isRestartingFlowPilot, !isAutoRestartScheduled, actionError == nil else { return }
-        if TelemetryQueryEngine.shared.loadLatestRun()?.isRunning == true {
+        if TelemetryQueryEngine.shared.hasActiveRun()
+            || TelemetryQueryEngine.shared.loadLatestRun()?.isRunning == true {
             return
         }
         scheduleAutoRestart(
@@ -191,7 +192,8 @@ public final class FlowPilotUpdateService: ObservableObject {
         guard isAutoUpdateEnabled else { return }
         guard snapshot.updateAvailable == true, snapshot.artifactAvailable == true else { return }
         guard !isInstalling, !isChecking, !isRestartingFlowPilot, !isAutoRestartScheduled else { return }
-        if TelemetryQueryEngine.shared.loadLatestRun()?.isRunning == true {
+        if TelemetryQueryEngine.shared.hasActiveRun()
+            || TelemetryQueryEngine.shared.loadLatestRun()?.isRunning == true {
             return
         }
         installUpdate(isAutomatic: true)

@@ -795,6 +795,33 @@ def run_maintenance() -> None:
             except OSError:
                 pass
 
+        # Upgrade old sealed registrations, including receipts whose runs were
+        # already removed by an older collector. Expire orphan active receipts
+        # using their own age; preserve recent active registrations.
+        for receipt_path in (_common.STATE_ROOT / "turn-receipts").glob("*.json"):
+            digest = receipt_path.stem
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                continue
+            with state_lock("turn-" + digest) as acquired_receipt:
+                if not acquired_receipt:
+                    continue
+                value = read_json_object(receipt_path)
+                if not value or value == {"schema_version": 1, "state": "sealed"}:
+                    continue
+                sealed = value.get("state") == "sealed"
+                stamp = run_age_timestamp_ms(receipt_path, None)
+                run = read_json_object(run_path_for_key(run_key(value)))
+                run_stamp = run_age_timestamp_ms(run_path_for_key(run_key(value)), run) if run else None
+                expired = stamp is not None and stamp < cutoff and (run_stamp is None or run_stamp < cutoff)
+                if not sealed and not expired:
+                    continue
+                atomic_json(receipt_path, {"schema_version": 1, "state": "sealed"})
+                if expired:
+                    try:
+                        (_common.STATE_ROOT / "turn-context" / (digest + ".json")).unlink()
+                    except OSError:
+                        pass
+
         with state_lock(GLOBAL_LOCK) as global_acquired:
             if global_acquired:
                 last = read_json_object(LAST_FILE)
@@ -897,7 +924,14 @@ def notify_overlay_if_active(run: dict[str, Any], *, notify: bool = False) -> No
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(0.5)
         client.connect(sock_path)
-        client.sendall(("update" if notify else "refresh").encode() + b"\n")
+        if notify:
+            # A completion can arrive after another turn has won last.json.
+            # Carry the persisted run path so the overlay loads the triggering
+            # completion instead of whichever turn is globally latest.
+            command = "update " + str(run_path_for_key(run_key(run)).resolve())
+        else:
+            command = "refresh"
+        client.sendall(command.encode() + b"\n")
         client.close()
     except Exception:
         pass
@@ -948,7 +982,11 @@ def _parent_turn_lock(event: dict[str, Any], key: str, digest: str):
 def _emit_publication(publication: PublicationResult, *, summary=False) -> None:
     if publication.snapshot is None:
         return
-    if publication.last_updated:
+    if publication.notify:
+        # Completion notifications are independent from whether this turn is
+        # the globally latest snapshot.  Quiet refreshes remain latest-only.
+        notify_overlay_if_active(publication.snapshot, notify=True)
+    elif publication.last_updated:
         notify_overlay_if_active(publication.snapshot, notify=publication.notify)
     if publication.notify:
         send_system_notification(publication.snapshot)

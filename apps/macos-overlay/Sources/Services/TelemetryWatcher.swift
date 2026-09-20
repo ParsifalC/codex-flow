@@ -69,8 +69,8 @@ public final class TelemetryWatcher {
         }
         watcherQueue.setSpecific(key: watcherQueueKey, value: ())
 
-        // Recovery is best effort and silent. The first snapshot it reads is
-        // marked as recovered so a later IPC hint cannot re-notify it.
+        // Recovery is best effort and silent. The restored snapshot remains
+        // eligible for a later explicit completion IPC notification.
         recoverLastThenLoad()
         startWatching()
     }
@@ -238,8 +238,7 @@ public final class TelemetryWatcher {
         let loader = snapshotLoader
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self,
-                  let run = loader(url),
-                  run.publication != nil else {
+                  let run = loader(url) else {
                 return
             }
             DispatchQueue.main.async {
@@ -258,7 +257,7 @@ public final class TelemetryWatcher {
             self.watcherQueue.async {
                 // Reads triggered during recovery are deferred. Read once after
                 // recovery, then release queued filesystem/manual refreshes.
-                if let run = loader(url), run.publication != nil {
+                if let run = loader(url) {
                     DispatchQueue.main.async {
                         self.state.update(run: run, notificationTriggered: false, recovery: true)
                     }

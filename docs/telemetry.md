@@ -202,5 +202,5 @@ codex-flow telemetry latency report --json
 - **存储目录**：`~/.codex/codex-flow/telemetry/runs/`
 - **最新任务指针**：`~/.codex/codex-flow/telemetry/last.json`
 - **脱敏延迟 ledger**：`~/.codex/codex-flow/telemetry/latency.jsonl`
-- **默认保留期**：30 天（可由 `retention_days = 30` 配置）。
+- **默认保留期**：run 和 turn-context 元数据保留 30 天（可由 `retention_days = 30` 配置）。receipt 封存后仅留下以轮次摘要命名的最小 sealed 标记，不再保留身份明文、随机凭据或 transcript 路径；该标记长期保留以阻止旧轮次重开。维护流程也会压缩旧版本的 sealed receipt，并清理过期的孤立 active receipt。
 - **孤儿 Worker 自动归集**：无挂载的 Worker 会根据 `agent_id` 或时间窗口在下次 Parent Stop 事件时自动合并入父级 Session。

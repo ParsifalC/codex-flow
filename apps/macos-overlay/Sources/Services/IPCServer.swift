@@ -126,6 +126,23 @@ public class IPCService {
             return run
         }
 
+        private func publishedRun(from payload: String) -> (run: TaskRun, source: String)? {
+            let value = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: value)),
+               let run = try? JSONDecoder().decode(TaskRun.self, from: data),
+               run.publication != nil {
+                return (run, "file")
+            }
+            if let data = value.data(using: .utf8),
+               let run = try? JSONDecoder().decode(TaskRun.self, from: data),
+               run.publication != nil {
+                return (run, "json")
+            }
+            return nil
+        }
+
         private func acceptConnection() {
             var clientAddr = sockaddr_un()
             var clientAddrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -217,24 +234,21 @@ public class IPCService {
                 let payload = notify
                     ? cmd.dropFirst("update".count).trimmingCharacters(in: .whitespacesAndNewlines)
                     : ""
-                // Publication is authoritative. Always prefer last.json so an
-                // IPC hint cannot display an unfinished or stale payload.
+
+                // An explicit completion identity is authoritative. This is
+                // required when an older turn completes after a newer turn
+                // has already replaced last.json. Bare update keeps the
+                // historical latest-snapshot behavior.
+                if !payload.isEmpty {
+                    if let explicit = publishedRun(from: payload) {
+                        state.update(run: explicit.run, notificationTriggered: notify)
+                        return "{\"ok\": true, \"updatedFrom\": \"\(explicit.source)\"}\n"
+                    }
+                    return "{\"ok\": false, \"error\": \"no published telemetry snapshot\"}\n"
+                }
                 if let run = latestPublishedRun() {
                     state.update(run: run, notificationTriggered: notify)
                     return "{\"ok\": true, \"updatedFrom\": \"last.json\"}\n"
-                }
-                if !payload.isEmpty,
-                   let fileData = try? Data(contentsOf: URL(fileURLWithPath: payload)),
-                   let run = try? JSONDecoder().decode(TaskRun.self, from: fileData),
-                   run.publication != nil {
-                    state.update(run: run, notificationTriggered: notify)
-                    return "{\"ok\": true, \"updatedFrom\": \"file\"}\n"
-                } else if !payload.isEmpty,
-                          let json = payload.data(using: .utf8),
-                          let run = try? JSONDecoder().decode(TaskRun.self, from: json),
-                          run.publication != nil {
-                    state.update(run: run, notificationTriggered: notify)
-                    return "{\"ok\": true, \"updatedFrom\": \"json\"}\n"
                 }
                 return "{\"ok\": false, \"error\": \"no published telemetry snapshot\"}\n"
             } else if cmd == "quit" || cmd == "stop" {

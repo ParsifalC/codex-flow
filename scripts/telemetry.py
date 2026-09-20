@@ -72,7 +72,7 @@ def _localized_notification_body(run: dict) -> str:
     return " · ".join(parts)
 
 
-def _notify_overlay_safely(*, notify: bool = False) -> None:
+def _notify_overlay_safely(run: dict | None = None, *, notify: bool = False) -> None:
     """Ask the overlay to refresh, or present a newly completed publication."""
     if not telemetry_writes_enabled():
         return
@@ -84,7 +84,17 @@ def _notify_overlay_safely(*, notify: bool = False) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(0.75)
             client.connect(sock_path)
-            client.sendall(("update" if notify else "refresh").encode() + b"\n")
+            if notify and isinstance(run, dict):
+                session = run.get("session_id")
+                turn = run.get("turn_id")
+                if isinstance(session, str) and session and isinstance(turn, str) and turn:
+                    run_path = run_path_for_key(run_key(run)).resolve()
+                    command = f"update {run_path}"
+                else:
+                    command = "update"
+            else:
+                command = "refresh"
+            client.sendall(command.encode() + b"\n")
             try:
                 client.recv(4096)
             except socket.timeout:
@@ -154,7 +164,7 @@ _collector.AppServer.rate_limits = _rate_limits_with_retry
 # collect_hook resolves these names from telemetry_core.collector at runtime.
 _collector.notification_body = _localized_notification_body
 _collector.send_system_notification = _localized_send_system_notification
-_collector.notify_overlay_if_active = lambda _run, *, notify=False: _notify_overlay_safely(notify=notify)
+_collector.notify_overlay_if_active = lambda run, *, notify=False: _notify_overlay_safely(run, notify=notify)
 
 
 def _context_cli(args: list[str]) -> int:

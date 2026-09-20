@@ -117,8 +117,12 @@ def _commit_locked(path: Path, previous: dict[str, Any], run: dict[str, Any], ro
     last_updated = (last_order is None or new_order >= last_order) and last != run
     if last_updated:
         atomic_json(last_path, run)
+    # The first parent Stop is the completion event for this identity even if
+    # a newer turn already owns last.json.  Keep notification delivery
+    # independent from the global latest snapshot selection so an
+    # out-of-order completion is still observable by the overlay.
     return PublicationResult(True, changed, run["publication"]["revision"], last_updated,
-                             first_stop and last_updated, None, copy.deepcopy(run))
+                             first_stop, None, copy.deepcopy(run))
 
 
 def publish_parent_stop(*, run_key: str, observed: Mapping[str, Any],
@@ -152,8 +156,7 @@ def publish_parent_stop(*, run_key: str, observed: Mapping[str, Any],
                 if not receipt_path.exists():
                     # A Stop may be the first observed hook. Retain a sealed
                     # local tombstone so a delayed prompt cannot reopen it.
-                    atomic_json(receipt_path, {"schema_version": 1, "session_id": run["session_id"],
-                        "turn_id": run["turn_id"], "role": "parent", "receipt_id": secrets.token_urlsafe(32), "state": "sealed"})
+                    atomic_json(receipt_path, {"schema_version": 1, "state": "sealed"})
                 try:
                     receipt = load_receipt(receipt_path)
                     if (receipt.session_id, receipt.turn_id) == _identity(run):

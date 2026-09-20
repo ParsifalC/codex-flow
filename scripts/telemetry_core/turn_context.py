@@ -166,6 +166,8 @@ def register_receipt(event: dict[str, Any], *, state_root: Path = STATE_ROOT) ->
             raise ReceiptError("locked")
         path = _receipt_path(session_id, turn_id, state_root)
         if path.exists():
+            if (read_json_object(path) or {}).get("state") == "sealed":
+                raise ReceiptError("receipt_expired")
             receipt = load_receipt(path)
             if (receipt.session_id, receipt.turn_id) != (session_id, turn_id):
                 raise ReceiptError("receipt_mismatch")
@@ -187,12 +189,15 @@ def seal_receipt(receipt: TurnReceipt, *, state_root: Path = STATE_ROOT) -> None
     if not isinstance(receipt, TurnReceipt):
         raise ReceiptError("receipt_invalid")
     _parse_receipt(asdict(receipt))
-    value = _registered(receipt, state_root)
-    if value.get("state") == "sealed":
+    path = _receipt_path(receipt.session_id, receipt.turn_id, state_root)
+    value = read_json_object(path)
+    if value and value.get("state") == "sealed":
+        atomic_json(path, {"schema_version": 1, "state": "sealed"})
         return
+    value = _registered(receipt, state_root)
     if value.get("state") != "active":
         raise ReceiptError("receipt_expired")
-    atomic_json(_receipt_path(receipt.session_id, receipt.turn_id, state_root), {**value, "state": "sealed"})
+    atomic_json(path, {"schema_version": 1, "state": "sealed"})
 
 
 def load_context(session_id: str, turn_id: str, state_root: Path = STATE_ROOT) -> dict[str, Any] | None:

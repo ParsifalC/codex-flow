@@ -86,7 +86,9 @@ struct TelemetryTurnContextTests {
         let legacyRunning = TaskRun(sessionId: "legacy-running", turnId: "turn-1", startedAtMs: 40, status: "running")
         try encoder.encode(legacyRunning).write(to: runs.appendingPathComponent("legacy-running.json"))
 
-        let loaded = TelemetryQueryEngine(customRoot: root).loadAllRuns()
+        let engine = TelemetryQueryEngine(customRoot: root)
+        precondition(engine.hasActiveRun())
+        let loaded = engine.loadAllRuns()
         precondition(loaded.map(\.sessionId) == ["published"])
     }
 
@@ -105,7 +107,17 @@ struct TelemetryTurnContextTests {
         precondition(!gate.accept(late, notify: true).notify)
         var startup = PublishedTurnGate()
         startup.seed(first)
-        precondition(!startup.accept(first, notify: true).notify)
+        precondition(startup.accept(first, notify: true).notify)
+        var raced = PublishedTurnGate()
+        precondition(raced.accept(late, notify: false).refresh)
+        precondition(raced.accept(late, notify: true).notify)
+        precondition(!raced.accept(late, notify: true).notify)
+        let older = raced.accept(first, notify: true)
+        precondition(older.notify && !older.refresh)
+        var legacy = PublishedTurnGate()
+        let old = TaskRun(sessionId: "old", turnId: "old", finishedAtMs: 1)
+        precondition(legacy.accept(old, notify: true).refresh)
+        precondition(!legacy.accept(old, notify: true).notify)
     }
 
     private struct TestError: Error {

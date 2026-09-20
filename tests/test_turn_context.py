@@ -347,7 +347,19 @@ class TurnContextTests(unittest.TestCase):
         self.assertTrue(fresh_run.exists())
         self.assertTrue(fresh_sidecar.exists())
         registry = self.state / "turn-receipts" / (context.receipt_digest("chat-a", "turn-2") + ".json")
-        self.assertEqual(json.loads(registry.read_text())['state'], "sealed")
+        self.assertEqual(json.loads(registry.read_text()), {"schema_version": 1, "state": "sealed"})
+        self.assert_code("receipt_expired", self.validate, receipt)
+        self.assert_code("receipt_expired", self.register)
+
+    def test_maintenance_compacts_legacy_orphan_receipt(self):
+        receipt = self.register(transcript_path="/private/old/transcript.jsonl")
+        registry = self.state / "turn-receipts" / (context.receipt_digest("chat-a", "turn-2") + ".json")
+        value = json.loads(registry.read_text())
+        value["state"] = "sealed"
+        common.atomic_json(registry, value)
+        with patch.object(common, "STATE_ROOT", self.state), patch.object(common, "RUNS_DIR", self.state / "runs"), patch.object(collector, "LAST_FILE", self.state / "last.json"), patch.object(collector, "WORKER_INDEX_FILE", self.state / "worker-index.json"):
+            collector.run_maintenance()
+        self.assertEqual(json.loads(registry.read_text()), {"schema_version": 1, "state": "sealed"})
         self.assert_code("receipt_expired", self.validate, receipt)
         self.assert_code("receipt_expired", self.register)
 
@@ -380,7 +392,7 @@ class TurnContextTests(unittest.TestCase):
         self.assertTrue(run_path.exists())
         self.assertTrue(sidecar.exists())
         registry = self.state / "turn-receipts" / (context.receipt_digest("chat-a", "turn-2") + ".json")
-        self.assertEqual(json.loads(registry.read_text())['state'], "sealed")
+        self.assertEqual(json.loads(registry.read_text()), {"schema_version": 1, "state": "sealed"})
         self.assert_code("receipt_expired", self.validate, receipt)
         self.assert_code("receipt_expired", self.register)
 
