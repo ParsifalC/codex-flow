@@ -68,6 +68,15 @@ struct OverlayRuntimeState {
     }
 }
 
+/// One geometry contract for the SwiftUI tile, window host and pointer filtering.
+enum OverlayCompactLayout {
+    static let hostSize = NSSize(width: 128, height: 64)
+    static let tileSize = NSSize(width: 112, height: 48)
+    static let dockedSize = NSSize(width: 36, height: 48)
+    static let cornerRadius: CGFloat = 16
+    static let padding: CGFloat = 8
+}
+
 /// Filters the rectangular compact NSHostingView down to what the user can
 /// actually see. This prevents the transparent host from behaving as a hover
 /// target after the compact view changes shape.
@@ -82,18 +91,18 @@ enum OverlayCompactHitRegion {
         if expanded { return true }
 
         if docked {
-            let pillSize = NSSize(width: 40, height: 58)
+            let pillSize = OverlayCompactLayout.dockedSize
             let pillRect = NSRect(
                 x: hostBounds.maxX - pillSize.width,
                 y: hostBounds.midY - pillSize.height / 2,
                 width: pillSize.width,
                 height: pillSize.height
             )
-            return pillRect.contains(point)
+            return NSBezierPath(roundedRect: pillRect, xRadius: OverlayCompactLayout.cornerRadius, yRadius: OverlayCompactLayout.cornerRadius).contains(point)
         }
 
-        let rect = hostBounds.insetBy(dx: 9, dy: 9)
-        return NSBezierPath(roundedRect: rect, xRadius: 18, yRadius: 18).contains(point)
+        let rect = hostBounds.insetBy(dx: OverlayCompactLayout.padding, dy: OverlayCompactLayout.padding)
+        return NSBezierPath(roundedRect: rect, xRadius: OverlayCompactLayout.cornerRadius, yRadius: OverlayCompactLayout.cornerRadius).contains(point)
     }
 }
 

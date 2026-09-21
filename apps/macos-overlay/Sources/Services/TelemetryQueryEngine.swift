@@ -187,8 +187,7 @@ public class TelemetryQueryEngine {
     }
 
     private func isHistoryVisible(_ run: TaskRun) -> Bool {
-        if run.publication != nil { return true }
-        return run.publicationRequired != true && !run.isRunning
+        run.isHistoryVisible
     }
     
     // MARK: - Query & Filter History (Session / Run Level)

@@ -11,22 +11,14 @@ public struct HistoryView: View {
         self.isFullHeight = isFullHeight
     }
 
-    private var projects: [String] {
-        var seen = Set<String>()
-        return state.historyChats.compactMap { chat in
-            let key = chat.cwd ?? chat.projectName
-            return seen.insert(key).inserted ? key : nil
-        }
-    }
-
     public var body: some View {
-        VStack(spacing: 13) {
-            HistoryHeader(state: state)
+        VStack(spacing: 12) {
             HistorySearchField(state: state, searchGeneration: $searchGeneration)
-            HistoryList(state: state, projects: projects)
-                .frame(maxHeight: isFullHeight ? .infinity : 305)
+            HistoryHeader(state: state)
+            HistoryList(state: state)
+                .frame(maxHeight: .infinity)
         }
-        .padding(.top, 15)
+        .padding(.top, 16)
         .onAppear { state.loadHistory() }
     }
 }
@@ -38,14 +30,14 @@ private struct HistoryHeader: View {
     var body: some View {
         HStack {
             Text(L("Turn history", "历史轮次"))
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 13, weight: .medium))
             Spacer()
             HistoryFilterButton(state: state, title: L("All", "全部"), today: false)
             HistoryFilterButton(state: state, title: L("Today", "今天"), today: true)
             Button { state.loadHistory() } label: {
-                Image(systemName: "arrow.clockwise").frame(width: 24, height: 24)
+                Image(systemName: "arrow.clockwise").frame(width: 32, height: 32)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(OverlayButtonStyle())
             .help(L("Refresh history", "刷新历史"))
         }
     }
@@ -68,7 +60,7 @@ private struct HistoryFilterButton: View {
                 .padding(.vertical, 5)
                 .background(Capsule().fill(.white.opacity(state.isTodayOnly == today ? 0.12 : 0)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OverlayButtonStyle())
     }
 }
 
@@ -99,150 +91,84 @@ private struct HistorySearchField: View {
                 Button { state.searchQuery = "" } label: {
                     Image(systemName: "xmark.circle.fill")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(OverlayButtonStyle())
             }
         }
-        .font(.system(size: 14))
+        .font(.system(size: 13))
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(0.055)))
+        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.055)))
     }
 }
 
 private struct HistoryList: View {
     @ObservedObject var state: OverlayState
-    let projects: [String]
-    @ObservedObject private var localization = AppLocalization.shared
-
+    private var runs: [TaskRun] {
+        state.historyRuns
+    }
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                if state.historyChats.isEmpty {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if runs.isEmpty {
                     Text(L("No completed turns found", "暂无符合条件的已完成轮次"))
-                        .font(.system(size: 14))
-                        .foregroundStyle(.white.opacity(0.72))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 45)
+                        .font(.system(size: 13)).foregroundStyle(OverlayTheme.secondary)
+                        .frame(maxWidth: .infinity).padding(.vertical, 45)
                 }
-                ForEach(projects, id: \.self) { project in
-                    HistoryProjectSection(state: state, project: project)
-                }
-            }
-            .padding(.bottom, 10)
-        }
-    }
-}
-
-private struct HistoryProjectSection: View {
-    @ObservedObject var state: OverlayState
-    let project: String
-    @ObservedObject private var localization = AppLocalization.shared
-
-    private var chats: [ChatSession] {
-        state.historyChats.filter { ($0.cwd ?? $0.projectName) == project }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Label(
-                state.isPrivacyMode ? L("Project hidden", "项目已隐藏") : chats.first?.projectName ?? project,
-                systemImage: "folder"
-            )
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.72))
-
-            ForEach(chats) { chat in
-                HistoryChatSection(state: state, chat: chat)
-            }
-        }
-    }
-}
-
-private struct HistoryChatSection: View {
-    @ObservedObject var state: OverlayState
-    let chat: ChatSession
-    @ObservedObject private var localization = AppLocalization.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button { state.toggleChatExpansion(chat.id) } label: {
-                HStack {
-                    Image(systemName: state.isChatExpanded(chat.id) ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9))
-                    Text(state.isPrivacyMode ? L("Chat hidden", "对话已隐藏") : chat.title)
-                        .lineLimit(1)
-                    Spacer()
-                    Text("\(chat.runs.count)")
-                        .foregroundStyle(.white.opacity(0.72))
-                }
-                .font(.system(size: 14, weight: .medium))
-                .padding(14)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if state.isChatExpanded(chat.id) {
-                ForEach(chat.runs) { run in
+                ForEach(runs) { run in
                     HistoryRunRow(state: state, run: run)
-                    if run.id != chat.runs.last?.id {
-                        Divider().padding(.horizontal, 12)
-                    }
+                    OverlayDivider()
                 }
-            }
+            }.padding(.bottom, 10)
         }
-        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.06)))
     }
 }
 
 private struct HistoryRunRow: View {
     @ObservedObject var state: OverlayState
     let run: TaskRun
-    @ObservedObject private var localization = AppLocalization.shared
+    @State private var hovered = false
 
     var body: some View {
         Button { state.inspect(run: run) } label: {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Text(L("Turn", "轮次") + " · " + String((run.turnId ?? "—").prefix(8)))
-                    if run.isLegacyGoalFallback {
-                        Text(L("Legacy", "历史兼容"))
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(state.isPrivacyMode ? L("Goal hidden", "目标已隐藏") : localizedResultText(run.publishedGoal))
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(OverlayTheme.primary).lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(run.isError ? L("Error", "异常") : L("Done", "完成"))
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .help(L("Goal recovered from the historical summary", "目标来自历史摘要兼容读取"))
+                            .foregroundStyle(run.isError ? OverlayTheme.warning : OverlayTheme.good)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Capsule().fill((run.isError ? OverlayTheme.warning : OverlayTheme.good).opacity(0.10)))
+                        Text(state.isPrivacyMode ? "•••" : run.projectName)
+                            .lineLimit(1).truncationMode(.middle)
+                        Text("· " + String((run.turnId ?? "—").prefix(6)))
+                            .lineLimit(1).fixedSize()
+                        if run.isLegacyGoalFallback {
+                            Text(L("Legacy", "历史兼容"))
+                                .font(.system(size: 10, weight: .medium))
+                                .help(L("Goal recovered from the historical summary", "目标来自历史摘要兼容读取"))
+                        }
                     }
-                    Spacer()
+                    .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(OverlayTheme.muted)
                     Text(run.localizedFormattedDate)
+                        .font(.system(size: 10.5)).foregroundStyle(OverlayTheme.muted)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text(run.formattedTotalTokens)
+                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OverlayTheme.secondary)
+                    Text(run.formattedDuration)
+                        .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(OverlayTheme.muted)
                 }
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.72))
-
-                Text(state.isPrivacyMode ? L("Goal hidden", "目标已隐藏") : localizedResultText(run.publishedGoal))
-                    .font(.system(size: 14))
-                    .lineLimit(2)
-                    .lineSpacing(5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack {
-                    Text(run.formattedDuration + " · " + run.formattedTotalTokens + " tokens")
-                    if let quota = run.observedAccountDelta, abs(quota) >= 0.1 {
-                        let formatted = abs(quota) < 0.95
-                            ? String(format: "%+.1f%%", -quota)
-                            : String(format: "%+.0f%%", -quota)
-                        Text("\(run.isQuotaEstimated ? "≈" : "")\(formatted)\(run.isQuotaEstimated ? L(" est.", " 估") : "")")
-                            .foregroundStyle(.white.opacity(0.58))
-                            .help(run.isQuotaEstimated
-                                ? String(format: L("Quota consumed (Estimated from transcript): %.1f%%", "配额消耗（基于原始日志估算）：%.1f%%"), abs(quota))
-                                : String(format: L("Observed account change: %.1f%% (Attribution pending)", "观测到账户变化：%.1f%%（归因待完成）"), abs(quota)))
-                    }
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.7))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10)).foregroundStyle(OverlayTheme.muted).opacity(hovered ? 1 : 0)
             }
-            .padding(14)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 5).padding(.vertical, 14)
+            .frame(maxWidth: .infinity).contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OverlayButtonStyle())
+        .onHover { hovered = $0 }
+        .help(state.isPrivacyMode ? L("Open turn", "打开轮次") : (run.thread?.name ?? run.projectName) + " · " + (run.publishedGoal ?? ""))
     }
 }
