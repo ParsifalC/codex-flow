@@ -7,6 +7,7 @@ struct TelemetryTurnContextTests {
     static func main() throws {
         try testPublishedSnapshotRoundTrips()
         try testLegacySnapshotFallsBackWithoutChangingPublishedFields()
+        try testCurrentTurnRequestFallback()
         try testQueryExcludesUnpublishedNewRuns()
         testPublicationOrderingAndNotifications()
         print("Turn context model/query tests passed")
@@ -79,6 +80,35 @@ struct TelemetryTurnContextTests {
         precondition(exact.publishedConclusionSource == .result)
         precondition(!exact.isLegacyGoalFallback)
         precondition(!exact.isLegacyConclusionFallback)
+    }
+
+    private static func testCurrentTurnRequestFallback() throws {
+        let json = """
+        {"session_id":"chat","turn_id":"followup","publication_required":true,
+         "prompt_seen":true,"summary":"再短些",
+         "thread":{"name":"整个会话的标题","preview":"上一轮请求"},
+         "publication":{"revision":1,"completed_at_ms":200}}
+        """
+        let run = try JSONDecoder().decode(TaskRun.self, from: Data(json.utf8))
+        precondition(run.publishedGoal == "再短些", "Use the request captured for this turn")
+        precondition(run.publishedGoalSource.rawValue == "turnRequest")
+        precondition(run.turnContext == nil, "A request fallback must not invent an extracted goal")
+        precondition(run.turnPreview == "再短些")
+        let roundTrip = try JSONDecoder().decode(TaskRun.self, from: JSONEncoder().encode(run))
+        precondition(roundTrip.publishedGoal == "再短些")
+
+        var exact = run
+        exact.turnContext = TurnContext(goal: TurnGoal(text: "压缩上一轮的说明"))
+        precondition(exact.publishedGoal == "压缩上一轮的说明")
+        precondition(exact.publishedGoalSource == .turnContext)
+        var blank = run
+        blank.summary = " \n "
+        precondition(blank.publishedGoal == nil, "Never fall back to a conversation title or preview")
+        let legacy = TaskRun(sessionId: "chat", turnId: "old", summary: "来源不明的旧摘要")
+        precondition(legacy.publishedGoal == nil)
+        let unproven = json.replacingOccurrences(of: "\"prompt_seen\":true", with: "\"prompt_seen\":false")
+        let unprovenRun = try JSONDecoder().decode(TaskRun.self, from: Data(unproven.utf8))
+        precondition(unprovenRun.publishedGoal == nil)
     }
 
     private static func testQueryExcludesUnpublishedNewRuns() throws {

@@ -168,14 +168,14 @@ _collector.notify_overlay_if_active = lambda run, *, notify=False: _notify_overl
 
 
 def _context_cli(args: list[str]) -> int:
-    """Accept explicit UTF-8 file paths only; never infer a session or turn."""
+    """Accept explicit receipt identity and UTF-8 input; never infer a turn."""
     if args[1:] in (["--help"], ["-h"]):
         print("Usage: codex-flow telemetry context <command>\n\n"
-              "  write-goal --receipt-file PATH --text-file PATH\n"
+              "  write-goal --receipt-file PATH (--stdin | --text-file PATH)\n"
               "  write-plan --receipt-file PATH --plan-file PATH "
               "--origin compiled|reused|replanned\n"
               "  enable-desktop-transport (legacy compatibility diagnostic)\n\n"
-              "Use an explicit host receipt and UTF-8 input files.")
+              "Use an explicit host receipt. --stdin reads UTF-8 without an intermediate goal file.")
         return 0
     if not telemetry_writes_enabled():
         print(json.dumps({"ok": False, "status": "disabled", "reason": "telemetry_disabled"}))
@@ -188,22 +188,35 @@ def _context_cli(args: list[str]) -> int:
         if len(args) < 2 or args[1] not in {"write-goal", "write-plan"}:
             raise ReceiptError("invalid_arguments")
         action = args[1]
-        required = {"--receipt-file", "--text-file"} if action == "write-goal" else {
+        required = {"--receipt-file"} if action == "write-goal" else {
             "--receipt-file", "--plan-file", "--origin",
         }
+        allowed = required | {"--text-file", "--stdin"} if action == "write-goal" else required
         values: dict[str, str] = {}
         index = 2
         while index < len(args):
             option = args[index]
-            if (option not in required or option in values or index + 1 >= len(args)
+            if option == "--stdin" and action == "write-goal" and option not in values:
+                values[option] = "true"
+                index += 1
+                continue
+            if (option not in allowed or option in values or index + 1 >= len(args)
                     or args[index + 1].startswith("--") or not args[index + 1]):
                 raise ReceiptError("invalid_arguments")
             values[option] = args[index + 1]
             index += 2
-        if set(values) != required:
+        inputs = set(values) & {"--stdin", "--text-file"}
+        if not required <= set(values) or (action == "write-goal" and len(inputs) != 1):
             raise ReceiptError("invalid_arguments")
         if action == "write-goal":
-            result = write_goal(receipt_file=Path(values["--receipt-file"]), text_file=Path(values["--text-file"]))
+            if "--stdin" in values:
+                try:
+                    text = sys.stdin.buffer.read().decode("utf-8")
+                except UnicodeError:
+                    raise ReceiptError("invalid_utf8") from None
+                result = write_goal(receipt_file=Path(values["--receipt-file"]), text=text)
+            else:
+                result = write_goal(receipt_file=Path(values["--receipt-file"]), text_file=Path(values["--text-file"]))
         else:
             result = write_plan(
                 receipt_file=Path(values["--receipt-file"]), plan_file=Path(values["--plan-file"]),

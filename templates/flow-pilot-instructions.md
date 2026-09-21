@@ -27,13 +27,16 @@ error instead of treating the failure as a disabled switch.
    use uncertainty about the task as a reason to skip the gate.
 
 4. Only for a FlowPilot-participating parent turn with telemetry enabled and
-   a receipt delivered by the current host UserPromptSubmit hook, save a
-   1–80 Unicode-codepoint goal of at most two sentences to a UTF-8 file and call:
+   a receipt delivered by the current host UserPromptSubmit hook, submit a
+   1–80 Unicode-codepoint goal of at most two sentences through UTF-8 stdin:
 
    ```text
-   codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --text-file <utf8-goal-file>
+   codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --stdin
    ```
 
+   Supply the text through subprocess input or a quoted here-document; no
+   intermediate goal file or chat attachment is needed. `--text-file` remains
+   available for callers with an existing UTF-8 file.
    This happens after the gate and before TaskProfile/planner work. Preserve
    the user's original message. Use concise, accurate, plain language focused
    on the user's desired outcome; omit jargon and process narration. The first successful goal is immutable for

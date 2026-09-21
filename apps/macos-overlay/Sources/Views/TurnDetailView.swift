@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shared completed-turn details. Missing metadata is never inferred from messages.
+/// Shared completed-turn details with explicit provenance for request fallbacks.
 public struct TurnDetailView: View {
     public let run: TaskRun
     public let isPrivacyMode: Bool
@@ -16,7 +16,7 @@ public struct TurnDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 narrative(
                     L("This turn’s goal", "本轮目标"),
-                    hint: run.publishedGoal == nil ? nil : (run.isLegacyGoalFallback ? L("Legacy history", "历史兼容") : L("Extracted need", "需求提炼")),
+                    hint: goalHint,
                     text: run.publishedGoal,
                     accent: true
                 )
@@ -67,6 +67,14 @@ public struct TurnDetailView: View {
         }
         .onChange(of: run.id) { _, _ in
             resultExpanded = false; planExpanded = false; jsonExpanded = false
+        }
+    }
+    private var goalHint: String? {
+        switch run.publishedGoalSource {
+        case .turnContext: return L("Extracted need", "需求提炼")
+        case .legacySummary: return L("Legacy history", "历史兼容")
+        case .turnRequest: return L("Original request excerpt", "原始请求摘要")
+        default: return nil
         }
     }
     private func narrative(_ title: String, hint: String?, text: String?, expanded: Binding<Bool>? = nil, accent: Bool) -> some View {

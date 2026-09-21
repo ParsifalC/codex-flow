@@ -88,10 +88,11 @@ is `cwd`, chat is `session_id`, and turn is `turn_id`. Each turn has its own
 goal; do not rewrite the user's message or transcript to record it.
 
 After the gate above and **before** TaskProfile/planner work, write the current
-turn's goal (1–80 Unicode codepoints, at most two sentences; prefer one sentence) to a UTF-8 file, then run:
+turn's goal (1–80 Unicode codepoints, at most two sentences; prefer one sentence)
+directly through UTF-8 stdin:
 
 ```text
-codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --text-file <utf8-goal-file>
+codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --stdin
 ```
 
 Write the goal in concise, accurate, plain language: state the concrete outcome the user wants.
@@ -99,8 +100,12 @@ Prefer familiar words; omit process narration, jargon, and repeated background.
 For example: “恢复语言切换，让目标和执行信息更易读。”
 
 The first successful goal is immutable. Identical text is idempotent;
-different text returns `goal_conflict`. File arguments preserve quotes,
-newlines, and Unicode without shell interpolation. Never copy a parent
+different text returns `goal_conflict`. Pass text as subprocess input (UTF-8)
+or use a quoted here-document to preserve quotes, Unicode, and literal shell
+syntax. This needs no intermediate goal file or chat attachment. The CLI reads
+stdin exactly, including trailing newlines; these count toward the limit.
+`--text-file <path>` remains supported when a UTF-8 file already exists.
+Never copy a parent
 receipt into a Worker handoff, export, summary, or log.
 
 Codex Desktop automatically supplies the exact current-turn receipt through the

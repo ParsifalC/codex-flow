@@ -1,4 +1,4 @@
-"""File-only context CLI contract in a fresh, isolated Python process."""
+"""Explicit-receipt context CLI contract in a fresh, isolated Python process."""
 from __future__ import annotations
 
 import json
@@ -24,11 +24,45 @@ class TurnContextCLITests(unittest.TestCase):
         self.plan = self.home / "plan.json"
         self.text.write_text("修复 Unicode 🌏\n保留 '$HOME' 与 `literal`", encoding="utf-8")
 
-    def cli(self, *args):
-        return self.telemetry_cli("context", *args)
+    def cli(self, *args, input=None):
+        return self.telemetry_cli("context", *args, input=input)
 
-    def telemetry_cli(self, *args):
-        return subprocess.run([sys.executable, str(TELEMETRY_SCRIPT), *args], env=self.env, text=True, encoding="utf-8", capture_output=True, check=False)
+    def telemetry_cli(self, *args, input=None):
+        return subprocess.run([sys.executable, str(TELEMETRY_SCRIPT), *args], env=self.env, input=input, text=True, encoding="utf-8", capture_output=True, check=False)
+
+    def test_stdin_goal_needs_no_input_file_and_preserves_literal_text(self):
+        self.seed()
+        self.text.unlink()
+        source = "修复 Unicode 🌏，保留 '$HOME'、`literal` 和 $(literal)"
+        args = ("write-goal", "--receipt-file", str(self.receipt), "--stdin")
+        result = self.cli(*args, input=source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["goal"]["text"], source)
+        self.assertFalse(self.text.exists())
+        self.assertEqual(self.cli(*args, input=source).stdout, result.stdout)
+        self.assert_error(self.cli(*args, input="另一个目标"), "goal_conflict")
+
+    def test_stdin_goal_validates_input_and_disabled_does_not_read(self):
+        self.seed()
+        args = ("write-goal", "--receipt-file", str(self.receipt), "--stdin")
+        for source, code in (("", "goal_empty"), ("字" * 81, "goal_too_long")):
+            self.assert_error(self.cli(*args, input=source), code)
+        self.disable_telemetry()
+        before = self.state_snapshot(self.home / "codex-flow")
+        result = self.cli(*args, input="")
+        self.assertEqual(json.loads(result.stdout)["status"], "disabled")
+        self.assertEqual(before, self.state_snapshot(self.home / "codex-flow"))
+
+    def test_stdin_rejects_invalid_utf8_without_writing_context(self):
+        self.seed()
+        result = subprocess.run(
+            [sys.executable, str(TELEMETRY_SCRIPT), "context", "write-goal",
+             "--receipt-file", str(self.receipt), "--stdin"],
+            env=self.env, input=b"\xff", capture_output=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stderr)["error"], "invalid_utf8")
+        self.assertFalse((self.home / "codex-flow/telemetry/turn-context").exists())
 
     def disable_telemetry(self):
         (self.home / "codex-flow.toml").write_text("[telemetry]\nenabled=false\n", encoding="utf-8")
@@ -185,6 +219,8 @@ with patch.object(telemetry, 'recover_last', return_value=result), patch.object(
             ("write-goal", "--receipt-file", "r"),
             ("write-goal", "--receipt-file", "r", "--text-file", "t", "--text-file", "t2"),
             ("write-goal", "--receipt-file", "r", "--text", "inline"),
+            ("write-goal", "--receipt-file", "r", "--stdin", "--text-file", "t"),
+            ("write-goal", "--receipt-file", "r", "--stdin", "--stdin"),
             ("write-plan", "--receipt-file", "r", "--plan-file", "p", "--origin", "invented"),
             ("write-plan", "--receipt-file", "r", "--plan-file", "p"),
         ):

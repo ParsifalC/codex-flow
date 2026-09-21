@@ -16,14 +16,18 @@ A project uses `cwd`, a chat uses `session_id`, and a turn uses `turn_id`.
 Goals belong to `session_id + turn_id`. New turns never replace earlier goals
 or rewrite the user's messages.
 
-With an explicit receipt delivered by the host to this parent turn, use UTF-8 files:
+With an explicit receipt delivered by the host to this parent turn, submit the goal through UTF-8 stdin:
 
 ```bash
-codex-flow telemetry context write-goal --receipt-file receipt.json --text-file goal.txt
+codex-flow telemetry context write-goal --receipt-file receipt.json --stdin <<'GOAL'
+Fix this turn's goal display.
+GOAL
 codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file plan.json --origin compiled
 ```
 
-Goals accept 1–80 Unicode code points and at most two sentences and become immutable after the first write.
+No intermediate goal file or chat attachment is needed. Subprocess input also works;
+`--text-file` remains available for existing files. Stdin preserves trailing newlines,
+which count toward the limit. Goals accept 1–80 Unicode code points and at most two sentences and become immutable after the first write.
 Repeated identical writes are idempotent. Plans retain the complete schema-11
 planner JSON. Use `--origin reused` when continuing the same task's existing plan;
 do not reset its budget. Public run snapshots never contain the receipt secret.
@@ -39,9 +43,12 @@ lock, or IPC writes; historical reads remain available.
 **Host delivery is automatic.** Each real Codex Desktop parent
 `UserPromptSubmit` registers and delivers the exact current-turn receipt through
 `hookSpecificOutput.additionalContext`; users do not need to arm a probe or run
-an enable command. Hosts that cannot deliver a receipt display “Not recorded”
-rather than guessing from the latest turn, user prompt, or last assistant
-message. Python/CLI retain Windows-compatible code; native Windows locking still
+an enable command. Hosts that cannot deliver a receipt do not create an extracted goal.
+The overlay prefers a recorded goal, then a legacy goal, then the request excerpt
+captured by this turn's UserPromptSubmit, labeled “Original request excerpt”. This
+display fallback never creates turn_context.goal or uses a chat title or another
+turn's message. If all sources are absent it displays “Not recorded”.
+Python/CLI retain Windows-compatible code; native Windows locking still
 needs CI or device validation.
 
 The repository still includes `tests/turn-context-desktop-probe.py` as an
