@@ -7,6 +7,7 @@ on:
       - 'bin/codex-flow'
       - 'tests/overlay-language.sh'
       - 'tests/overlay-account.sh'
+      - 'tests/overlay-turn-navigation.sh'
       - '.github/workflows/macos-overlay.yml'
   pull_request:
     paths:
@@ -14,6 +15,7 @@ on:
       - 'bin/codex-flow'
       - 'tests/overlay-language.sh'
       - 'tests/overlay-account.sh'
+      - 'tests/overlay-turn-navigation.sh'
       - '.github/workflows/macos-overlay.yml'
 
 jobs:
@@ -69,6 +71,8 @@ jobs:
         run: bash apps/macos-overlay/build.sh
       - name: Verify startup snapshot recovery ordering
         run: bash tests/overlay-startup.sh
+      - name: Verify turn navigation and selection persistence
+        run: bash tests/overlay-turn-navigation.sh
       - name: Verify language settings preserve the policy
         run: bash tests/overlay-language.sh
       - name: Verify account tab renders without crashing

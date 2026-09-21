@@ -81,6 +81,56 @@ public enum OverlayTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// Navigation state for the published turns in one conversation.
+/// The query layer may return newest-first and may contain records from more
+/// than one session, so the view-facing model normalizes both dimensions.
+public struct TurnNavigation {
+    public let runs: [TaskRun]
+    public let selectedIndex: Int?
+
+    public init(runs: [TaskRun], selectedIdentity: String? = nil) {
+        let selectedRun = selectedIdentity.flatMap { identity in
+            runs.first { $0.id == identity }
+        }
+        let sessionId = selectedRun?.sessionId ?? runs.last?.sessionId
+        self.runs = runs
+            .filter { $0.isHistoryVisible && (sessionId == nil || $0.sessionId == sessionId) }
+            .sorted {
+                let lhs = $0.finishedAtMs ?? $0.startedAtMs ?? 0
+                let rhs = $1.finishedAtMs ?? $1.startedAtMs ?? 0
+                if lhs != rhs { return lhs < rhs }
+                return $0.id < $1.id
+            }
+        if let selectedIdentity,
+           let index = self.runs.firstIndex(where: { $0.id == selectedIdentity }) {
+            self.selectedIndex = index
+        } else {
+            self.selectedIndex = self.runs.indices.last
+        }
+    }
+
+    public var currentRun: TaskRun? {
+        guard let selectedIndex else { return nil }
+        return runs.indices.contains(selectedIndex) ? runs[selectedIndex] : nil
+    }
+
+    public var canMovePrevious: Bool {
+        guard let selectedIndex else { return false }
+        return selectedIndex > runs.startIndex
+    }
+
+    public var canMoveNext: Bool {
+        guard let selectedIndex else { return false }
+        return selectedIndex < runs.index(before: runs.endIndex)
+    }
+
+    public func moved(by offset: Int) -> TurnNavigation {
+        guard !runs.isEmpty, let selectedIndex else { return self }
+        let index = min(max(selectedIndex + offset, runs.startIndex), runs.index(before: runs.endIndex))
+        return TurnNavigation(runs: runs, selectedIdentity: runs[index].id)
+    }
+}
+
 public struct GitInfo: Codable {
     public var branch: String?
     public var commit: String?
@@ -1075,6 +1125,10 @@ public struct TaskRun: Codable, Identifiable {
         return isSystemTask == true || cwd == "/"
     }
     
+    public var isHistoryVisible: Bool {
+        publication != nil || (publicationRequired != true && !isRunning)
+    }
+
     public var isRunning: Bool {
         if isAborted { return false }
         if let st = status?.lowercased() {
@@ -1228,7 +1282,8 @@ public struct TaskRun: Codable, Identifiable {
     }
 
     public var weeklyQuotaRemaining: Double? {
-        return quotaWindow(durationMinutes: Self.weeklyQuotaWindowMinutes)?.remainingPercent
+        guard let used = quotaWindow(durationMinutes: Self.weeklyQuotaWindowMinutes)?.usedPercent, used.isFinite else { return nil }
+        return 100 - min(100, max(0, used))
     }
     
     public var primaryQuotaRemaining: Double? {
@@ -1821,5 +1876,69 @@ public struct TelemetryStats {
             return String(format: "$%.3f", micros / 1_000_000.0)
         }
         return "--"
+    }
+}
+
+/// Presentation evidence for one turn. Account movement is not task attribution.
+public struct TurnWeeklyQuotaSummary {
+    public let beforeRemaining: Double?
+    public let afterRemaining: Double?
+    public let allocatedConsumption: Double?
+    public let observedConsumption: Double?
+    public let didReset: Bool
+    public let isEstimated: Bool
+
+    /// Presentation fallback only; never feeds canonical/cumulative analytics.
+    public var displayConsumption: Double? { allocatedConsumption ?? observedConsumption }
+    public var usesObservedFallback: Bool { allocatedConsumption == nil && observedConsumption != nil }
+
+    public init(run: TaskRun) {
+        let before = run.quotaBefore?.first { $0.windowDurationMins == TaskRun.weeklyQuotaWindowMinutes }
+        let after = run.quotaChangeDuringRun?.first { $0.windowDurationMins == TaskRun.weeklyQuotaWindowMinutes }
+            ?? run.quotaAfter?.first { $0.windowDurationMins == TaskRun.weeklyQuotaWindowMinutes }
+        func remaining(_ window: QuotaWindow?) -> Double? {
+            guard let used = window?.usedPercent, used.isFinite else { return nil }
+            return 100 - min(100, max(0, used))
+        }
+        beforeRemaining = remaining(before)
+        afterRemaining = remaining(after)
+        if let startReset = before?.resetsAt, let endReset = after?.resetsAt {
+            didReset = endReset > startReset
+        } else { didReset = false }
+        allocatedConsumption = run.canonicalQuotaDelta.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        let explicitDelta = after?.deltaPercentagePoints.flatMap { $0.isFinite ? $0 : nil }
+        if didReset { observedConsumption = nil }
+        else if let explicitDelta { observedConsumption = explicitDelta }
+        else if let beforeRemaining, let afterRemaining { observedConsumption = beforeRemaining - afterRemaining }
+        else { observedConsumption = nil }
+        isEstimated = run.isQuotaEstimated
+    }
+}
+
+/// Only measured per-turn usage can produce a Parent/Worker percentage split.
+public struct TurnTokenBreakdown {
+    public let parentTokens: Int?
+    public let workerTokens: Int?
+    public var totalTokens: Int? {
+        guard let parentTokens, let workerTokens else { return nil }
+        return parentTokens + workerTokens
+    }
+    public var parentShare: Double? {
+        guard let totalTokens, totalTokens > 0, let parentTokens else { return nil }
+        return Double(parentTokens) / Double(totalTokens)
+    }
+    public var workerShare: Double? {
+        guard let totalTokens, totalTokens > 0, let workerTokens else { return nil }
+        return Double(workerTokens) / Double(totalTokens)
+    }
+
+    public init(run: TaskRun) {
+        func hasUsage(_ participant: ParticipantInfo) -> Bool {
+            guard let usage = participant.effectiveUsage else { return false }
+            return usage.totalTokens != nil || usage.promptTokens != nil || usage.inputTokens != nil
+                || usage.completionTokens != nil || usage.outputTokens != nil
+        }
+        parentTokens = run.parent.map(hasUsage) == true ? max(0, run.parentTotalTokens) : nil
+        workerTokens = run.allWorkers.allSatisfy(hasUsage) ? max(0, run.workerTotalTokens) : nil
     }
 }

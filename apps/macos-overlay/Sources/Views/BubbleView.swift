@@ -17,7 +17,7 @@ public struct BubbleView: View {
             tile
             if state.isDocked && state.dockEdge != .right { Spacer(minLength: 0) }
         }
-        .frame(width: 166, height: 76)
+        .frame(width: OverlayCompactLayout.hostSize.width, height: OverlayCompactLayout.hostSize.height)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isHovered)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: state.isDocked)
         .accessibilityElement(children: .ignore)
@@ -28,93 +28,102 @@ public struct BubbleView: View {
     }
 
     private var tile: some View {
-        HStack(spacing: state.isDocked ? 3 : 10) {
-            ResultBeacon(hasResult: state.latestRun != nil, isUnread: state.hasUnreadResult)
-                .frame(width: state.isDocked ? 19 : 26, height: state.isDocked ? 19 : 26)
+        HStack(spacing: state.isDocked ? 3 : 8) {
+            ResultGlow(isUnread: state.hasUnreadResult)
+                .frame(width: 24, height: 28)
             if !state.isDocked {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting", "等待结果") : L("Completed", "最近完成")))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.94))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting", "等待结果") : L("Done", "已完成")))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(OverlayTheme.primary)
                     if let run = state.latestRun {
-                        Text(run.totalTokens > 0 ? run.formattedTotalTokens + " tokens" : L("Tokens unavailable", "消耗未记录"))
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.7))
+                        Text(run.totalTokens > 0 ? run.formattedTotalTokens : "—")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OverlayTheme.secondary)
                     }
-                }.lineLimit(1)
-            } else {
-                Image(systemName: state.dockEdge == .right ? "chevron.left" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
+                }
+                .lineLimit(1)
+                .frame(width: 60, alignment: .leading)
             }
         }
-        .frame(width: state.isDocked ? 40 : 148, height: 58)
+        .frame(width: state.isDocked ? OverlayCompactLayout.dockedSize.width : OverlayCompactLayout.tileSize.width,
+               height: OverlayCompactLayout.tileSize.height)
         .background {
-            ZStack {
-                if !reduceTransparency { VisualEffectBackground() }
-                Color(red: 0.10, green: 0.15, blue: 0.19).opacity(reduceTransparency ? 1 : 0.8)
-                LinearGradient(colors: [.cyan.opacity(isHovered ? 0.18 : 0.08), .clear], startPoint: .topLeading, endPoint: .bottomTrailing)
+            if reduceTransparency {
+                Color(red: 0.08, green: 0.09, blue: 0.12)
+            } else {
+                VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow)
+                LinearGradient(colors: [Color(red: 0.094, green: 0.106, blue: 0.133).opacity(0.86), Color(red: 0.063, green: 0.071, blue: 0.094).opacity(0.90)], startPoint: .topLeading, endPoint: .bottomTrailing)
             }
+            Color.white.opacity(isHovered ? 0.045 : 0)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: OverlayCompactLayout.cornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(isHovered ? 0.32 : 0.17), lineWidth: 1)
+            RoundedRectangle(cornerRadius: OverlayCompactLayout.cornerRadius, style: .continuous)
+                .strokeBorder(isHovered ? OverlayTheme.accent.opacity(0.35) : Color.white.opacity(0.09), lineWidth: 0.8)
         }
         .overlay(alignment: .bottomTrailing) {
             if updateService.hasUpdateBadge {
-                Image(systemName: updateService.isRestartRequired ? "arrow.clockwise" : "arrow.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(updateService.isRestartRequired ? .orange : .cyan)
+                Circle()
+                    .fill(updateService.isRestartRequired ? OverlayTheme.warning : OverlayTheme.accent)
+                    .frame(width: 4, height: 4)
                     .padding(6)
             }
         }
-        .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.22), radius: 4, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: OverlayCompactLayout.cornerRadius, style: .continuous))
         .onHover { isHovered = $0 }
     }
 
     private var statusText: String {
-        let task = state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting for a result", "等待结果") : L("Latest turn completed", "最近轮次已完成"))
-        if updateService.hasUpdateBadge {
-            return task + " · " + (updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
+        var text = state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting for a result", "等待结果") : L("Latest turn completed", "最近轮次已完成"))
+        if let run = state.latestRun {
+            text += " · " + (run.totalTokens > 0 ? "Tokens: " + run.formattedTotalTokens : L("Tokens unavailable", "Token 消耗未记录"))
         }
-        return task
+        if updateService.hasUpdateBadge {
+            text += " · " + (updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
+        }
+        return text
     }
-
 }
 
-private struct ResultBeacon: View {
-    let hasResult: Bool
+/// A soft breathing light replaces the static app glyph in both compact states.
+private struct ResultGlow: View {
     let isUnread: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if isUnread && !reduceMotion {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-                    let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
-                    let breath = (1 - cos(phase * 2 * .pi)) / 2
-                    beacon(breath: breath)
-                }
+            if reduceMotion {
+                glow(expanded: false)
             } else {
-                beacon(breath: 0)
+                Color.clear.phaseAnimator([false, true]) { _, expanded in
+                    glow(expanded: expanded)
+                } animation: { _ in
+                    .easeInOut(duration: isUnread ? 1.4 : 2.2)
+                }
             }
         }
         .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
 
-    private func beacon(breath: Double) -> some View {
+    private func glow(expanded: Bool) -> some View {
         ZStack {
             Circle()
-                .strokeBorder(Color.cyan.opacity(isUnread ? 0.45 + breath * 0.35 : 0.3), lineWidth: 1.5)
-                .scaleEffect(isUnread ? 0.88 + breath * 0.12 : 0.88)
-            if hasResult {
-                Circle()
-                    .fill(Color.cyan.opacity(isUnread ? 1 : 0.55))
-                    .padding(7)
-                    .shadow(color: .cyan.opacity(isUnread ? 0.3 + breath * 0.3 : 0), radius: 3)
-            }
+                .fill(RadialGradient(colors: [OverlayTheme.accent.opacity(0.55), OverlayTheme.accent.opacity(0.12), .clear], center: .center, startRadius: 0, endRadius: 12))
+                .frame(width: 24, height: 24)
+                .scaleEffect(expanded ? 1 : 0.72)
+            Circle()
+                .strokeBorder(OverlayTheme.accent.opacity(expanded ? 0.12 : 0.50), lineWidth: 0.8)
+                .frame(width: 20, height: 20)
+                .scaleEffect(expanded ? 1.08 : 0.65)
+            Circle()
+                .fill(OverlayTheme.accent)
+                .frame(width: 6, height: 6)
+                .scaleEffect(expanded ? 1.12 : 0.86)
+                .shadow(color: OverlayTheme.accent.opacity(0.65), radius: expanded ? 5 : 2)
         }
+        .opacity(isUnread ? 1 : 0.65)
     }
 }
