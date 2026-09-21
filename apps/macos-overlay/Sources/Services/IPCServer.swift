@@ -181,6 +181,11 @@ public class IPCService {
         private func handleCommand(_ cmd: String) -> String {
             if cmd == "status" {
                 return "{\"running\": true, \"pid\": \(getpid()), \"isExpanded\": \(state.isExpanded), \"isPinned\": \(state.isPinned), \"activeTab\": \"\(state.activeTab.rawValue)\"}\n"
+            } else if cmd == "pet reload" {
+                return state.reloadPet().json + "\n"
+            } else if cmd.hasPrefix("pet event ") {
+                let payload = cmd.dropFirst("pet event ".count)
+                return state.handlePetActivityJSON(String(payload)) + "\n"
             } else if cmd == "toggle" {
                 state.toggle()
                 return "{\"ok\": true, \"action\": \"toggle\", \"isExpanded\": \(state.isExpanded)}\n"

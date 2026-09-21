@@ -29,8 +29,14 @@ public struct BubbleView: View {
 
     private var tile: some View {
         HStack(spacing: state.isDocked ? 3 : 8) {
-            ResultGlow(isUnread: state.hasUnreadResult)
-                .frame(width: 24, height: 28)
+            Group {
+                if state.petResource != nil {
+                    PetView(state: state, animator: state.petAnimator, reduceMotion: reduceMotion)
+                } else {
+                    ResultGlow(isUnread: state.hasUnreadResult)
+                }
+            }
+            .frame(width: 24, height: 28)
             if !state.isDocked {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting", "等待结果") : L("Done", "已完成")))
@@ -72,7 +78,12 @@ public struct BubbleView: View {
         }
         .shadow(color: .black.opacity(0.22), radius: 4, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: OverlayCompactLayout.cornerRadius, style: .continuous))
-        .onHover { isHovered = $0 }
+        .onHover {
+            isHovered = $0
+            if $0 {
+                state.playPetHover(reduceMotion: reduceMotion)
+            }
+        }
     }
 
     private var statusText: String {
@@ -82,6 +93,9 @@ public struct BubbleView: View {
         }
         if updateService.hasUpdateBadge {
             text += " · " + (updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
+        }
+        if state.petActivityUnavailable {
+            text += " · " + L("Activity unavailable", "活动状态不可用")
         }
         return text
     }

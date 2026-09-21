@@ -277,7 +277,7 @@ Write-Utf8NoBom (Join-Path $StateDir 'source') $RootDir
 Write-Utf8NoBom (Join-Path $StateDir 'version') $Version
 Write-Utf8NoBom $BinDirState $BinDir
 Copy-Item $Defaults (Join-Path $StateDir 'defaults.toml') -Force
-foreach ($name in @('updater.py','update_runtime_config.py','telemetry.py','manage-hooks.py','manage-instructions.py','menu.py','localization.py','ui.py','doctor.py','strategy_runtime.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
+foreach ($name in @('updater.py','update_runtime_config.py','telemetry.py','manage-hooks.py','manage-instructions.py','menu.py','localization.py','ui.py','pets.py','doctor.py','strategy_runtime.py')) { Copy-Item (Join-Path $RootDir "scripts/$name") (Join-Path $StateDir $name) -Force }
 Copy-Item (Join-Path $RootDir 'templates/flow-pilot-instructions.md') (Join-Path $StateDir 'flow-pilot-instructions.md') -Force
 Remove-Item (Join-Path $StateDir 'strategies') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $StateDir 'telemetry_core') -Recurse -Force -ErrorAction SilentlyContinue

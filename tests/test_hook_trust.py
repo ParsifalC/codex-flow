@@ -53,8 +53,8 @@ class HookTrustTests(unittest.TestCase):
         self.assertEqual(report["status"], "untrusted")
         self.assertFalse(report["ready"])
         self.assertTrue(report["authorization_required"])
-        self.assertEqual(report["untrusted"], 4)
-        self.assertEqual(report["total"], 4)
+        self.assertEqual(report["untrusted"], len(manage_hooks.EVENTS))
+        self.assertEqual(report["total"], len(manage_hooks.EVENTS))
 
     def test_exact_current_hash_is_trusted(self) -> None:
         initial = self.report()
@@ -63,7 +63,7 @@ class HookTrustTests(unittest.TestCase):
         self.assertEqual(report["status"], "trusted")
         self.assertTrue(report["ready"])
         self.assertFalse(report["authorization_required"])
-        self.assertEqual(report["trusted"], 4)
+        self.assertEqual(report["trusted"], len(manage_hooks.EVENTS))
 
     def test_changed_hook_definition_is_modified(self) -> None:
         initial = self.report()
@@ -78,7 +78,7 @@ class HookTrustTests(unittest.TestCase):
         self.assertFalse(report["ready"])
         self.assertTrue(report["authorization_required"])
         self.assertEqual(report["modified"], 1)
-        self.assertEqual(report["trusted"], 3)
+        self.assertEqual(report["trusted"], len(manage_hooks.EVENTS) - 1)
 
     def test_trust_detection_does_not_depend_on_codex_cli_in_path(self) -> None:
         initial = self.report()

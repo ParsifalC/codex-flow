@@ -1,0 +1,7 @@
+{
+  "id": "synthetic-v1",
+  "displayName": "Synthetic v1 Pet",
+  "description": "Original test-only synthetic pet atlas",
+  "spriteVersionNumber": 1,
+  "spritesheetPath": "spritesheet.png"
+}

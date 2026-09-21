@@ -180,6 +180,9 @@ def help_text(lang: str) -> int:
     strategy routing <mode>     设置 adaptive/direct/delegate 路由约束
     strategy plan [选项]        从结构化 TaskProfile 生成 ExecutionPlan(JSON)
     language [auto|zh|en]       查看或设置界面语言（默认 auto 跟随系统）
+    pets install <来源>         安装 Petdex 或本地目录/ZIP 宠物
+    pets list                   查看已安装宠物
+    pets use <id|default>       切换宠物或恢复默认形象
     update                      拉取源码、保留策略并刷新安装
     doctor                      检查安装、策略运行时和遥测链路
     overlay [start|stop|toggle] macOS 原生悬浮窗
@@ -222,6 +225,9 @@ Usage: codex-flow <command> [options]
     strategy routing <mode>     Set adaptive/direct/delegate routing constraint
     strategy plan [options]     Compile a structured TaskProfile to ExecutionPlan JSON
     language [auto|zh|en]       Show or set UI language (auto follows the system)
+    pets install <source>       Install a Petdex pet or local directory/ZIP
+    pets list                   List installed pets
+    pets use <id|default>       Select a pet or restore the default appearance
     update                      Pull checkout, preserve policy, refresh installation
     doctor                      Verify installation, strategy runtime, and telemetry wiring
     overlay [start|stop|toggle] Native macOS floating widget

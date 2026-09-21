@@ -52,6 +52,7 @@ from .common import (
 from .turn_context import ReceiptError, load_receipt, receipt_digest, register_receipt, seal_receipt, validate_receipt
 from .turn_result import extract_parent_final, parent_turn_completed_at
 from .publication import GLOBAL_LOCK, PublicationResult, publish_late_worker, publish_parent_stop, update_run
+from .activity import record_hook_activity
 from .render import (
     aggregate_usage_value,
     render_summary,
@@ -999,6 +1000,20 @@ def collect_hook(event: dict[str, Any]) -> None:
     if not telemetry_writes_enabled():
         return
     kind = event.get("hook_event_name")
+    # Live pet activity is a bounded, local reducer.  Record it before the
+    # publication path and keep fast hook events free of app-server/transcript
+    # reads.  Fail closed: activity must never interfere with publication.
+    if kind in {"PermissionRequest", "PreToolUse", "PostToolUse", "Interrupt"}:
+        try:
+            record_hook_activity(event)
+        except Exception:
+            pass
+        return
+    if kind in {"UserPromptSubmit", "Stop"}:
+        try:
+            record_hook_activity(event)
+        except Exception:
+            pass
     if kind not in {"UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"}:
         return
 
@@ -1259,6 +1274,12 @@ def collect_hook(event: dict[str, Any]) -> None:
             worker.get("finished_at_ms") if kind == "SubagentStop" else None,
             worker.get("transcript_path"),
         )
+        # Resolve the exact child execution before emitting reviewer activity.
+        # A first SubagentStart has no worker-index entry on arrival.
+        try:
+            record_hook_activity(event)
+        except Exception:
+            pass
         return
 
     if kind == "Stop":

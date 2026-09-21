@@ -1,7 +1,7 @@
 # bash completion for codex-flow
 _codex_flow_completion() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    local commands="status strategy language update doctor overlay usage telemetry benchmark-local benchmark-corpus benchmark benchmark-analyze uninstall help"
+    local commands="status strategy language pets update doctor overlay usage telemetry benchmark-local benchmark-corpus benchmark benchmark-analyze uninstall help"
     if [[ "${COMP_CWORD}" -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 2 && "${COMP_WORDS[1]}" == "strategy" ]]; then
@@ -14,6 +14,10 @@ _codex_flow_completion() {
         COMPREPLY=( $(compgen -W "--profile --routing --review --fanout --complexity --uncertainty --risk --scope --parallelism --write-conflict --exploration-need --verification-cost --iteration-intensity --writable-workstreams --quality-intent --quota-pressure --max-threads --max-repairs" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 2 && "${COMP_WORDS[1]}" == "language" ]]; then
         COMPREPLY=( $(compgen -W "auto zh en" -- "$cur") )
+    elif [[ "${COMP_CWORD}" -eq 2 && "${COMP_WORDS[1]}" == "pets" ]]; then
+        COMPREPLY=( $(compgen -W "install list use" -- "$cur") )
+    elif [[ "${COMP_CWORD}" -eq 3 && "${COMP_WORDS[1]}" == "pets" && "${COMP_WORDS[2]}" == "use" ]]; then
+        COMPREPLY=( $(compgen -W "default" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 2 && ( "${COMP_WORDS[1]}" == "benchmark-local" || "${COMP_WORDS[1]}" == "benchmark-corpus" ) ]]; then
         COMPREPLY=( $(compgen -W "quick full" -- "$cur") )
     elif [[ "${COMP_CWORD}" -eq 2 && ( "${COMP_WORDS[1]}" == "usage" || "${COMP_WORDS[1]}" == "telemetry" ) ]]; then

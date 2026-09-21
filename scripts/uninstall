@@ -39,7 +39,19 @@ rm -f "$CODEX_HOME/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-imple
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 rm -f "$CODEX_HOME/codex-flow.toml"
 rm -rf "$CODEX_HOME/skills/flow-pilot"
-rm -rf "$STATE_DIR"
+# Pet resources are user data and stay available after uninstall.  An empty
+# or absent pets directory does not keep the application state directory alive.
+preserve_pets=false
+if [[ -d "$STATE_DIR/pets/installed" && ! -L "$STATE_DIR/pets/installed" ]]; then
+  if find "$STATE_DIR/pets/installed" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    preserve_pets=true
+  fi
+fi
+if [[ "$preserve_pets" == true ]]; then
+  find "$STATE_DIR" -mindepth 1 -maxdepth 1 ! -name pets -exec rm -rf -- {} +
+else
+  rm -rf "$STATE_DIR"
+fi
 rm -f "$BIN_DIR/codex-flow"
 
 if [[ -f "$CONFIG" ]] && command -v python3 >/dev/null 2>&1; then

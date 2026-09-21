@@ -42,7 +42,17 @@ Remove-Item (Join-Path $CodexHome 'agents/luna-explorer.toml') -Force -ErrorActi
 Remove-Item (Join-Path $CodexHome 'agents/luna-implementer.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'codex-flow.toml') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $CodexHome 'skills/flow-pilot') -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item $StateDir -Recurse -Force -ErrorAction SilentlyContinue
+$petsPath = Join-Path $StateDir 'pets'
+$petsInstalledPath = Join-Path $petsPath 'installed'
+$hasPets = $false
+if ((Test-Path -LiteralPath $petsInstalledPath -PathType Container) -and -not (Get-Item -LiteralPath $petsInstalledPath).LinkType) {
+    $hasPets = @(Get-ChildItem -LiteralPath $petsInstalledPath -Force).Count -gt 0
+}
+if ($hasPets) {
+    Get-ChildItem -LiteralPath $StateDir -Force | Where-Object { $_.Name -ne 'pets' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    Remove-Item $StateDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 # When invoked through codex-flow.cmd, deleting the active batch wrapper before
 # it regains control makes cmd.exe report "The batch file cannot be found" and

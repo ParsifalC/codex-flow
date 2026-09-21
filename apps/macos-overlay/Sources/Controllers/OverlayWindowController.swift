@@ -21,6 +21,10 @@ public class OverlayState: ObservableObject {
     @Published public var isDocked: Bool = false
     @Published public var dockEdge: DockEdge = .right
     @Published public var latestRun: TaskRun? = nil
+    @Published public private(set) var petResource: PetResource?
+    @Published public private(set) var petActivityUnavailable: Bool = false
+    public let petAnimator: PetAnimator
+    public lazy var petActivityConsumer = PetActivityConsumer(state: self)
     // A completion IPC can refer to an older turn than latestRun. Keep that
     // event's content for the notification presentation while preserving the
     // latest snapshot used by the live bubble and history state.
@@ -51,6 +55,8 @@ public class OverlayState: ObservableObject {
     private var publicationGate = PublishedTurnGate()
 
     private let readDefaults: UserDefaults
+    private let petStore: PetResourceStore
+    private var petWindowVisible = false
     @Published private var viewedTurnIds: [String]
     // Keep the completion snapshot: a delayed notification may arrive before
     // its history file, and latestRun may belong to another conversation.
@@ -90,10 +96,114 @@ public class OverlayState: ObservableObject {
 
     public init(readDefaults: UserDefaults = .standard) {
         self.readDefaults = readDefaults
+        self.petStore = PetResourceStore()
+        self.petAnimator = PetAnimator()
         self.viewedTurnIds = readDefaults.stringArray(forKey: "viewedCompletedTurns") ?? []
         // TelemetryWatcher owns the initial snapshot after recover-last.
         // Reading last.json here would expose a stale snapshot before recovery.
         loadMenuData()
+        petActivityConsumer.recover()
+    }
+
+    /// Reload the selected native pet after the installer atomically replaces
+    /// its package/current files. ImageIO work runs off the main queue; Swift
+    /// never writes the selection.
+    @discardableResult
+    public func reloadPet() -> PetReloadOutcome {
+        if !Thread.isMainThread {
+            return DispatchQueue.main.sync { reloadPet() }
+        }
+        let result = DispatchQueue.global(qos: .userInitiated).sync {
+            petStore.reload()
+        }
+        switch result {
+        case .builtIn:
+            petResource = nil
+            return PetReloadOutcome(accepted: true, selectedID: "default")
+        case .loaded(let resource):
+            petResource = resource
+            return PetReloadOutcome(accepted: true, selectedID: resource.id)
+        case .rejected(let error):
+            petResource = nil
+            return PetReloadOutcome(accepted: false, selectedID: petStore.lastSelectionID, error: error)
+        }
+    }
+
+    public func setPetTaskState(_ state: PetState) {
+        petAnimator.setTaskState(state)
+    }
+
+    public func playPetHover(reduceMotion: Bool = false) {
+        guard !reduceMotion else { return }
+        petAnimator.playTransient(.waving)
+    }
+
+    public func beginPetDrag(direction: PetDragDirection) {
+        petAnimator.beginDrag(direction: direction)
+    }
+
+    public func endPetDrag() {
+        petAnimator.endDrag()
+    }
+
+    public func clearPetState() {
+        petAnimator.clear()
+    }
+
+    public func stopPet() {
+        petAnimator.stop()
+    }
+
+    // Live event bridge hooks. Keep the short names on the state owner so a
+    // producer does not need to know which animator instance the view owns.
+    public func setTaskState(_ state: PetState) {
+        petAnimator.setTaskState(state)
+    }
+
+    public func playTransient(_ state: PetState) {
+        petAnimator.playTransient(state)
+    }
+
+    public func beginDrag(direction: PetDragDirection) {
+        petAnimator.beginDrag(direction: direction)
+    }
+
+    public func endDrag() {
+        petAnimator.endDrag()
+    }
+
+    public func clear() {
+        petAnimator.clear()
+    }
+
+    public func stop() {
+        petAnimator.stop()
+    }
+
+    public func markPetActivityUnavailable() {
+        petActivityUnavailable = true
+    }
+
+    public func markPetActivityAvailable() {
+        petActivityUnavailable = false
+    }
+
+    @discardableResult
+    public func handlePetActivity(_ event: PetActivityEvent) -> PetActivityTransition {
+        petActivityConsumer.consume(event)
+    }
+
+    public func handlePetActivityJSON(_ payload: String) -> String {
+        petActivityConsumer.consumeJSON(payload)
+    }
+
+    public func setPetVisibility(_ visible: Bool, reduceMotion: Bool = false) {
+        petWindowVisible = visible
+        refreshPetVisibility(reduceMotion: reduceMotion)
+    }
+
+    public func refreshPetVisibility(reduceMotion: Bool) {
+        petAnimator.setVisibility(visible: petWindowVisible, expanded: isExpanded, reduceMotion: reduceMotion)
     }
 
     public func loadMenuData() {
@@ -405,6 +515,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
     private var initialMouseScreenLocation: NSPoint = .zero
     private var initialWindowOrigin: NSPoint = .zero
     private var isDragging = false
+    private var petDragStarted = false
     private var ownsPointerInteraction = false
 
     required public init(rootView: Content) {
@@ -494,6 +605,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         initialMouseScreenLocation = NSEvent.mouseLocation
         initialWindowOrigin = window.frame.origin
         isDragging = false
+        petDragStarted = false
         windowController.cancelDwellTimer()
         windowController.cancelTuckTimer()
         windowController.cancelNotificationAutoCollapseTimer()
@@ -515,6 +627,13 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
 
         if isDragging || abs(deltaX) > dragThreshold || abs(deltaY) > dragThreshold {
             isDragging = true
+            if !petDragStarted,
+               abs(deltaX) > dragThreshold,
+               abs(deltaX) >= abs(deltaY),
+               !windowController.state.isExpanded {
+                petDragStarted = true
+                windowController.state.beginPetDrag(direction: deltaX < 0 ? .left : .right)
+            }
             windowController.cancelDwellTimer()
             windowController.cancelTuckTimer()
 
@@ -548,6 +667,10 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         ownsPointerInteraction = false
         let dragged = isDragging
         isDragging = false
+        if petDragStarted {
+            windowController?.state.endPetDrag()
+            petDragStarted = false
+        }
 
         if dragged, let window, let windowController {
             windowController.endPointerInteraction(drainPendingPresentation: false)
@@ -748,6 +871,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         hostingView.windowController = self
         window.contentView = hostingView
         window.orderFrontRegardless()
+        updatePetVisibility()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.scheduleTuck()
@@ -831,6 +955,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         let completed: () -> Void = { [weak self] in
             guard let self else { return }
             self.window.orderFrontRegardless()
+            self.updatePetVisibility()
             self.presentationFrameDidSet(targetOrigin: newOrigin, collapsed: collapsedAfterAnimation)
             let startedNext = self.finishGeometryActivity()
             if !startedNext, collapsedAfterAnimation, !self.state.isExpanded {
@@ -856,6 +981,18 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         if collapsed && !state.isExpanded {
             saveWindowPosition(targetOrigin)
         }
+    }
+
+    private func updatePetVisibility() {
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        state.setPetVisibility(
+            visible,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+    }
+
+    public func windowDidChangeOcclusionState(_ notification: Notification) {
+        updatePetVisibility()
     }
 
     @discardableResult

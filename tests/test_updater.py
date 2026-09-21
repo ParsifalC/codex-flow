@@ -144,10 +144,32 @@ class UpdaterTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             updater.safe_extract(archive, self.root / "extract")
 
+    def test_snapshot_and_runtime_sync_include_pet_dispatcher_without_touching_pet_store(self) -> None:
+        pet_dir = self.state / "pets" / "installed" / "local-boba"
+        pet_dir.mkdir(parents=True)
+        (pet_dir / "pet.json").write_text('{"id":"local-boba"}\n', encoding="utf-8")
+        package = self.root / "pet-package"
+        (package / "scripts").mkdir(parents=True)
+        (package / "scripts" / "pets.py").write_text("# pet dispatcher\n", encoding="utf-8")
+        (self.state / "pets.py").write_text("# old pet dispatcher\n", encoding="utf-8")
+
+        backup = updater._snapshot("1.7.0")
+        updater._sync_managed_runtime(package)
+
+        self.assertEqual((backup / "managed" / "pets.py").read_text(encoding="utf-8"), "# old pet dispatcher\n")
+        self.assertTrue(json.loads((backup / "managed" / "instructions-presence.json").read_text(encoding="utf-8"))["pets.py"])
+        self.assertEqual((self.state / "pets" / "installed" / "local-boba" / "pet.json").read_text(encoding="utf-8"), '{"id":"local-boba"}\n')
+        self.assertEqual((self.state / "pets" / "pets.py").exists(), False)
+        self.assertEqual((self.state / "pets.py").read_text(encoding="utf-8"), "# pet dispatcher\n")
+
     def test_perform_update_from_local_release_artifact(self) -> None:
         agents = self.codex_home / "AGENTS.md"
         agents_original = b"OTA global sentinel without final newline"
         agents.write_bytes(agents_original)
+        pet_dir = self.state / "pets" / "installed" / "local-boba"
+        pet_dir.mkdir(parents=True)
+        (pet_dir / "pet.json").write_text('{"id":"boba"}\n', encoding="utf-8")
+        (self.state / "pets" / "current").write_text("local-boba", encoding="utf-8")
         package = self.root / "package"
         release_root = package / "codex-flow-1.8.0"
         (release_root / "scripts").mkdir(parents=True)
@@ -197,6 +219,8 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue(agents.read_bytes().endswith(agents_original))
         self.assertTrue((self.state / "manage-instructions.py").exists())
         self.assertTrue((self.state / "flow-pilot-instructions.md").exists())
+        self.assertEqual((self.state / "pets" / "installed" / "local-boba" / "pet.json").read_text(encoding="utf-8"), '{"id":"boba"}\n')
+        self.assertEqual((self.state / "pets" / "current").read_text(encoding="utf-8"), "local-boba")
         self.assertTrue((self.bin_dir / ("codex-flow.cmd" if os.name == "nt" else "codex-flow")).exists())
         config_text = (self.codex_home / "config.toml").read_text(encoding="utf-8")
         self.assertIn("keep_me = true", config_text)

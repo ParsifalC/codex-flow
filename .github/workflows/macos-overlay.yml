@@ -8,6 +8,8 @@ on:
       - 'tests/overlay-language.sh'
       - 'tests/overlay-account.sh'
       - 'tests/overlay-turn-navigation.sh'
+      - 'tests/overlay-pets.sh'
+      - 'tests/fixtures/pets/**'
       - '.github/workflows/macos-overlay.yml'
   pull_request:
     paths:
@@ -16,6 +18,8 @@ on:
       - 'tests/overlay-language.sh'
       - 'tests/overlay-account.sh'
       - 'tests/overlay-turn-navigation.sh'
+      - 'tests/fixtures/pets/**'
+      - 'tests/overlay-pets.sh'
       - '.github/workflows/macos-overlay.yml'
 
 jobs:
@@ -73,6 +77,8 @@ jobs:
         run: bash tests/overlay-startup.sh
       - name: Verify turn navigation and selection persistence
         run: bash tests/overlay-turn-navigation.sh
+      - name: Verify Petdex native atlas and reducer
+        run: bash tests/overlay-pets.sh
       - name: Verify language settings preserve the policy
         run: bash tests/overlay-language.sh
       - name: Verify account tab renders without crashing

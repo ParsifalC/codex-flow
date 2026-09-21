@@ -88,6 +88,12 @@ case "$cmd" in
     [[ -f "$ui_script" ]] || fail "$(cf_t 'localized UI helper is missing; reinstall codex-flow' '本地化 UI 组件缺失，请重新安装 codex-flow')"
     exec python3 "$ui_script" language "$@"
     ;;
+  pets)
+    shift
+    pets_script="$(script_path pets.py 2>/dev/null || true)"
+    [[ -f "$pets_script" ]] || fail "$(cf_t 'pet helper is missing; reinstall codex-flow' '宠物组件缺失，请重新安装 codex-flow')"
+    exec python3 "$pets_script" "$@"
+    ;;
   strategy)
     shift
     strategy_script="$(script_path strategy_runtime.py 2>/dev/null || true)"

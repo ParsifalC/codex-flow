@@ -18,7 +18,16 @@ import re
 from pathlib import Path
 from typing import Any
 
-EVENTS = ("UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop")
+EVENTS = (
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PreToolUse",
+    "PostToolUse",
+    "SubagentStart",
+    "SubagentStop",
+    "Stop",
+    "Interrupt",
+)
 MARKER = "codex-flow/telemetry.py"
 DEFAULT_TIMEOUT_SEC = 600
 SESSION_END_DEFAULT_TIMEOUT_SEC = 1
@@ -117,13 +126,14 @@ def install(path: Path, script: Path) -> None:
     remove_managed(data)
     command = command_for(script)
     for event in EVENTS:
+        timeout = 3 if event in {"PermissionRequest", "PreToolUse", "PostToolUse", "Interrupt"} else 15
         data["hooks"].setdefault(event, []).append(
             {
                 "hooks": [
                     {
                         "type": "command",
                         "command": command,
-                        "timeout": 15,
+                        "timeout": timeout,
                         "statusMessage": "FlowPilot telemetry",
                     }
                 ]
