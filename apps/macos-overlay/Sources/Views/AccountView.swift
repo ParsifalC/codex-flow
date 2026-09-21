@@ -7,6 +7,8 @@ public struct AccountView: View {
     public var isFullHeight: Bool = false
 
     @State private var snapshot: AccountSnapshot? = AccountSnapshotService.cached
+    @State private var preferencesExpanded = false
+    @State private var accountDetailsExpanded = false
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var hasLoaded = AccountSnapshotService.cached != nil
@@ -20,7 +22,7 @@ public struct AccountView: View {
     }
 
     public var body: some View {
-        let content = VStack(spacing: 14) {
+        let content = VStack(spacing: 20) {
             accountHeader
 
             if snapshot == nil && (isLoading || !hasLoaded) {
@@ -32,32 +34,33 @@ public struct AccountView: View {
                     staleDataWarning(errorMessage)
                 }
                 identityCard(snapshot)
+                OverlayDivider()
                 quotaCard(snapshot)
+                OverlayDivider()
                 resetCard(snapshot)
-                accountFactsCard(snapshot)
+                factRow("Credits", creditsDisplay(snapshot))
+                DisclosureGroup(L("More account information", "更多账户信息"), isExpanded: $accountDetailsExpanded) {
+                    accountFactsCard(snapshot).padding(.top, 14)
+                }.font(.system(size: 12.5)).tint(OverlayTheme.secondary)
             } else {
                 emptyState
             }
 
-            Text(L("Preferences", "偏好设置"))
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.7))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 8)
-
-            StrategyModeCard()
-            AutostartCard()
+            DisclosureGroup(L("Preferences", "偏好设置"), isExpanded: $preferencesExpanded) {
+                VStack(spacing: 14) {
+                    StrategyModeCard()
+                    AutostartCard()
+                }.padding(.top, 14)
+            }.font(.system(size: 12.5)).tint(OverlayTheme.secondary)
         }
-        .padding(.vertical, 14)
+        .padding(.vertical, 20)
 
         return Group {
             if isFullHeight {
                 content
             } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    content
-                }
-                .frame(maxHeight: 400)
+                ScrollView(.vertical, showsIndicators: true) { content }
+                    .frame(maxHeight: .infinity)
             }
         }
         .onAppear {
@@ -73,11 +76,11 @@ public struct AccountView: View {
         HStack(spacing: 9) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("Account & Limits", "账户与额度"))
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.white)
                 Text(L("Account and preferences", "账户信息与偏好设置"))
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(.system(size: 11.5))
+                    .foregroundColor(OverlayTheme.muted)
             }
 
             Spacer()
@@ -86,18 +89,18 @@ public struct AccountView: View {
                 if isLoading && snapshot != nil {
                     ProgressView()
                         .controlSize(.mini)
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.cyan.opacity(0.12)))
+                        .frame(width: 32, height: 32)
                 } else {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.cyan)
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.cyan.opacity(0.12)))
+                        .foregroundColor(OverlayTheme.accent)
+                        .frame(width: 32, height: 32)
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(OverlayButtonStyle())
             .disabled(isLoading)
+            .help(L("Refresh account information", "刷新账户信息"))
+            .accessibilityLabel(L("Refresh account information", "刷新账户信息"))
         }
     }
 
@@ -106,7 +109,7 @@ public struct AccountView: View {
             ProgressView().controlSize(.small)
             Text(L("Reading account status…", "正在读取账户状态…"))
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
         }
         .frame(maxWidth: .infinity, minHeight: 120)
     }
@@ -118,20 +121,20 @@ public struct AccountView: View {
                 .foregroundColor(.orange.opacity(0.8))
             Text(L("Unable to read account data", "无法读取账户数据"))
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(OverlayTheme.secondary)
                 .multilineTextAlignment(.center)
             Text(message)
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
                 .multilineTextAlignment(.center)
             Button(L("Retry", "重试"), action: refresh)
-                .buttonStyle(.plain)
+                .buttonStyle(OverlayButtonStyle())
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.cyan)
+                .foregroundColor(OverlayTheme.accent)
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 120)
-        .background(cardBackground)
+
     }
 
     private func staleDataWarning(_ message: String) -> some View {
@@ -141,14 +144,14 @@ public struct AccountView: View {
                 .foregroundColor(.orange)
             Text(L("Refresh failed: \(message) (showing cached data)", "刷新失败：\(message)（已展示缓存数据）"))
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer()
             Button(L("Retry", "重试"), action: refresh)
-                .buttonStyle(.plain)
+                .buttonStyle(OverlayButtonStyle())
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.cyan)
+                .foregroundColor(OverlayTheme.accent)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
@@ -163,50 +166,50 @@ public struct AccountView: View {
         VStack(spacing: 7) {
             Image(systemName: "person.crop.circle")
                 .font(.system(size: 22))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
             Text(L("No account data reported", "Codex 未返回账户数据"))
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(OverlayTheme.secondary)
             Text(L("Codex returned an empty account and quota response.", "Codex 返回了空的账户与额度响应。"))
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
                 .multilineTextAlignment(.center)
             Button(L("Retry", "重试"), action: refresh)
-                .buttonStyle(.plain)
+                .buttonStyle(OverlayButtonStyle())
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.cyan)
+                .foregroundColor(OverlayTheme.accent)
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 120)
-        .background(cardBackground)
+
     }
 
     private func identityCard(_ value: AccountSnapshot) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(L("CURRENT PLAN", "当前 PLAN"))
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(OverlayTheme.muted)
                 Text(planDisplayName(value.planType))
-                    .font(.system(size: 16, weight: .heavy, design: .rounded))
-                    .foregroundStyle(LinearGradient(colors: [.cyan, .indigo], startPoint: .leading, endPoint: .trailing))
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
             }
 
             Spacer()
 
             VStack(alignment: .trailing, spacing: 3) {
                 Text(accountTypeDisplayName(value.accountType))
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(OverlayTheme.secondary)
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 5)
                     .background(Capsule().fill(Color.white.opacity(0.07)))
 
                 if let email = value.email, !email.isEmpty {
                     HoverRevealText(
                         email,
-                        font: .system(size: 13),
-                        foregroundColor: .white.opacity(0.7),
+                        font: .system(size: 11.5, design: .monospaced),
+                        foregroundColor: .white.opacity(0.52),
                         lineLimit: 1,
                         privacyBlur: state.isPrivacyMode,
                         popoverWidth: 300
@@ -215,8 +218,8 @@ public struct AccountView: View {
                 }
             }
         }
-        .padding(9)
-        .background(cardBackground)
+
+
     }
 
     enum QuotaTabMode: String, CaseIterable {
@@ -226,7 +229,7 @@ public struct AccountView: View {
     @State private var quotaTabMode: QuotaTabMode = .window
 
     private func quotaCard(_ value: AccountSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Label(
                     quotaTabMode == .window ? L("Current quota", "当前额度") : L("Daily quota usage", "每日额度消耗"),
@@ -249,7 +252,7 @@ public struct AccountView: View {
                 if value.orderedWindows.filter({ $0.durationMinutes != 300 }).isEmpty {
                     Text(L("Codex did not return a rate-limit window for this account.", "Codex 当前没有返回该账户的额度窗口。"))
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                 } else {
                     ForEach(value.orderedWindows.filter { $0.durationMinutes != 300 }) { window in
                         quotaRow(window)
@@ -259,8 +262,7 @@ public struct AccountView: View {
                 dailyQuotaView(value)
             }
         }
-        .padding(9)
-        .background(cardBackground)
+
     }
 
     private func quotaTabButton(mode: QuotaTabMode, title: String) -> some View {
@@ -270,16 +272,16 @@ public struct AccountView: View {
             }
         } label: {
             Text(title)
-                .font(.system(size: 13, weight: quotaTabMode == mode ? .bold : .medium, design: .rounded))
+                .font(.system(size: 11.5, weight: .medium))
                 .foregroundColor(quotaTabMode == mode ? .white : .white.opacity(0.45))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2.5)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
                 .background(
                     Capsule()
-                        .fill(quotaTabMode == mode ? Color.cyan.opacity(0.28) : Color.clear)
+                        .fill(quotaTabMode == mode ? Color.white.opacity(0.12) : Color.clear)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OverlayButtonStyle())
     }
 
     private func dailyQuotaView(_ value: AccountSnapshot) -> some View {
@@ -296,7 +298,7 @@ public struct AccountView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L("TODAY'S OBSERVED USAGE", "今日已观测周额度消耗"))
                         .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         if let todayDelta = todayUsage?.quotaDelta {
                             Text(String(format: "%.1f pp", todayDelta))
@@ -306,13 +308,13 @@ public struct AccountView: View {
                             let pending = todayUsage?.crossMidnightPendingPp ?? 0.0
                             Text("—")
                                 .font(.system(size: 13, weight: .heavy, design: .rounded))
-                                .foregroundColor(.white.opacity(0.7))
+                                .foregroundColor(OverlayTheme.muted)
                                 .help(pending > 0 ? String(format: L("Pending cross-midnight allocation: %.1f pp", "跨日待分配：%.1f pp"), pending) : "")
                         }
                         if let tokens = todayUsage?.tokens, tokens > 0 {
                             Text("· \(TaskRun.formatTokenCount(tokens))")
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.7))
+                                .foregroundColor(OverlayTheme.muted)
                         }
                     }
                 }
@@ -322,15 +324,15 @@ public struct AccountView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(L("7-DAY TOTAL", "近 7 天消耗"))
                         .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                     if !knownDeltas.isEmpty {
                         Text(String(format: "%.0f%%", totalRecentDelta))
                             .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundColor(.cyan)
+                            .foregroundColor(OverlayTheme.accent)
                     } else {
                         Text("—")
                             .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(OverlayTheme.muted)
                     }
                 }
             }
@@ -376,20 +378,20 @@ public struct AccountView: View {
                     } else {
                         Text("0%")
                             .font(.system(size: 13))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(OverlayTheme.muted)
                     }
                 } else {
                     let pending = item.crossMidnightPendingPp ?? 0.0
                     Text("—")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                         .help(pending > 0 ? String(format: L("Pending cross-midnight allocation: %.1f pp", "跨日待分配：%.1f pp"), pending) : "")
                 }
 
                 if item.runs > 0 {
                     Text("(\(item.runs)\(L(" runs", "次")))")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                 }
             }
             .frame(width: 58, alignment: .trailing)
@@ -403,124 +405,75 @@ public struct AccountView: View {
     }
 
     private func quotaRow(_ window: AccountQuotaWindow) -> some View {
-        let used = window.usedPercent.map { max(0, min(100, $0)) }
-        let remaining = window.remainingPercent
-        let remainingFraction = max(0, min(1, (remaining ?? 0) / 100.0))
-        let pressure = used ?? 0
-        let accent: Color = pressure >= 85 ? .orange : (pressure >= 60 ? .yellow : .cyan)
-
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                Text(window.compactName)
-                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                    .foregroundColor(accent)
-                    .frame(width: 64, alignment: .leading)
-                Text(window.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.72))
-                Spacer()
-                if let remaining {
-                    Text(String(format: L("%.0f%% left", "剩余 %.0f%%"), remaining))
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundColor(accent)
-                } else {
-                    Text(L("Not reported", "未返回"))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+        let used = window.usedPercent.flatMap { $0.isFinite ? max(0, min(100, $0)) : nil }
+        let remaining = used.map { 100 - $0 }
+        let low = (remaining ?? 100) <= 40
+        let accent = low ? OverlayTheme.warning : OverlayTheme.accent
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                Text(window.durationMinutes == 10_080 ? L("Weekly quota", "周额度") : window.displayName)
+                    .font(.system(size: 12.5, weight: .medium)).foregroundStyle(OverlayTheme.secondary)
+                if low {
+                    Text(L("Low", "偏低")).font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(accent).padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(accent.opacity(0.12)))
                 }
+                Spacer()
+                Text(remaining.map { String(format: L("%.1f%% left", "剩余 %.1f%%"), $0) } ?? L("Not reported", "未返回"))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced)).foregroundStyle(accent)
             }
-
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.08))
-                    if remaining != nil {
-                        Capsule().fill(accent)
-                            .frame(width: proxy.size.width * CGFloat(remainingFraction))
+                    Capsule().fill(Color.white.opacity(0.06))
+                    if let used {
+                        Capsule().fill(accent).frame(width: proxy.size.width * used / 100)
                     }
                 }
-            }
-            .frame(height: 4)
-
-            VStack(alignment: .leading, spacing: 6) {
-                if let used {
-                    Text(String(format: L("Used %.0f%%", "已用 %.0f%%"), used))
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
-                } else {
-                    Text(L("Usage not reported", "用量未返回"))
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
-                }
+            }.frame(height: 8)
+            HStack(alignment: .top) {
+                Text(used.map { String(format: L("Used %.1f%%", "已用 %.1f%%"), $0) } ?? L("Usage not reported", "用量未返回"))
+                Spacer()
                 Text(window.resetsAt.map { L("Resets \(formatAccountDate($0))", "\(formatAccountDate($0)) 重置") } ?? L("Reset time unavailable", "重置时间未返回"))
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.7))
-                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.trailing)
             }
+            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(OverlayTheme.muted)
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.025)))
     }
 
     private func resetCard(_ value: AccountSnapshot) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .center, spacing: 3) {
-                Text(L("RESET CREDITS AVAILABLE", "可用重置次数"))
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.7))
-                Text(value.resetCreditCount.map(String.init) ?? "—")
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
-                    .foregroundColor((value.resetCreditCount ?? 0) > 0 ? .cyan : .white.opacity(0.8))
-            }
-
-            Divider().frame(height: 30).overlay(Color.white.opacity(0.08))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(L("NEXT CREDIT EXPIRY", "重置次数到期"))
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.7))
-                Text(value.nearestResetCreditExpiry.map(formatAccountDate) ?? L("No expiry reported", "未返回到期时间"))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.75))
-            }
-            Spacer()
+        VStack(spacing: 14) {
+            factRow(L("Reset credits available", "可用重置次数"), value.resetCreditCount.map(String.init) ?? "—")
+            factRow(L("Next credit expiry", "重置次数到期"), value.nearestResetCreditExpiry.map(formatAccountDate) ?? L("No expiry reported", "未返回到期时间"))
         }
-        .padding(9)
-        .background(cardBackground)
+
     }
 
     private func accountFactsCard(_ value: AccountSnapshot) -> some View {
-        VStack(spacing: 5) {
-            factRow(L("Credits", "Credits"), creditsDisplay(value))
+        VStack(spacing: 14) {
             factRow(L("Rate limit state", "限额状态"), rateLimitStateDisplay(value))
             factRow(L("Spend control", "消费控制"), booleanStatus(value.spendControlReached, trueText: L("Reached", "已触发"), falseText: L("Normal", "正常")))
             factRow(L("OpenAI auth", "OpenAI 认证"), booleanStatus(value.requiresOpenAIAuth, trueText: L("Required", "需要"), falseText: L("Not required", "不需要")))
             factRow(L("Last refreshed", "最后刷新"), formatAccountDate(value.fetchedAt))
         }
-        .padding(9)
-        .background(cardBackground)
+
+
     }
 
     private func factRow(_ title: String, _ value: String) -> some View {
         HStack {
             Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundColor(OverlayTheme.muted)
             Spacer()
             HoverRevealText(
                 value,
-                font: .system(size: 13, weight: .semibold, design: .rounded),
+                font: .system(size: 14, weight: .semibold, design: .monospaced),
                 foregroundColor: .white.opacity(0.78),
                 lineLimit: 1,
                 popoverWidth: 300
             )
             .frame(maxWidth: 190, alignment: .trailing)
         }
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 10)
-            .fill(Color.white.opacity(0.04))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.8))
     }
 
     private func refresh() {

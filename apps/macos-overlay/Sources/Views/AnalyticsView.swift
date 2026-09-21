@@ -5,6 +5,7 @@ public struct AnalyticsView: View {
     @ObservedObject private var localization = AppLocalization.shared
     public var isFullHeight: Bool = false
 
+    @State private var detailsExpanded = false
     @State private var trendRuns: [TaskRun] = []
     @State private var trendLoading = false
     @State private var trendRequestGeneration = 0
@@ -19,35 +20,37 @@ public struct AnalyticsView: View {
     }
 
     public var body: some View {
-        let content = VStack(spacing: 14) {
+        let content = VStack(spacing: 20) {
             periodHeader
 
             if stats.totalRuns == 0 {
                 emptyStatsState
             } else {
                 kpiSummaryGrid
+                OverlayDivider()
                 usageTrendCard
+                OverlayDivider()
                 efficiencyCard
 
-                if !stats.models.isEmpty {
-                    modelBreakdownCard
-                }
-
-                if !stats.projects.isEmpty {
-                    projectBreakdownCard
+                if !stats.models.isEmpty || !stats.projects.isEmpty {
+                    DisclosureGroup(L("More statistics", "更多统计"), isExpanded: $detailsExpanded) {
+                        VStack(spacing: 18) {
+                            if !stats.models.isEmpty { modelBreakdownCard }
+                            if !stats.projects.isEmpty { projectBreakdownCard }
+                        }.padding(.top, 14)
+                    }
+                    .font(.system(size: 12.5)).tint(OverlayTheme.secondary)
                 }
             }
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 20)
 
         return Group {
             if isFullHeight {
                 content
             } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    content
-                }
-                .frame(maxHeight: 400)
+                ScrollView(.vertical, showsIndicators: true) { content }
+                    .frame(maxHeight: .infinity)
             }
         }
         .onAppear {
@@ -68,11 +71,11 @@ public struct AnalyticsView: View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
                 Text(L("Statistics", "统计"))
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.white.opacity(0.86))
                 Text(L("Locally recorded turns", "本机已记录轮次"))
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(.system(size: 11.5))
+                    .foregroundColor(OverlayTheme.muted)
             }
 
             Spacer()
@@ -94,13 +97,13 @@ public struct AnalyticsView: View {
             }
         } label: {
             Text(title)
-                .font(.system(size: 12, weight: state.statsDays == days ? .bold : .medium, design: .rounded))
+                .font(.system(size: 11.5, weight: .medium))
                 .foregroundColor(state.statsDays == days ? .white : .white.opacity(0.48))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(state.statsDays == days ? Color.cyan.opacity(0.28) : Color.clear))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(state.statsDays == days ? Color.white.opacity(0.12) : Color.clear))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OverlayButtonStyle(cornerRadius: 14))
     }
 
     // MARK: - Empty
@@ -109,14 +112,14 @@ public struct AnalyticsView: View {
         VStack(spacing: 8) {
             Image(systemName: "chart.xyaxis.line")
                 .font(.system(size: 24))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
                 .padding(.top, 28)
             Text(L("No activity in this period", "当前周期暂无活动"))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(OverlayTheme.secondary)
             Text(L("Task, token and efficiency trends will appear after telemetry is recorded.", "记录遥测后会显示任务、Token 与效率趋势。"))
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 15)
         }
@@ -126,22 +129,26 @@ public struct AnalyticsView: View {
     // MARK: - KPIs
 
     private var kpiSummaryGrid: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             analyticsKPI(
                 title: L("Tasks", "任务"),
                 value: "\(stats.totalRuns)",
                 subtext: L("\(stats.delegatedRuns) delegated", "委派 \(stats.delegatedRuns) 次"),
                 icon: "sparkles",
-                accent: .cyan
+                accent: OverlayTheme.accent
             )
+
+            OverlayDivider(vertical: true).frame(height: 42)
 
             analyticsKPI(
                 title: L("Active Time", "活跃时长"),
                 value: stats.formattedTotalDuration,
                 subtext: L("past \(stats.days)d", "近 \(stats.days) 天"),
                 icon: "timer",
-                accent: .indigo
+                accent: OverlayTheme.accent
             )
+
+            OverlayDivider(vertical: true).frame(height: 42)
 
             // No monetary "Cost" here: token counts are deterministic, while
             // estimated credits are optional and are not equivalent to USD.
@@ -153,36 +160,36 @@ public struct AnalyticsView: View {
                     "输出 \(TaskRun.formatTokenCount(stats.outputTokens))"
                 ),
                 icon: "circle.grid.cross.fill",
-                accent: Color(red: 0.95, green: 0.35, blue: 0.8)
+                accent: OverlayTheme.accent
             )
         }
     }
 
     private func analyticsKPI(title: String, value: String, subtext: String, icon: String, accent: Color) -> some View {
-        VStack(spacing: 2.5) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 3) {
                 Image(systemName: icon)
                     .font(.system(size: 12))
                     .foregroundColor(accent)
                 Text(title)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundColor(.white.opacity(0.7))
-                    .textCase(.uppercase)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(OverlayTheme.muted)
+
             }
 
             Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: 20, weight: .semibold, design: .monospaced))
                 .foregroundColor(.white)
                 .lineLimit(1)
 
             Text(subtext)
-                .font(.system(size: 12, design: .rounded))
-                .foregroundColor(.white.opacity(0.7))
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundColor(OverlayTheme.muted)
                 .lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 6)
         .padding(.vertical, 6)
-        .background(analyticsCardBackground)
     }
 
     // MARK: - Trend curve
@@ -194,10 +201,10 @@ public struct AnalyticsView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "chart.xyaxis.line")
                         .font(.system(size: 12))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(OverlayTheme.accent)
                     Text(L("Usage Trend", "用量趋势"))
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.72))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(OverlayTheme.secondary)
                 }
                 Spacer()
                 if trendLoading {
@@ -205,37 +212,35 @@ public struct AnalyticsView: View {
                 } else {
                     Text(L("tokens / day", "Token / 天"))
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                 }
             }
 
             UsageTrendChart(points: points)
-                .frame(height: 104)
+                .frame(height: 116)
         }
-        .padding(12)
-        .background(analyticsCardBackground)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Efficiency
 
     private var efficiencyCard: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 16) {
             efficiencyRow(
                 title: L("Cache Efficiency", "缓存效率"),
                 percentage: stats.cacheRatio,
                 detail: L("\(TaskRun.formatTokenCount(stats.cachedInputTokens)) cached", "缓存 \(TaskRun.formatTokenCount(stats.cachedInputTokens))"),
-                accent: Color(red: 0.28, green: 0.58, blue: 0.95)
+                accent: OverlayTheme.accent
             )
 
             efficiencyRow(
                 title: L("Worker Offload", "Worker 分流"),
                 percentage: stats.workerOffloadRatio,
                 detail: "\(TaskRun.formatTokenCount(stats.workerTokens)) / \(TaskRun.formatTokenCount(stats.totalTokens))",
-                accent: Color(red: 0.22, green: 0.88, blue: 0.58)
+                accent: OverlayTheme.good
             )
         }
-        .padding(12)
-        .background(analyticsCardBackground)
+        .padding(.vertical, 4)
     }
 
     private func efficiencyRow(title: String, percentage: Double, detail: String, accent: Color) -> some View {
@@ -243,15 +248,15 @@ public struct AnalyticsView: View {
             HStack {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(OverlayTheme.muted)
                 Spacer()
                 Text(String(format: "%.1f%%", percentage))
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundColor(accent)
             }
             Text(detail)
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.7))
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundColor(OverlayTheme.muted)
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
@@ -270,37 +275,29 @@ public struct AnalyticsView: View {
     private var modelBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(L("Model Breakdown", "模型分布"))
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(.white.opacity(0.7))
-                .textCase(.uppercase)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(OverlayTheme.muted)
+
 
             ForEach(stats.models) { model in
                 AnalyticsModelRow(model: model, totalTokens: stats.totalTokens)
             }
         }
-        .padding(12)
-        .background(analyticsCardBackground)
+        .padding(.vertical, 4)
     }
 
     private var projectBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(L("Projects Distribution", "项目分布"))
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(.white.opacity(0.7))
-                .textCase(.uppercase)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(OverlayTheme.muted)
+
 
             ForEach(Array(stats.projects.prefix(6))) { project in
                 AnalyticsProjectRow(project: project, isPrivacyMode: state.isPrivacyMode)
             }
         }
-        .padding(12)
-        .background(analyticsCardBackground)
-    }
-
-    private var analyticsCardBackground: some View {
-        RoundedRectangle(cornerRadius: 9)
-            .fill(Color.white.opacity(0.035))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.07), lineWidth: 0.7))
+        .padding(.vertical, 4)
     }
 
     private func loadTrendRuns() {
@@ -371,11 +368,11 @@ public struct UsageTrendChart: View {
                 VStack {
                     Text(TaskRun.formatTokenCount(maxTokens))
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                     Spacer()
                     Text("0")
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(OverlayTheme.muted)
                 }
                 .frame(width: 60)
                 .lineLimit(1)
@@ -427,7 +424,7 @@ public struct UsageTrendChart: View {
                 Text(points.last.map { formatTrendDate($0.date) } ?? "—")
             }
             .font(.system(size: 12, design: .monospaced))
-            .foregroundColor(.white.opacity(0.7))
+            .foregroundColor(OverlayTheme.muted)
             .padding(.leading, 65)
         }
     }
@@ -515,18 +512,18 @@ public struct AnalyticsModelRow: View {
             HStack(spacing: 8) {
                 Text(L("\(model.calls) calls", "\(model.calls) 次"))
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(OverlayTheme.muted)
 
                 Spacer(minLength: 8)
 
                 Text(TaskRun.formatTokenCount(model.tokens))
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
                     .frame(minWidth: 38, alignment: .trailing)
 
                 Text(String(format: "%.0f%%", percentage))
                     .font(.system(size: 12, design: .rounded))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(OverlayTheme.muted)
                     .frame(minWidth: 36, alignment: .trailing)
             }
         }
@@ -545,11 +542,11 @@ public struct AnalyticsProjectRow: View {
         HStack(spacing: 5) {
             Image(systemName: "folder.fill")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
 
             HoverRevealText(
                 project.name,
-                font: .system(size: 12, weight: .medium, design: .rounded),
+                font: .system(size: 11, weight: .medium),
                 foregroundColor: .white.opacity(0.8),
                 lineLimit: 1,
                 privacyBlur: isPrivacyMode,
@@ -560,10 +557,10 @@ public struct AnalyticsProjectRow: View {
 
             Text(L("\(project.runs) runs", "\(project.runs) 次"))
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(OverlayTheme.muted)
 
             Text(TaskRun.formatTokenCount(project.tokens))
-                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .foregroundColor(Color(red: 0.95, green: 0.35, blue: 0.8))
         }
         .padding(.horizontal, 6)

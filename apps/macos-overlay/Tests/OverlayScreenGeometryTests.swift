@@ -74,30 +74,21 @@ struct OverlayScreenGeometryTests {
     }
 
     private static func testVisibleHitRegions() {
-        let host = NSRect(x: 0, y: 0, width: 76, height: 76)
-
-        precondition(
-            OverlayCompactHitRegion.contains(NSPoint(x: 38, y: 38), in: host, expanded: false, docked: false),
-            "center of circular bubble must be interactive"
-        )
-        precondition(
-            !OverlayCompactHitRegion.contains(NSPoint(x: 2, y: 2), in: host, expanded: false, docked: false),
-            "transparent circular-host corner must not be interactive"
-        )
-
-        precondition(
-            OverlayCompactHitRegion.contains(NSPoint(x: 60, y: 38), in: host, expanded: false, docked: true),
-            "visible dock pill must be interactive"
-        )
-        precondition(
-            !OverlayCompactHitRegion.contains(NSPoint(x: 12, y: 38), in: host, expanded: false, docked: true),
-            "transparent area left of the dock pill must not untuck it"
-        )
-
-        precondition(
-            OverlayCompactHitRegion.contains(NSPoint(x: 2, y: 2), in: host, expanded: true, docked: false),
-            "expanded panel uses its full host bounds"
-        )
+        let host = NSRect(x: 0, y: 0, width: 128, height: 64)
+        for point in [NSPoint(x: 8.5, y: 32), NSPoint(x: 119.5, y: 32), NSPoint(x: 64, y: 8.5)] {
+            precondition(OverlayCompactHitRegion.contains(point, in: host, expanded: false, docked: false),
+                         "The visible compact tile edges must remain interactive")
+        }
+        for point in [NSPoint(x: 2, y: 32), NSPoint(x: 8.5, y: 8.5), NSPoint(x: 64, y: 3)] {
+            precondition(!OverlayCompactHitRegion.contains(point, in: host, expanded: false, docked: false),
+                         "Transparent padding and rounded corners must not intercept the pointer")
+        }
+        precondition(OverlayCompactHitRegion.contains(NSPoint(x: 110, y: 32), in: host, expanded: false, docked: true))
+        for point in [NSPoint(x: 60, y: 32), NSPoint(x: 94, y: 9), NSPoint(x: 110, y: 3)] {
+            precondition(!OverlayCompactHitRegion.contains(point, in: host, expanded: false, docked: true),
+                         "Invisible area around the smaller dock tab must not untuck it")
+        }
+        precondition(OverlayCompactHitRegion.contains(NSPoint(x: 2, y: 2), in: host, expanded: true, docked: false))
     }
 
     private static func testSyntheticHoverGate() {

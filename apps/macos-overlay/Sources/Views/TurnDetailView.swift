@@ -5,7 +5,7 @@ public struct TurnDetailView: View {
     public let run: TaskRun
     public let isPrivacyMode: Bool
     @State private var resultExpanded = false
-    @State private var planExpanded = true
+    @State private var planExpanded = false
     @State private var jsonExpanded = false
 
     public init(run: TaskRun, isPrivacyMode: Bool = false) {
@@ -16,11 +16,11 @@ public struct TurnDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 narrative(
                     L("This turn’s goal", "本轮目标"),
-                    hint: run.isLegacyGoalFallback ? L("Legacy history", "历史兼容") : L("Extracted need", "需求提炼"),
+                    hint: run.publishedGoal == nil ? nil : (run.isLegacyGoalFallback ? L("Legacy history", "历史兼容") : L("Extracted need", "需求提炼")),
                     text: run.publishedGoal,
                     accent: true
                 )
-                Divider().overlay(Color.white.opacity(0.08))
+                OverlayDivider()
                 narrative(
                     L("Result", "结果"),
                     hint: run.isLegacyConclusionFallback ? L("Legacy history", "历史兼容") : nil,
@@ -29,19 +29,12 @@ public struct TurnDetailView: View {
                     accent: false
                 )
                 if run.result?.truncated == true {
-                    Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
+                    Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.52))
                 }
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 15).fill(Color.white.opacity(0.055)))
-            .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.08)))
-            HStack(spacing: 0) {
-                fact(run.formattedDuration, L("Duration", "耗时"))
-                Divider().frame(height: 28)
-                fact(run.formattedTotalTokens, "Tokens")
-                Divider().frame(height: 28)
-                fact("\(run.allWorkers.count + 1)", L("Participants", "实际参与"))
-            }.padding(.vertical, 4)
+            .padding(.vertical, 2)
+            OverlayDivider()
+            taskMetrics
             DisclosureGroup(isExpanded: $planExpanded) {
                 VStack(alignment: .leading, spacing: 12) {
                     if let orchestration = run.turnContext?.orchestration, let plan = orchestration.executionPlan {
@@ -52,8 +45,6 @@ public struct TurnDetailView: View {
                         planRow(L("Observed this turn", "本轮记录参与"), L("Parent 1 · Workers", "父 Agent 1 · 子 Agent") + " \(run.allWorkers.count)")
                         planRow(L("Plan origin", "计划来源"), origin(orchestration.origin))
                         planRow(L("Revision", "计划修订"), orchestration.revision.map(String.init) ?? L("Not recorded", "未记录"))
-                        Text(L("The plan describes staffing by task stage; participation counts reflect agents recorded this turn. Reusing a plan does not mean running every stage again.", "计划列出任务各阶段的人员配置；参与人数统计本轮已记录的 Agent。沿用计划不代表每轮重跑所有阶段。"))
-                            .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                         DisclosureGroup(L("Full plan JSON", "查看完整计划 JSON"), isExpanded: $jsonExpanded) {
                             ScrollView([.horizontal, .vertical]) {
                                 Text(isPrivacyMode ? L("Hidden", "已隐藏") : prettyJSON(plan))
@@ -70,35 +61,108 @@ public struct TurnDetailView: View {
                         .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                 }
             }
-            .font(.system(size: 14)).tint(.white.opacity(0.7)).padding(13)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.035)))
+            .disclosureGroupStyle(OverlayDisclosureStyle())
+            .font(.system(size: 14)).tint(OverlayTheme.secondary)
+            .overlay(alignment: .top) { OverlayDivider() }
         }
         .onChange(of: run.id) { _, _ in
-            resultExpanded = false; planExpanded = true; jsonExpanded = false
+            resultExpanded = false; planExpanded = false; jsonExpanded = false
         }
     }
     private func narrative(_ title: String, hint: String?, text: String?, expanded: Binding<Bool>? = nil, accent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(title).fontWeight(.semibold); Spacer()
-                if let hint { Text(hint).foregroundStyle(.white.opacity(0.72)) }
-            }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+            HStack(spacing: 8) {
+                Text(title).fontWeight(.medium)
+                if let hint {
+                    Text(hint)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(OverlayTheme.accent)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Capsule().fill(OverlayTheme.accent.opacity(0.12)))
+                }
+                Spacer(minLength: 0)
+            }.font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.52))
             Text(isPrivacyMode ? L("Hidden in privacy mode", "隐私模式已隐藏") : localizedResultText(text))
-                .font(.system(size: accent ? 16 : 14, weight: accent ? .semibold : .regular))
-                .foregroundStyle(text == nil ? .white.opacity(0.7) : .white.opacity(0.94))
-                .lineSpacing(6).lineLimit(expanded?.wrappedValue == false ? 5 : nil)
+                .font(.system(size: accent ? 19 : 13.5, weight: accent ? .semibold : .regular))
+                .foregroundStyle(text == nil ? .white.opacity(0.52) : (accent ? .white.opacity(0.95) : .white.opacity(0.72)))
+                .lineSpacing(accent ? 3 : 4).lineLimit(expanded?.wrappedValue == false ? 3 : nil)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let expanded, text != nil && !isPrivacyMode {
                 Button(expanded.wrappedValue ? L("Show less", "收起全文") : L("Read full text", "展开全文")) { expanded.wrappedValue.toggle() }
-                    .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.cyan.opacity(0.9))
+                    .buttonStyle(.plain).font(.system(size: 12.5, weight: .medium)).foregroundStyle(OverlayTheme.accent)
             }
         }
     }
+    private var taskMetrics: some View {
+        let tokens = TurnTokenBreakdown(run: run)
+        let quota = TurnWeeklyQuotaSummary(run: run)
+        return VStack(spacing: 18) {
+            HStack(spacing: 0) {
+                fact(run.startedAtMs == nil || run.finishedAtMs == nil ? "—" : run.formattedDuration,
+                     L("Total time", "总时间"))
+                    .help(L("Elapsed time from this turn’s start to completion", "本轮开始至结束的总耗时"))
+                OverlayDivider(vertical: true).frame(height: 32)
+                fact(tokens.totalTokens.map(TaskRun.formatTokenCount) ?? "—", L("Total tokens", "总 Token"))
+                    .help(tokens.totalTokens.map { "\($0) tokens" } ?? L("Token usage is incomplete", "Token 用量尚未完整记录"))
+                OverlayDivider(vertical: true).frame(height: 32)
+                fact(quotaChange(quota), L("Total quota change", "总变更额度"))
+                    .help(quotaHelp(quota))
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text(L("Token share", "Token 占比"))
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(OverlayTheme.muted)
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.06))
+                        if let parent = tokens.parentShare, let worker = tokens.workerShare {
+                            HStack(spacing: 0) {
+                                Rectangle().fill(OverlayTheme.accent).frame(width: geometry.size.width * parent)
+                                Rectangle().fill(OverlayTheme.good).frame(width: geometry.size.width * worker)
+                            }.clipShape(Capsule())
+                        }
+                    }
+                }.frame(height: 6).accessibilityHidden(true)
+                HStack(spacing: 16) {
+                    tokenShare("Parent", count: tokens.parentTokens, share: tokens.parentShare, color: OverlayTheme.accent)
+                    tokenShare("Worker", count: tokens.workerTokens, share: tokens.workerShare, color: OverlayTheme.good)
+                }
+            }
+        }.padding(.vertical, 4)
+    }
+    private func tokenShare(_ title: String, count: Int?, share: Double?, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text(title).foregroundStyle(OverlayTheme.secondary)
+                Spacer(minLength: 0)
+                Text(share.map { String(format: "%.1f%%", $0 * 100) } ?? "—").foregroundStyle(color)
+            }.font(.system(size: 11.5, weight: .medium, design: .monospaced))
+            Text(count.map { TaskRun.formatTokenCount($0) + " tokens" } ?? "—")
+                .font(.system(size: 11, design: .monospaced)).foregroundStyle(OverlayTheme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(count.map { "\($0) tokens" } ?? L("Usage not recorded", "用量未记录"))
+    }
+    private func quotaChange(_ quota: TurnWeeklyQuotaSummary) -> String {
+        guard let consumption = quota.displayConsumption else { return quota.didReset ? L("Reset", "已重置") : "—" }
+        let value = consumption == 0 ? 0 : -consumption
+        let format = abs(value) > 0 && abs(value) < 0.01 ? "%+.4f pp" : "%+.2f pp"
+        return (quota.usesObservedFallback ? "≈" : "") + String(format: format, value)
+    }
+    private func quotaHelp(_ quota: TurnWeeklyQuotaSummary) -> String {
+        if quota.allocatedConsumption != nil {
+            return L("Weekly quota change attributed to this turn, in percentage points.", "归因到当前轮次的周额度变化，单位为百分点。")
+        }
+        if quota.usesObservedFallback {
+            return L("Account change used as a fallback; may include concurrent tasks.", "当前缺少任务归因值，使用账户额度变化兜底，可能包含并行任务。")
+        }
+        return L("Quota change not recorded", "额度变化未记录")
+    }
     private func fact(_ value: String, _ title: String) -> some View {
         VStack(spacing: 6) {
-            Text(value).font(.system(size: 17, weight: .semibold, design: .rounded)).foregroundStyle(.white)
-            Text(title).font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
+            Text(value).font(.system(size: 16, weight: .medium, design: .monospaced)).foregroundStyle(OverlayTheme.primary).lineLimit(1).minimumScaleFactor(0.7)
+            Text(title).font(.system(size: 10.5, weight: .medium)).foregroundStyle(.white.opacity(0.52))
         }.frame(maxWidth: .infinity)
     }
     private func planRow(_ title: String, _ text: String) -> some View {

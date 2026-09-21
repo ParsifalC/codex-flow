@@ -29,7 +29,12 @@ public class OverlayState: ObservableObject {
 
     @Published public var activeTab: OverlayTab = .inspector
     @Published public var inspectedRun: TaskRun? = nil
-    @Published public var historyChats: [ChatSession] = []
+    /// The selected turn is a session+turn identity. Keeping it separate from
+    /// latestRun prevents a refresh in another chat from changing the task
+    /// currently being read.
+    @Published public var selectedTurnIdentity: String? = nil
+    @Published public private(set) var selectedSessionRuns: [TaskRun] = []
+    @Published public var historyRuns: [TaskRun] = []
     @Published public var expandedChatIds: Set<String> = []
     @Published public var statsData: TelemetryStats? = nil
     @Published public var statsDays: Int = 30
@@ -40,19 +45,44 @@ public class OverlayState: ObservableObject {
 
     public weak var windowController: OverlayWindowController?
 
+    private var menuLoadGeneration = 0
     private var historyLoadGeneration = 0
     private var statsLoadGeneration = 0
     private var publicationGate = PublishedTurnGate()
 
     private let readDefaults: UserDefaults
     @Published private var viewedTurnIds: [String]
+    // Keep the completion snapshot: a delayed notification may arrive before
+    // its history file, and latestRun may belong to another conversation.
+    @Published private var unreadNotificationRuns: [String: TaskRun] = [:]
     public var hasUnreadResult: Bool {
+        if !unreadNotificationRuns.isEmpty { return true }
         guard let run = latestRun, run.publication != nil else { return false }
         return !viewedTurnIds.contains(run.id)
     }
 
+    public var selectedRun: TaskRun? {
+        if let selectedTurnIdentity {
+            if let run = selectedSessionRuns.first(where: { $0.id == selectedTurnIdentity }) {
+                return run
+            }
+            if let run = [notificationRun, inspectedRun, latestRun].compactMap({ $0 }).first(where: { $0.id == selectedTurnIdentity }) {
+                return run
+            }
+            return nil
+        }
+        return notificationRun ?? inspectedRun ?? latestRun
+    }
+
+    public var turnNavigation: TurnNavigation {
+        let runs = selectedSessionRuns.isEmpty ? selectedRun.map { [$0] } ?? [] : selectedSessionRuns
+        return TurnNavigation(runs: runs, selectedIdentity: selectedTurnIdentity)
+    }
+
     public func markResultViewed(_ run: TaskRun?) {
-        guard let run, run.publication != nil, !viewedTurnIds.contains(run.id) else { return }
+        guard let run, run.publication != nil else { return }
+        unreadNotificationRuns.removeValue(forKey: run.id)
+        guard !viewedTurnIds.contains(run.id) else { return }
         viewedTurnIds.append(run.id)
         viewedTurnIds = Array(viewedTurnIds.suffix(200))
         readDefaults.set(viewedTurnIds, forKey: "viewedCompletedTurns")
@@ -67,11 +97,50 @@ public class OverlayState: ObservableObject {
     }
 
     public func loadMenuData() {
+        menuLoadGeneration += 1
+        let generation = menuLoadGeneration
         DispatchQueue.global(qos: .userInitiated).async {
-            let chats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 15)
+            let chats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 0)
             DispatchQueue.main.async {
-                self.recentChats = chats
+                guard generation == self.menuLoadGeneration else { return }
+                self.recentChats = Array(chats.prefix(15))
+                self.refreshSelectedSessionRuns(from: chats)
             }
+        }
+    }
+
+    private func refreshSelectedSessionRuns(from chats: [ChatSession]) {
+        guard let selected = selectedRun else {
+            selectedSessionRuns = []
+            return
+        }
+        let chat = chats.first { chat in
+            if let session = selected.sessionId { return chat.sessionId == session }
+            return chat.runs.contains { $0.id == selected.id }
+        }
+        var runs = chat?.runs ?? []
+        if let index = runs.firstIndex(where: { $0.id == selected.id }) {
+            // A completion snapshot can reach the UI before the directory query.
+            if (selected.publicationRevision ?? 0) > (runs[index].publicationRevision ?? 0) {
+                runs[index] = selected
+            }
+        } else {
+            runs.append(selected)
+        }
+        selectedTurnIdentity = selected.id
+        selectedSessionRuns = runs
+    }
+
+    public func moveTurn(by offset: Int) {
+        DispatchQueue.main.async {
+            let moved = self.turnNavigation.moved(by: offset)
+            guard let run = moved.currentRun, run.id != self.selectedRun?.id else { return }
+            self.notificationRun = nil
+            self.inspectedRun = run
+            self.selectedTurnIdentity = run.id
+            self.markResultViewed(run)
+            self.activeTab = .inspector
+            self.windowController?.updateWindowFrame(animated: true)
         }
     }
 
@@ -117,14 +186,23 @@ public class OverlayState: ObservableObject {
     }
 
     public func openLatest() {
-        jumpToLive()
+        let unread = unreadNotificationRuns.values.max {
+            let lhs = $0.publication?.completedAtMs ?? $0.finishedAtMs ?? $0.startedAtMs ?? 0
+            let rhs = $1.publication?.completedAtMs ?? $1.finishedAtMs ?? $1.startedAtMs ?? 0
+            return lhs == rhs ? $0.id < $1.id : lhs < rhs
+        }
+        if let unread {
+            inspect(run: unread)
+        } else {
+            jumpToLive()
+        }
         expand()
     }
 
     public func selectTab(_ tab: OverlayTab) {
         DispatchQueue.main.async {
             self.activeTab = tab
-            if tab == .inspector { self.markResultViewed(self.inspectedRun ?? self.latestRun) }
+            if tab == .inspector { self.markResultViewed(self.selectedRun) }
             if tab == .history {
                 self.loadHistory()
             } else if tab == .analytics {
@@ -138,9 +216,18 @@ public class OverlayState: ObservableObject {
         DispatchQueue.main.async {
             self.notificationRun = nil
             self.inspectedRun = run
+            self.selectedTurnIdentity = run.id
+            if let index = self.selectedSessionRuns.firstIndex(where: { $0.id == run.id }) {
+                if (run.publicationRevision ?? 0) >= (self.selectedSessionRuns[index].publicationRevision ?? 0) {
+                    self.selectedSessionRuns[index] = run
+                }
+            } else {
+                self.selectedSessionRuns = [run]
+            }
             self.markResultViewed(run)
             self.activeTab = .inspector
             self.windowController?.updateWindowFrame(animated: true)
+            self.loadMenuData()
         }
     }
 
@@ -148,9 +235,15 @@ public class OverlayState: ObservableObject {
         DispatchQueue.main.async {
             self.notificationRun = nil
             self.inspectedRun = nil
+            self.selectedTurnIdentity = self.latestRun?.id
+            if let latestRun = self.latestRun,
+               !self.selectedSessionRuns.contains(where: { $0.id == latestRun.id }) {
+                self.selectedSessionRuns = [latestRun]
+            }
             self.markResultViewed(self.latestRun)
             self.activeTab = .inspector
             self.windowController?.updateWindowFrame(animated: true)
+            self.loadMenuData()
         }
     }
 
@@ -180,18 +273,15 @@ public class OverlayState: ObservableObject {
         let search = searchQuery
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let chats = TelemetryQueryEngine.shared.fetchChatHistory(
-                limit: 60,
+            let runs = TelemetryQueryEngine.shared.fetchHistory(
+                limit: 0,
                 project: project,
                 todayOnly: todayOnly,
                 search: search
             )
             DispatchQueue.main.async {
                 guard generation == self.historyLoadGeneration else { return }
-                self.historyChats = chats
-                if self.expandedChatIds.isEmpty, let first = chats.first {
-                    self.expandedChatIds.insert(first.sessionId)
-                }
+                self.historyRuns = runs
             }
         }
     }
@@ -229,12 +319,35 @@ public class OverlayState: ObservableObject {
                 // completion IPC event.
                 self.publicationGate.seed(run)
             }
-            if decision.notify {
+            if let pending = self.unreadNotificationRuns[run.id] {
+                if (run.publicationRevision ?? 0) > (pending.publicationRevision ?? 0) {
+                    self.unreadNotificationRuns[run.id] = run
+                }
+            } else if decision.notify && !self.viewedTurnIds.contains(run.id) {
+                self.unreadNotificationRuns[run.id] = run
+            }
+            if decision.notify && !(self.isExpanded && self.inspectedRun != nil) {
                 self.notificationRun = run
+                self.selectedTurnIdentity = run.id
+                self.selectedSessionRuns = [run]
                 self.expand(notificationTriggered: true)
             }
-            guard decision.refresh else { return }
+            guard decision.refresh else {
+                if decision.notify { self.loadMenuData() }
+                return
+            }
             self.latestRun = run
+            if self.selectedTurnIdentity == nil {
+                self.selectedTurnIdentity = run.id
+                self.selectedSessionRuns = [run]
+            } else if self.selectedTurnIdentity == run.id {
+                if let index = self.selectedSessionRuns.firstIndex(where: { $0.id == run.id }) {
+                    self.selectedSessionRuns[index] = run
+                } else {
+                    self.selectedSessionRuns = [run]
+                }
+            }
+            self.loadMenuData()
             if self.activeTab == .history {
                 self.loadHistory()
             } else if self.activeTab == .analytics {
@@ -269,7 +382,7 @@ public struct OverlayRootView: View {
                     )
             } else {
                 BubbleView(state: state)
-                    .frame(width: 166, height: 76)
+                    .frame(width: OverlayCompactLayout.hostSize.width, height: OverlayCompactLayout.hostSize.height)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing)),
@@ -569,8 +682,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var pendingPresentationAnimated = true
     private var needsPointerReconciliationAfterGeometry = false
 
-    private let bubbleSize = NSSize(width: 166, height: 76)
-    static let summarySize = NSSize(width: 420, height: 650)
+    private let bubbleSize = OverlayCompactLayout.hostSize
+    static let summarySize = NSSize(width: 404, height: 660)
     private let snapMargin: CGFloat = 8.0
     private let snapThreshold: CGFloat = 36.0
 
@@ -811,7 +924,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Compact docking is visual-only. Capsule and docked tile share the same stationary
-    /// 166x76 host; no NSWindow frame is changed here.
+    /// compact host; no NSWindow frame is changed here.
     public func tuckBubble(animated: Bool = true) {
         guard !state.isExpanded,
               !state.isPinned,
