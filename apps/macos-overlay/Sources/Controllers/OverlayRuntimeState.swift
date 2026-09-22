@@ -71,9 +71,9 @@ struct OverlayRuntimeState {
 /// One geometry contract for the SwiftUI tile, window host and pointer filtering.
 enum OverlayCompactLayout {
     static let hostSize = NSSize(width: 128, height: 64)
-    static let petHostSize = NSSize(width: 128, height: 136)
+    static let petHostSize = NSSize(width: 128, height: 152)
     static let petSpriteSize = NSSize(width: 96, height: 104)
-    static let petContentSize = NSSize(width: 96, height: 122)
+    static let petContentSize = NSSize(width: 96, height: 138)
     static let tileSize = NSSize(width: 112, height: 48)
     static let dockedSize = NSSize(width: 36, height: 48)
     static let cornerRadius: CGFloat = 16

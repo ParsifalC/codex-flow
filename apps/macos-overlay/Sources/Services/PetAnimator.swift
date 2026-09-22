@@ -116,6 +116,12 @@ public final class PetAnimator: ObservableObject {
         publish()
     }
 
+    public func playCelebration() {
+        interruptBehavior()
+        reducer.playTransient(.jumping, repetitions: 3)
+        publish()
+    }
+
     public func playTransient(_ state: PetState) {
         interruptBehavior()
         reducer.playTransient(state)

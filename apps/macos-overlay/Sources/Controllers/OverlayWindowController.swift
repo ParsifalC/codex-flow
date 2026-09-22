@@ -73,6 +73,19 @@ public class OverlayState: ObservableObject {
         return !viewedTurnIds.contains(run.id)
     }
 
+    /// Use the same unread turn for the caption and its click destination.
+    public var petReminderRun: TaskRun? {
+        let pending = unreadNotificationRuns.values.max {
+            let lhs = $0.publication?.completedAtMs ?? $0.finishedAtMs ?? $0.startedAtMs ?? 0
+            let rhs = $1.publication?.completedAtMs ?? $1.finishedAtMs ?? $1.startedAtMs ?? 0
+            return lhs == rhs ? $0.id < $1.id : lhs < rhs
+        }
+        if let pending { return pending }
+        guard let run = latestRun, run.publication != nil,
+              !viewedTurnIds.contains(run.id) else { return nil }
+        return run
+    }
+
     public var selectedRun: TaskRun? {
         if let selectedTurnIdentity {
             if let run = selectedSessionRuns.first(where: { $0.id == selectedTurnIdentity }) {
@@ -234,7 +247,7 @@ public class OverlayState: ObservableObject {
         if celebratedPetTurnOrder.count > 512 {
             celebratedPetTurns.remove(celebratedPetTurnOrder.removeFirst())
         }
-        petAnimator.playTransient(.jumping)
+        petAnimator.playCelebration()
     }
 
     public func playTransient(_ state: PetState) {
@@ -373,11 +386,7 @@ public class OverlayState: ObservableObject {
     }
 
     public func openLatest() {
-        let unread = unreadNotificationRuns.values.max {
-            let lhs = $0.publication?.completedAtMs ?? $0.finishedAtMs ?? $0.startedAtMs ?? 0
-            let rhs = $1.publication?.completedAtMs ?? $1.finishedAtMs ?? $1.startedAtMs ?? 0
-            return lhs == rhs ? $0.id < $1.id : lhs < rhs
-        }
+        let unread = petReminderRun
         if let unread {
             inspect(run: unread)
         } else {

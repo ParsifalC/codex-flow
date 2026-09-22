@@ -249,12 +249,15 @@ public struct PetAnimationReducer {
         restartTask()
     }
 
-    public mutating func playTransient(_ state: PetState) {
+    public mutating func playTransient(_ state: PetState, repetitions: Int = 1) {
         guard state == .waving || state == .jumping || state == .failed else { return }
         guard (taskState != .waiting && taskState != .failed) || state == .failed else { return }
         guard dragDirection == nil else { return }
+        guard !(transientState == .jumping && state == .waving) else { return }
         transientState = state
-        playback = PetPlaybackCursor(timeline: .action(state, profile: profile))
+        let action = PetPlaybackTimeline.action(state, profile: profile)
+        let frames = Array(repeating: action.frames, count: min(3, max(1, repetitions))).flatMap { $0 }
+        playback = PetPlaybackCursor(timeline: PetPlaybackTimeline(frames: frames))
     }
 
     public mutating func beginDrag(direction: PetDragDirection) {

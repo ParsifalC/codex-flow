@@ -36,14 +36,9 @@ public struct BubbleView: View {
     private var petCompanion: some View {
         VStack(spacing: 4) {
             PetView(state: state, animator: state.petAnimator, reduceMotion: reduceMotion)
-            Text(state.latestRun.map { $0.totalTokens > 0 ? $0.formattedTotalTokens + " tokens" : "— tokens" } ?? "— tokens")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .shadow(color: .black.opacity(0.95), radius: 2, y: 1)
-                .shadow(color: .black.opacity(0.8), radius: 1)
-                .frame(height: 14)
+            PetCaptionView(run: state.latestRun, reminder: state.petReminderRun,
+                           privacy: state.isPrivacyMode, reduceMotion: reduceMotion)
+                .frame(height: 30)
         }
         .frame(width: OverlayCompactLayout.petContentSize.width, height: OverlayCompactLayout.petContentSize.height)
         .contentShape(Rectangle())
