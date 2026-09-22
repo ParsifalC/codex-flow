@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -41,6 +42,18 @@ OUTPUT_SCHEMAS = {
         },
     },
 }
+
+
+def normalize_skill(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate YAML metadata from validated structured fields, never model indentation."""
+    value = dict(result)
+    name = re.sub(r"[^a-z0-9-]+", "-", str(value.get("name", "")).lower()).strip("-")[:64].rstrip("-") or "conversation-skill"
+    description = str(value.get("description", ""))
+    body = str(value.get("markdown", "")).replace("\r\n", "\n").lstrip()
+    body = re.sub(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|$)", "", body, count=1, flags=re.DOTALL).lstrip()
+    value["name"] = name
+    value["markdown"] = "---\nname: %s\ndescription: %s\n---\n\n%s" % (json.dumps(name, ensure_ascii=False), json.dumps(description, ensure_ascii=False), body)
+    return value
 
 
 class ModelError(RuntimeError):
@@ -321,4 +334,4 @@ web_search = "disabled"
             return result
         result = {key: value[key] for key in ("name", "description", "markdown")}
         result["caveats"] = list(value["caveats"])
-        return result
+        return normalize_skill(result)

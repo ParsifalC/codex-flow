@@ -170,7 +170,8 @@ def _answer_text(payload: Dict[str, Any]) -> str:
             else:
                 value = answer
             if isinstance(value, str) and value:
-                pieces.append(value)
+                question = answer.get("question") if isinstance(answer, dict) else None
+                pieces.append("问题：%s\n回答：%s" % (question, value) if question else value)
         if pieces:
             return "\n".join(pieces)
     for key in ("answer", "response", "text"):
@@ -204,7 +205,8 @@ def _question_reply_text(text: str) -> Optional[str]:
         else:
             candidate = answer
         if isinstance(candidate, str) and candidate:
-            pieces.append(candidate)
+            question = answer.get("question") if isinstance(answer, dict) else None
+            pieces.append("问题：%s\n回答：%s" % (question, candidate) if question else candidate)
     return "\n".join(pieces) if pieces else None
 
 
@@ -228,8 +230,17 @@ def _parse_message(row: Dict[str, Any], raw_line: int, source_index: int) -> Opt
     payload_type = payload.get("type")
     if payload_type not in ("message", "send_user_message_question_reply"):
         return None
-    if payload.get("agent_id") or payload.get("agentId"):
-        return None
+    for carrier in (row, payload):
+        if carrier.get("agent_id") or carrier.get("agentId"):
+            return None
+        thread_source = carrier.get("thread_source")
+        if thread_source and thread_source != "user":
+            return None
+        source = carrier.get("source")
+        if isinstance(source, dict) and any(key in source for key in ("subagent", "agent_id", "agentId")):
+            return None
+        if isinstance(source, str) and source in ("subagent", "worker", "background-analysis"):
+            return None
     message_id = payload.get("id")
     if not _nonempty_string(message_id):
         raise SourceError("missing_message_id", line=raw_line)

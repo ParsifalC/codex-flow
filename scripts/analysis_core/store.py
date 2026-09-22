@@ -6,6 +6,8 @@ import os
 import sqlite3
 import tempfile
 import time
+
+from .model import normalize_skill
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -276,6 +278,10 @@ class AnalysisStore:
         rows = self._conn.execute("SELECT * FROM turns ORDER BY sequence, turn_id")
         return [dict(row) for row in rows]
 
+    def has_job(self, kind: str, source_id: str) -> bool:
+        key = "%s:%s:%s:%s" % (kind, self.session_id, source_id, ANALYZER_VERSION)
+        return self._conn.execute("SELECT 1 FROM jobs WHERE job_key=?", (key,)).fetchone() is not None
+
     def enqueue_job(
         self,
         kind: str,
@@ -387,6 +393,8 @@ class AnalysisStore:
         if not self.is_enabled():
             return None
         timestamp = now_ms()
+        self._conn.execute("UPDATE jobs SET status='failed', error='interrupted', lease_until=NULL, updated_at=? WHERE status='running' AND lease_until < ? AND attempts >= max_attempts", (timestamp, timestamp))
+        self._conn.commit()
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
@@ -420,6 +428,8 @@ class AnalysisStore:
             "UPDATE jobs SET status='pending', attempts=%s, lease_until=NULL, updated_at=? WHERE job_id=? AND status='running'" % attempts_sql,
             (now_ms(), str(job_id)),
         )
+        if preserve_attempts:
+            self._conn.execute("UPDATE jobs SET status='failed', error='interrupted' WHERE job_id=? AND status='pending' AND attempts>=max_attempts", (str(job_id),))
         self._conn.commit()
         self._write_snapshot()
 
@@ -546,11 +556,11 @@ class AnalysisStore:
         usage = self.get_meta("usage", {})
         turns: List[Dict[str, Any]] = []
         for row in self.turns():
-            requirement_coverage = self._job_coverage(row["requirement_job_id"])
-            summary_coverage = self._job_coverage(row["summary_job_id"])
             skills = []
             for job in self.jobs_for_turn(row["turn_id"], "skill"):
                 result = job.get("result") if isinstance(job.get("result"), dict) else {}
+                if job["status"] == "succeeded":
+                    result = normalize_skill(result)
                 coverage = job.get("input", {}).get("coverage") if isinstance(job.get("input"), dict) else None
                 skills.append(
                     {
@@ -561,6 +571,7 @@ class AnalysisStore:
                         "markdown": result.get("markdown"),
                         "coverage": coverage,
                         "error": job.get("error"),
+                        "caveats": result.get("caveats", []),
                     }
                 )
             turns.append(
@@ -568,21 +579,8 @@ class AnalysisStore:
                     "turn_id": row["turn_id"],
                     "sequence": row["sequence"],
                     "user_text": row["user_text"],
-                    "requirement": {
-                        "status": row["requirement_status"],
-                        "text": row["requirement_text"],
-                        "revision": row["requirement_revision"],
-                        "job_id": str(row["requirement_job_id"]) if row["requirement_job_id"] else None,
-                        "coverage": requirement_coverage,
-                        "error": row["requirement_error"],
-                    },
-                    "summary": {
-                        "status": row["summary_status"],
-                        "text": row["summary_text"],
-                        "job_id": str(row["summary_job_id"]) if row["summary_job_id"] else None,
-                        "coverage": summary_coverage,
-                        "error": row["summary_error"],
-                    },
+                    "requirement": self._analysis_state(row, "requirement"),
+                    "summary": self._analysis_state(row, "summary"),
                     "original_result": row["original_result"],
                     "skills": skills,
                 }
@@ -597,6 +595,24 @@ class AnalysisStore:
             "usage": usage if isinstance(usage, dict) else {},
             "turns": turns,
         }
+
+    def _analysis_state(self, row: Dict[str, Any], kind: str) -> Dict[str, Any]:
+        job = self.get_job(row[kind + "_job_id"]) or {}
+        expected = row["user_source_index" if kind == "requirement" else "final_source_index"]
+        stale = bool(job and expected is not None and job["source_index"] < expected)
+        status = "pending" if stale else job.get("status", row[kind + "_status"])
+        result = job.get("result") or {}
+        value = {
+            "status": status,
+            "text": result.get("text") if status == "succeeded" else None,
+            "job_id": str(job["job_id"]) if job and not stale else None,
+            "coverage": self._job_coverage(job.get("job_id")) if not stale else None,
+            "error": job.get("error") if not stale else None,
+            "caveats": result.get("caveats", []) if status == "succeeded" else [],
+        }
+        if kind == "requirement":
+            value["revision"] = job.get("source_index") if status == "succeeded" else None
+        return value
 
     def _job_coverage(self, job_id: Any) -> Optional[Dict[str, Any]]:
         if not job_id:

@@ -123,9 +123,9 @@ class TranscriptSourceTests(unittest.TestCase):
 
         parsed = parse_transcript(path, "session-a")
 
-        self.assertEqual(parsed.user_messages[0].text, "yes")
-        self.assertEqual(parsed.user_messages[1].text, "yes")
-        self.assertEqual(parsed.turns[0].user_text, "yes")
+        self.assertEqual(parsed.user_messages[0].text, "问题：q1\n回答：yes")
+        self.assertEqual(parsed.user_messages[1].text, "问题：q1\n回答：yes")
+        self.assertEqual(parsed.turns[0].user_text, "问题：q1\n回答：yes")
         self.assertEqual(parsed.coverage["status"], "partial")
         self.assertTrue(parsed.coverage["truncated"])
 

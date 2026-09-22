@@ -68,6 +68,7 @@ func printUsage() {
           show <#|id|session>       Inspect specific task in FlowPilot
           stats [days]              Open analytics dashboard with N days (default: 30)
           history, list             Open history task timeline
+          analysis-preview          Open the standalone conversation analysis preview
           update [path|json]        Push telemetry run update and expand
           help, -h                  Show this help message
         """,
@@ -90,6 +91,7 @@ func printUsage() {
           show <#|id|session>       查看指定任务
           stats [days]              打开 N 天统计面板（默认：30）
           history, list             打开历史任务列表
+          analysis-preview          打开独立对话分析预览窗口
           update [path|json]        推送遥测任务更新并展开
           help, -h                  显示帮助
         """
@@ -234,6 +236,17 @@ if args.isEmpty || args[0] == "start" || args[0] == "--daemon" || args[0] == "re
 } else {
     let cmd = args[0]
     switch cmd {
+    case "analysis-preview":
+        do {
+            try ConversationAnalysisPreviewApplication.run(arguments: Array(args.dropFirst()))
+            exit(0)
+        } catch {
+            writeStandardError(L(
+                "Could not open analysis preview: \(error.localizedDescription)\n",
+                "无法打开对话分析预览：\(error.localizedDescription)\n"
+            ))
+            exit(2)
+        }
     case "status":
         let wantsJSON = args.contains("--json")
         let res = IPCService.sendCommand("status")
