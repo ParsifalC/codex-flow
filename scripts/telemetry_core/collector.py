@@ -999,8 +999,8 @@ def _emit_publication(publication: PublicationResult, *, summary=False) -> None:
 def _refresh_quota_allocations(run: dict[str, Any], key: str) -> dict[str, Any]:
     """Recompute SQLite attribution and apply affected run fields via publication."""
     try:
-        from .quota_ledger import allocate_quota_segments, get_db
-        with get_db() as db_conn:
+        from .quota_ledger import allocate_quota_segments, db_session
+        with db_session() as db_conn:
             updates = allocate_quota_segments(db_conn, runs={key: run}, state_root=_common.STATE_ROOT)
         own = updates.get(key)
         if own:
@@ -1111,11 +1111,11 @@ def collect_hook(event: dict[str, Any]) -> None:
                     {**w, "sampled_at_ms": sample_time_before} for w in raw_before
                 ]
                 try:
-                    from .quota_ledger import get_db, record_observation, resolve_account_id
+                    from .quota_ledger import db_session, record_observation, resolve_account_id
                     resolved_account = resolve_account_id(event.get("account_id"))
                     for w in run["quota_before"]:
                         if w.get("window_duration_mins") == 10080 and isinstance(w.get("used_percent"), (int, float)):
-                            with get_db() as db_conn:
+                            with db_session() as db_conn:
                                 record_observation(
                                     conn=db_conn,
                                     account_id=resolved_account,
@@ -1330,8 +1330,8 @@ def collect_hook(event: dict[str, Any]) -> None:
             # to this already completed parent. Exact final evidence may arrive later.
             _refresh_quota_allocations(run, key)
             try:
-                from .quota_ledger import export_quota_summary, get_db
-                with get_db() as db_conn:
+                from .quota_ledger import db_session, export_quota_summary
+                with db_session() as db_conn:
                     export_quota_summary(db_conn)
             except Exception:
                 pass
@@ -1392,11 +1392,11 @@ def collect_hook(event: dict[str, Any]) -> None:
                 run.get("quota_before", []), quota_after
             )
             try:
-                from .quota_ledger import get_db, record_observation, export_quota_summary, resolve_account_id
+                from .quota_ledger import db_session, record_observation, export_quota_summary, resolve_account_id
                 resolved_account = resolve_account_id(event.get("account_id"))
                 for w in quota_after if run.get("quota_after_source") != "transcript_estimate" else []:
                     if w.get("window_duration_mins") == 10080 and isinstance(w.get("used_percent"), (int, float)):
-                        with get_db() as db_conn:
+                        with db_session() as db_conn:
                             record_observation(
                                 conn=db_conn,
                                 account_id=resolved_account,
@@ -1488,8 +1488,8 @@ def collect_hook(event: dict[str, Any]) -> None:
         run["finished_at_ms"] = completed if completed is not None else now_ms()
         _refresh_quota_allocations(run, key)
         try:
-            from .quota_ledger import export_quota_summary, get_db
-            with get_db() as db_conn:
+            from .quota_ledger import db_session, export_quota_summary
+            with db_session() as db_conn:
                 export_quota_summary(db_conn)
         except Exception:
             pass
