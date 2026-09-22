@@ -190,6 +190,11 @@ struct PetPlaybackCursor {
     let timeline: PetPlaybackTimeline
     private var index = 0
     private var elapsed = 0
+
+    init(timeline: PetPlaybackTimeline) {
+        self.timeline = timeline
+    }
+
     var isFinished: Bool { index == timeline.frames.count }
     private var frame: PetPlaybackFrame { timeline.frames[min(index, timeline.frames.count - 1)] }
     var state: PetState { frame.state }
