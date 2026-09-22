@@ -8,6 +8,7 @@ trap 'rm -rf "$FLOW_PET_BUILD"' EXIT
 export PET_FIXTURES_ROOT="$ROOT/tests/fixtures/pets"
 export CODEX_HOME="$FLOW_PET_BUILD/codex-home"
 
+
 swiftc \
   -framework Foundation \
   "$ROOT/apps/macos-overlay/Sources/Models/PetModels.swift" \
@@ -42,6 +43,12 @@ SWIFT_SOURCES=()
 while IFS= read -r -d '' file; do
   SWIFT_SOURCES+=("$file")
 done < <(find "$ROOT/apps/macos-overlay/Sources" -name '*.swift' ! -name main.swift -print0)
+
+swiftc -framework Cocoa -framework SwiftUI -framework Combine -framework ImageIO \
+  "${SWIFT_SOURCES[@]}" \
+  "$ROOT/apps/macos-overlay/Tests/PetCatalogTests.swift" \
+  -o "$FLOW_PET_BUILD/pet-catalog-tests"
+"$FLOW_PET_BUILD/pet-catalog-tests"
 
 swiftc \
   -framework Cocoa \

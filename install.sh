@@ -286,6 +286,9 @@ cp "$ROOT_DIR/templates/flow-pilot-instructions.md" "$STATE_DIR/flow-pilot-instr
 rm -rf "$STATE_DIR/strategies" "$STATE_DIR/telemetry_core"
 cp -r "$ROOT_DIR/scripts/strategies" "$STATE_DIR/strategies"
 cp -r "$ROOT_DIR/scripts/telemetry_core" "$STATE_DIR/telemetry_core"
+rm -rf "$STATE_DIR/pet_presets"
+cp -r "$ROOT_DIR/scripts/pet_presets" "$STATE_DIR/pet_presets"
+python3 "$STATE_DIR/pets.py" --home "$CODEX_HOME" seed
 chmod +x "$STATE_DIR/updater.py" "$STATE_DIR/telemetry.py" "$STATE_DIR/manage-hooks.py" "$STATE_DIR/manage-instructions.py" "$STATE_DIR/menu.py" "$STATE_DIR/localization.py" "$STATE_DIR/ui.py" "$STATE_DIR/pets.py" "$STATE_DIR/doctor.py" "$STATE_DIR/strategy_runtime.py"
 
 if [[ "$TELEMETRY_ENABLED" == "true" ]]; then python3 "$STATE_DIR/manage-hooks.py" install --hooks "$HOOKS" --script "$STATE_DIR/telemetry.py"; else python3 "$STATE_DIR/manage-hooks.py" uninstall --hooks "$HOOKS"; fi

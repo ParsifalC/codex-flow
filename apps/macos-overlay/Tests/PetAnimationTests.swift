@@ -172,6 +172,11 @@ struct PetAnimationTests {
         precondition(png.atlas.columns == 8 && png.atlas.rows == 11)
         precondition(png.atlas.frameSize == CGSize(width: 12, height: 13))
         precondition(png.atlas.frameCacheCountLimit == 48)
+        let thumbnail = try store.thumbnail(for: pngId)!
+        precondition(thumbnail.width <= 208 && thumbnail.height <= 208)
+        let thumbnailBytes = thumbnail.dataProvider!.data!
+        precondition(CFDataGetLength(thumbnailBytes) == thumbnail.width * thumbnail.height * 4,
+                     "Thumbnail must own only its small bitmap, not retain the full atlas")
         precondition(png.atlas.frameImage(for: .review, frame: 0)?.width == 12)
         precondition(png.atlas.frameImage(for: .review, frame: 0)?.height == 13)
 

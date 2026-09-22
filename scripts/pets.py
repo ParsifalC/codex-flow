@@ -34,6 +34,9 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 
+PRESET_IDS = ("dasheng", "deepseek", "doraemon", "lulu-capybara-2", "noir-webling")
+PRESET_ROOT = Path(__file__).resolve().with_name("pet_presets")
+
 PETDEX_SITE = "https://petdex.dev"
 PETDEX_REFERER = f"{PETDEX_SITE}/"
 ASSET_HOST = "assets.petdex.dev"
@@ -843,6 +846,44 @@ def install(source: str | os.PathLike[str], *, home: str | os.PathLike[str] | No
     return install_online(str(source), home=home)
 
 
+def seed_presets(home: str | os.PathLike[str] | None = None) -> None:
+    """Copy missing bundled packs offline without replacing user resources/choices."""
+    # Older distributions may not contain presets. Custom pets still work there.
+    if not PRESET_ROOT.exists():
+        return
+    paths = initialize_store(home)
+    with store_lock(paths):
+        _ensure_directory(paths.installed)
+        for identifier in PRESET_IDS:
+            target = paths.installed / identifier
+            if target.is_symlink() or (target.exists() and not target.is_dir()):
+                raise PetError(f"installed pet path is unsafe: {identifier}")
+            if target.exists():
+                continue
+            source = PRESET_ROOT / identifier
+            metadata, sprite, extension = _directory_package(source)
+            metadata = _normalized_metadata(metadata, identifier, f"spritesheet.{extension}")
+            sprite_geometry(sprite, metadata)
+            try:
+                provenance = json.loads(_bounded_read(source / "provenance.json", MAX_PET_JSON_BYTES, "preset provenance"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise PetError(f"bundled pet provenance is invalid: {identifier}") from exc
+            if not isinstance(provenance, dict) or provenance.get("sha256") != _digest(metadata, sprite):
+                raise PetError(f"bundled pet checksum mismatch: {identifier}")
+            stage = Path(tempfile.mkdtemp(prefix=f".{identifier}.", dir=str(paths.installed)))
+            try:
+                stage.rmdir()
+                _write_staged(stage, metadata, sprite, extension)
+                (stage / "provenance.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                os.replace(stage, target)
+            finally:
+                if stage.exists():
+                    shutil.rmtree(stage, ignore_errors=True)
+        # Absence means first launch. Explicit bubble/custom choices survive updates.
+        if not paths.current.exists():
+            _atomic_write_text(paths.current, "dasheng")
+
+
 def list_installed(home: str | os.PathLike[str] | None = None) -> list[dict[str, Any]]:
     paths = pet_paths(home)
     if paths.root.is_symlink():
@@ -859,8 +900,10 @@ def list_installed(home: str | os.PathLike[str] | None = None) -> list[dict[str,
         item = dict(metadata)
         item["id"] = target.name
         item["current"] = target.name == read_current(home)
+        item["preset"] = target.name in PRESET_IDS
+        item["packagePath"] = str(target.resolve())
         items.append(item)
-    return items
+    return sorted(items, key=lambda item: (PRESET_IDS.index(item["id"]) if item["id"] in PRESET_IDS else len(PRESET_IDS), item["id"]))
 
 
 def use_pet(identifier: str, *, home: str | os.PathLike[str] | None = None) -> dict[str, str]:
@@ -904,18 +947,27 @@ def main(argv: list[str] | None = None) -> int:
         if command == "install" and len(args) == 2:
             _print_result(install(args[1], home=home), "installed")
             return 0
-        if command == "list" and len(args) == 1:
+        if command == "seed" and len(args) == 1:
+            seed_presets(home)
+            return 0
+        if command == "list" and args[1:] in ([], ["--json"]):
+            seed_presets(home)
+            items = list_installed(home)
+            if args[1:] == ["--json"]:
+                print(json.dumps(items, ensure_ascii=False))
+                return 0
             current = read_current(home)
-            for item in list_installed(home):
+            for item in items:
                 marker = " *" if item["id"] == current else ""
                 print(f"{item['id']}\t{item.get('displayName', item['id'])}{marker}")
-            if not list_installed(home):
+            if not items:
                 print("default\tDefault")
             return 0
         if command == "use" and len(args) == 2:
+            seed_presets(home)
             _print_result(use_pet(args[1], home=home), "using")
             return 0
-        parser.error("expected: install <slug|petdex:slug|Petdex URL|local-dir|zip>, list, or use <id|default>")
+        parser.error("expected: install <slug|petdex:slug|Petdex URL|local-dir|zip>, list [--json], seed, or use <id|default>")
     except PetError as exc:
         print(f"codex-flow pets: {exc}", file=sys.stderr)
         return 1

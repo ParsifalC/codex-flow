@@ -1,0 +1,8 @@
+{
+  "provider": "petdex",
+  "slug": "doraemon",
+  "submittedBy": "korkyzer",
+  "petJsonUrl": "https://assets.petdex.dev/pets/doraemon-58b12a5012e0/petjson.json",
+  "spritesheetUrl": "https://assets.petdex.dev/pets/doraemon-58b12a5012e0/sprite.webp",
+  "sha256": "043bac1b99ca85ebd67a9b0ffd4912122bcaa979f1ca4891edf484f95d5cd24e"
+}

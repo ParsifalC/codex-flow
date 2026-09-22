@@ -283,6 +283,10 @@ Remove-Item (Join-Path $StateDir 'strategies') -Recurse -Force -ErrorAction Sile
 Remove-Item (Join-Path $StateDir 'telemetry_core') -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $RootDir 'scripts/strategies') (Join-Path $StateDir 'strategies') -Recurse -Force
 Copy-Item (Join-Path $RootDir 'scripts/telemetry_core') (Join-Path $StateDir 'telemetry_core') -Recurse -Force
+Remove-Item (Join-Path $StateDir 'pet_presets') -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $RootDir 'scripts/pet_presets') (Join-Path $StateDir 'pet_presets') -Recurse -Force
+& python3 (Join-Path $StateDir 'pets.py') --home $CodexHome seed
+if ($LASTEXITCODE -ne 0) { throw 'Could not install bundled pets' }
 if ($TelemetryEnabled -eq 'true') { & python3 (Join-Path $StateDir 'manage-hooks.py') install --hooks $Hooks --script (Join-Path $StateDir 'telemetry.py') }
 else { & python3 (Join-Path $StateDir 'manage-hooks.py') uninstall --hooks $Hooks }
 

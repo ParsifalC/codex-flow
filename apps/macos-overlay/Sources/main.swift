@@ -18,7 +18,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
 
         state = OverlayState()
-        _ = state.reloadPet()
+        state.reloadPetAsync { _ in }
+        state.seedPetPresetsOnStartup()
         windowController = OverlayWindowController(state: state)
         watcher = TelemetryWatcher(state: state)
         ipcServer = IPCService.Server(state: state)

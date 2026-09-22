@@ -164,6 +164,25 @@ public final class PetResourceStore {
     public private(set) var currentResource: PetResource?
     public private(set) var lastSelectionID: String = "default"
 
+    // Settings can render five choices at once. Keep the first idle frame in
+    // a process-wide cache so SwiftUI body recomputation does not decode the
+    // full atlas again for every row. The atlas itself remains private to the
+    // validated resource loader below.
+    private final class CachedThumbnail: NSObject {
+        let image: CGImage
+
+        init(_ image: CGImage) {
+            self.image = image
+        }
+    }
+
+    private static let thumbnailCache: NSCache<NSString, CachedThumbnail> = {
+        let cache = NSCache<NSString, CachedThumbnail>()
+        cache.countLimit = 48
+        cache.totalCostLimit = 16 * 1024 * 1024
+        return cache
+    }()
+
     public init(codexHome: URL? = nil) {
         if let codexHome {
             self.codexHome = codexHome
@@ -189,6 +208,40 @@ public final class PetResourceStore {
             currentResource = nil
             return .rejected(error.localizedDescription)
         }
+    }
+
+    /// Return the validated idle frame used by the settings picker.
+    ///
+    /// The package path is resolved from the managed installed directory and
+    /// never from UI supplied metadata. This keeps previews subject to the
+    /// same path, symlink, metadata, and atlas checks as the active resource.
+    public func thumbnail(for id: String) throws -> CGImage? {
+        guard id != "default" else { return nil }
+        let packageURL = petRoot.appendingPathComponent("installed").appendingPathComponent(id)
+        let metadataURL = packageURL.appendingPathComponent("pet.json")
+        let timestamp = (try? metadataURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let key = "\(codexHome.standardizedFileURL.path):\(id):\(timestamp)" as NSString
+        if let cached = Self.thumbnailCache.object(forKey: key) {
+            return cached.image
+        }
+        let resource = try loadPackage(id: id)
+        guard let image = resource.atlas.frameImage(for: .idle, frame: 0) else {
+            return nil
+        }
+        // A cropped CGImage may retain its full atlas backing. Draw into a
+        // small independent bitmap before caching so the memory cost is real.
+        let scale = min(1.0, 208.0 / Double(max(image.width, image.height)))
+        let width = max(1, Int(Double(image.width) * scale))
+        let height = max(1, Int(Double(image.height) * scale))
+        guard let context = CGContext(data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let thumbnail = context.makeImage() else { return nil }
+        Self.thumbnailCache.setObject(CachedThumbnail(thumbnail), forKey: key, cost: width * height * 4)
+        return thumbnail
     }
 
     private var petRoot: URL {

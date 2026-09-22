@@ -966,7 +966,7 @@ def _snapshot(current: str) -> Path:
         if path.exists():
             shutil.copy2(path, managed / name)
     atomic_write_json(managed / "instructions-presence.json", instruction_presence)
-    for name in ("strategies", "telemetry_core"):
+    for name in ("strategies", "telemetry_core", "pet_presets"):
         path = _state_dir() / name
         if path.exists():
             shutil.copytree(path, managed / name)
@@ -1143,7 +1143,7 @@ def _sync_managed_runtime(package_root: Path) -> None:
         src = scripts / name
         if src.exists():
             _atomic_copy(src, state / name, executable=True)
-    for name in ("strategies", "telemetry_core"):
+    for name in ("strategies", "telemetry_core", "pet_presets"):
         src = scripts / name
         if src.exists():
             _replace_dir(src, state / name)
@@ -1295,7 +1295,7 @@ def _ensure_current_version_package(version: str) -> Path | None:
                 src = _state_dir() / name
                 if src.exists():
                     shutil.copy2(src, scripts / name)
-            for name in ("strategies", "telemetry_core"):
+            for name in ("strategies", "telemetry_core", "pet_presets"):
                 src = _state_dir() / name
                 if src.exists():
                     shutil.copytree(src, scripts / name)

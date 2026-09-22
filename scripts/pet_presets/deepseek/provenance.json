@@ -1,0 +1,8 @@
+{
+  "provider": "petdex",
+  "slug": "deepseek",
+  "submittedBy": "fightingshine",
+  "petJsonUrl": "https://assets.petdex.dev/pets/deepseek-c3fa684cfe03/petjson.json",
+  "spritesheetUrl": "https://assets.petdex.dev/pets/deepseek-c3fa684cfe03/sprite.webp",
+  "sha256": "da8760cfc1f33540c5b5f17d193c962b8489fca5681ea88586bede5c0df964cc"
+}

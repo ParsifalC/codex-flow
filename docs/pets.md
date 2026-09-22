@@ -1,6 +1,8 @@
 # 给悬浮按钮换一个宠物
 
-在 [Petdex](https://petdex.dev) 挑一个宠物，复制它的名称，然后运行：
+首次安装默认显示 **Dasheng**。打开浮窗详情 → 账户 → 偏好设置 → 宠物，即可预览和切换 Dasheng、deepseek、doraemon、lulu-capybara-2、noir-webling。五只预设随应用提供，切换无需联网；已有自定义宠物也会显示在这里。更新不会覆盖你保存的选择。
+
+想增加其他宠物，可以在 [Petdex](https://petdex.dev) 挑一个宠物，复制它的名称，然后运行：
 
 ```bash
 codex-flow pets install boba
@@ -20,7 +22,7 @@ codex-flow overlay start
 codex-flow pets install petdex:boba  # 明确指定 Petdex 来源
 codex-flow pets list                # 查看已安装宠物，* 表示当前选择
 codex-flow pets use boba            # 切换到已安装宠物，无需联网
-codex-flow pets use default         # 恢复默认形象，保留已安装资源
+codex-flow pets use default         # 切回原来的悬浮球，保留已安装资源
 ```
 
 重复安装相同内容会启用已有资源；同名但内容不同的包会被拒绝，不会覆盖旧文件。

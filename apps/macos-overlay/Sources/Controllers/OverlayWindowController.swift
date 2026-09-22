@@ -59,6 +59,7 @@ public class OverlayState: ObservableObject {
 
     private let readDefaults: UserDefaults
     private let petStore: PetResourceStore
+    private var hasStartedPetPresetSeeding = false
     private var petWindowVisible = false
     private var celebratedPetTurns: Set<String> = []
     private var celebratedPetTurnOrder: [String] = []
@@ -110,22 +111,69 @@ public class OverlayState: ObservableObject {
         petActivityConsumer.recover()
     }
 
+    private var petReloadGeneration = 0
+
+    /// Ensure bundled presets are installed when the native app starts. The
+    /// CLI owns seeding and current-selection persistence; native startup only
+    /// asks it to reconcile and then reloads the validated selection.
+    public func seedPetPresetsOnStartup() {
+        guard !hasStartedPetPresetSeeding else { return }
+        hasStartedPetPresetSeeding = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try PetCatalogService.list()
+            } catch {
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.reloadPetAsync { _ in }
+            }
+        }
+    }
+
     /// Reload the selected native pet after the installer atomically replaces
-    /// its package/current files. ImageIO work runs off the main queue; Swift
-    /// never writes the selection.
+    /// its package/current files. Kept synchronous for IPC acknowledgements;
+    /// interactive views and startup use reloadPetAsync. Swift never writes selection.
     @discardableResult
     public func reloadPet() -> PetReloadOutcome {
         if !Thread.isMainThread {
             return DispatchQueue.main.sync { reloadPet() }
         }
+        petReloadGeneration += 1
+        let result = petStore.reload()
+        return applyPetReload(result, selectedID: petStore.lastSelectionID)
+    }
+
+    /// Decode on a background queue so selecting an atlas never blocks UI work.
+    public func reloadPetAsync(completion: @escaping (PetReloadOutcome) -> Void) {
+        precondition(Thread.isMainThread)
+        petReloadGeneration += 1
+        let generation = petReloadGeneration
+        let home = petStore.codexHome
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let store = PetResourceStore(codexHome: home)
+            let result = store.reload()
+            let selectedID = store.lastSelectionID
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard generation == self.petReloadGeneration else {
+                    completion(PetReloadOutcome(accepted: false, selectedID: selectedID,
+                        error: L("Pet selection changed. Please retry.", "宠物选择已更新，请重试。")))
+                    return
+                }
+                completion(self.applyPetReload(result, selectedID: selectedID))
+            }
+        }
+    }
+
+    private func applyPetReload(_ result: PetResourceLoadResult, selectedID: String) -> PetReloadOutcome {
         let previousSize = compactSize
         defer {
             petAnimator.setAutonomyEnabled(petResource != nil)
             if petResource != nil { isDocked = false }
             if compactSize != previousSize { windowController?.updateWindowFrame(animated: false) }
-        }
-        let result = DispatchQueue.global(qos: .userInitiated).sync {
-            petStore.reload()
         }
         switch result {
         case .builtIn:
@@ -136,7 +184,7 @@ public class OverlayState: ObservableObject {
             return PetReloadOutcome(accepted: true, selectedID: resource.id)
         case .rejected(let error):
             petResource = nil
-            return PetReloadOutcome(accepted: false, selectedID: petStore.lastSelectionID, error: error)
+            return PetReloadOutcome(accepted: false, selectedID: selectedID, error: error)
         }
     }
 

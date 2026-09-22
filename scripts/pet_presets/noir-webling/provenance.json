@@ -1,0 +1,8 @@
+{
+  "provider": "petdex",
+  "slug": "noir-webling",
+  "submittedBy": "railly",
+  "petJsonUrl": "https://assets.petdex.dev/curated/noir-webling/pet.json",
+  "spritesheetUrl": "https://assets.petdex.dev/curated/noir-webling/spritesheet.webp",
+  "sha256": "6722613e73219234c1f08781209268d239961cb3d33f3ee7cebb68b0566f40ee"
+}

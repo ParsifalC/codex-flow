@@ -326,3 +326,83 @@ def test_selection_file_directory_is_rejected_without_raw_os_error(tmp_path: Pat
 
     with pytest.raises(pets.PetError, match="managed path"):
         pets.use_pet("default", home=home)
+
+
+@pytest.fixture
+def preset_bundle(tmp_path, monkeypatch):
+    bundle = tmp_path / "bundled"
+    for identifier in pets.PRESET_IDS:
+        pack = write_pack(bundle / identifier, pet_id=identifier, display=identifier)
+        metadata, sprite, _ = pets._directory_package(pack)
+        (pack / "provenance.json").write_text(json.dumps({"provider": "petdex", "sha256": pets._digest(metadata, sprite)}))
+    monkeypatch.setattr(pets, "PRESET_ROOT", bundle)
+    return bundle
+
+
+def test_seed_offline_presets_defaults_to_dasheng_and_is_idempotent(tmp_path, preset_bundle, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(pets, "download_bytes", lambda *a, **k: pytest.fail("preset seeding must be offline"))
+    pets.seed_presets(home)
+    assert pets.read_current(home) == "dasheng"
+    installed = pets.pet_paths(home).installed
+    mtimes = {p.name: p.stat().st_mtime_ns for p in installed.iterdir()}
+    pets.seed_presets(home)
+    assert {p.name: p.stat().st_mtime_ns for p in installed.iterdir()} == mtimes
+    assert set(mtimes) == set(pets.PRESET_IDS)
+
+
+@pytest.mark.parametrize("selected", ["default", "local-boba", "deepseek"])
+def test_seed_preserves_explicit_selection_and_existing_resource(tmp_path, preset_bundle, selected):
+    home = tmp_path / "home"
+    pets.install_local(write_pack(tmp_path / "custom"), home=home)
+    paths = pets.pet_paths(home)
+    paths.current.write_text(selected)
+    write_pack(paths.installed / "deepseek", pet_id="deepseek", display="User version")
+    pets.seed_presets(home)
+    assert pets.read_current(home) == selected
+    assert json.loads((paths.installed / "deepseek/pet.json").read_text())["displayName"] == "User version"
+
+
+def test_json_list_seeds_and_exposes_settings_metadata(tmp_path, preset_bundle, capsys):
+    home = tmp_path / "home"
+    assert pets.main(["--home", str(home), "list", "--json"]) == 0
+    items = json.loads(capsys.readouterr().out)
+    assert items[0]["id"] == "dasheng"
+    assert len(items) == 5
+    assert all(item["preset"] for item in items)
+    assert [item["id"] for item in items if item["current"]] == ["dasheng"]
+    assert all(Path(item["packagePath"]).is_absolute() for item in items)
+    assert pets.main(["--home", str(home), "use", "noir-webling"]) == 0
+    assert pets.read_current(home) == "noir-webling"
+
+
+def test_seed_rejects_symlink_without_touching_external_files(tmp_path, preset_bundle):
+    home = tmp_path / "home"
+    paths = pets.initialize_store(home)
+    external = tmp_path / "external"
+    external.mkdir()
+    paths.installed.symlink_to(external, target_is_directory=True)
+    with pytest.raises(pets.PetError, match="symlink"):
+        pets.seed_presets(home)
+    assert not list(external.iterdir())
+
+
+def test_actual_bundled_presets_are_valid_and_complete():
+    assert {p.name for p in pets.PRESET_ROOT.iterdir() if p.is_dir()} == set(pets.PRESET_IDS)
+    for identifier in pets.PRESET_IDS:
+        metadata, sprite, extension = pets._directory_package(pets.PRESET_ROOT / identifier)
+        assert metadata["id"] == identifier
+        pets.sprite_geometry(sprite, metadata)
+        origin = json.loads((pets.PRESET_ROOT / identifier / "provenance.json").read_text())
+        assert origin["provider"] == "petdex"
+        assert origin["sha256"] == pets._digest(metadata, sprite)
+
+
+@pytest.mark.parametrize("provenance", ["[]", "broken", '{"sha256": "wrong"}'])
+def test_seed_rejects_damaged_bundle_before_selecting(tmp_path, preset_bundle, provenance):
+    (preset_bundle / "dasheng/provenance.json").write_text(provenance)
+    home = tmp_path / "home"
+    with pytest.raises(pets.PetError, match="bundled pet"):
+        pets.seed_presets(home)
+    assert not pets.pet_paths(home).current.exists()
+    assert not (pets.pet_paths(home).installed / "dasheng").exists()

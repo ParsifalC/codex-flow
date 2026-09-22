@@ -152,6 +152,10 @@ class UpdaterTest(unittest.TestCase):
         (package / "scripts").mkdir(parents=True)
         (package / "scripts" / "pets.py").write_text("# pet dispatcher\n", encoding="utf-8")
         (self.state / "pets.py").write_text("# old pet dispatcher\n", encoding="utf-8")
+        (package / "scripts/pet_presets/dasheng").mkdir(parents=True)
+        (package / "scripts/pet_presets/dasheng/pet.json").write_text("new bundle")
+        (self.state / "pet_presets/dasheng").mkdir(parents=True)
+        (self.state / "pet_presets/dasheng/pet.json").write_text("old bundle")
 
         backup = updater._snapshot("1.7.0")
         updater._sync_managed_runtime(package)
@@ -161,6 +165,8 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual((self.state / "pets" / "installed" / "local-boba" / "pet.json").read_text(encoding="utf-8"), '{"id":"local-boba"}\n')
         self.assertEqual((self.state / "pets" / "pets.py").exists(), False)
         self.assertEqual((self.state / "pets.py").read_text(encoding="utf-8"), "# pet dispatcher\n")
+        self.assertEqual((backup / "managed/pet_presets/dasheng/pet.json").read_text(), "old bundle")
+        self.assertEqual((self.state / "pet_presets/dasheng/pet.json").read_text(), "new bundle")
 
     def test_perform_update_from_local_release_artifact(self) -> None:
         agents = self.codex_home / "AGENTS.md"
@@ -470,6 +476,9 @@ class UpdaterTest(unittest.TestCase):
 
     def test_release_package_keeps_runtime_dependencies(self) -> None:
         linux = {path.relative_to(ROOT).as_posix() for path in packager.iter_files("linux-x86_64")}
+        for identifier in ("dasheng", "deepseek", "doraemon", "lulu-capybara-2", "noir-webling"):
+            self.assertIn(f"scripts/pet_presets/{identifier}/pet.json", linux)
+            self.assertIn(f"scripts/pet_presets/{identifier}/spritesheet.webp", linux)
         self.assertIn("benchmark/corpus.json", linux)
         self.assertIn("apps/chatgpt-mcp/server.py", linux)
         self.assertNotIn("apps/macos-overlay/build.sh", linux)
