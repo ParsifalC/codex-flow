@@ -1,93 +1,107 @@
 import Foundation
 
-/// Local personality only: these poses never change task/telemetry state.
-/// Each shuffled bag contains every scene, so rare rows do not need rare hooks.
+/// Autonomous scenes use the same frame cursor as interactions. Every shuffled
+/// bag contains seven independent intentions, reaching all nine atlas rows.
 struct PetBehavior {
-    private struct Step {
-        let state: PetState
-        let duration: Int
-        var from: Double = 0
-        var to: Double = 0
+    private enum Scene: CaseIterable {
+        case wave, jump, wait, fail, review, frontRun, wander
+        func timeline(profile: PetPlaybackProfile) -> PetPlaybackTimeline {
+            switch self {
+            case .wave: return .action(.waving, profile: profile)
+            case .jump: return .action(.jumping, profile: profile)
+            case .wait: return .action(.waiting, profile: profile)
+            case .fail: return .action(.failed, profile: profile)
+            case .review: return .action(.review, profile: profile)
+            case .frontRun: return .action(.running, profile: profile)
+            case .wander: return .wandering(profile: profile)
+            }
+        }
     }
-    private static let scenes: [[Step]] = [
-        [Step(state: .runningLeft, duration: 1060, to: -10),
-         Step(state: .idle, duration: 400, from: -10, to: -10),
-         Step(state: .runningRight, duration: 1060, from: -10)],
-        [Step(state: .review, duration: 2060), Step(state: .running, duration: 1640)],
-        [Step(state: .waiting, duration: 2020), Step(state: .failed, duration: 1220)],
-        [Step(state: .jumping, duration: 840), Step(state: .waving, duration: 700),
-         Step(state: .idle, duration: 500)]
-    ]
-    private var random: UInt64
-    private var bag: [Int] = []
-    private var previousScene: Int?
-    private var scene: Int?
-    private var stepIndex = 0
-    private var elapsed = 0
-    private var quietRemaining = 4_000
-    private(set) var state: PetState = .idle
-    private(set) var offset: Double = 0
+    private var random: PetPlaybackRandom
+    private var profile: PetPlaybackProfile
+    private var bag: [Scene] = []
+    private var previousScene: Scene?
+    private var scene: Scene?
+    private var playback: PetPlaybackCursor
+    var state: PetState { playback.state }
+    var frameIndex: Int { playback.frameIndex }
+    var offset: Double { playback.offset }
     var isPerforming: Bool { scene != nil }
 
-    init(seed: UInt64 = UInt64.random(in: 1...UInt64.max)) { random = seed }
+    init(seed: UInt64 = UInt64.random(in: 1...UInt64.max), profile: PetPlaybackProfile = PetPlaybackProfile()) {
+        random = PetPlaybackRandom(seed: seed)
+        self.profile = profile
+        // The first complete idle cycle and neutral dwell total 4.1 seconds.
+        playback = PetPlaybackCursor(timeline: .idle(dwell: 3_000))
+    }
+
+    mutating func configure(profile: PetPlaybackProfile) {
+        self.profile = profile
+        bag = []
+        previousScene = nil
+        interrupt(initialDelay: true)
+    }
 
     mutating func interrupt(initialDelay: Bool = false) {
         scene = nil
-        stepIndex = 0
-        elapsed = 0
-        state = .idle
-        offset = 0
-        quietRemaining = initialDelay ? 4_000 : 15_000 + Int(nextRandom() % 15_001)
+        playback = initialDelay
+            ? PetPlaybackCursor(timeline: .idle(dwell: 3_000)) : quietPlayback()
     }
 
     mutating func advance(by milliseconds: Int) {
         var remaining = max(0, milliseconds)
         while remaining > 0 {
-            guard let scene else {
-                let delta = min(remaining, quietRemaining)
-                quietRemaining -= delta
-                remaining -= delta
-                if quietRemaining == 0 { startScene() }
-                continue
-            }
-            let step = Self.scenes[scene][stepIndex]
-            let delta = min(remaining, step.duration - elapsed)
-            elapsed += delta
-            remaining -= delta
-            offset = step.from + (step.to - step.from) * Double(elapsed) / Double(step.duration)
-            if elapsed == step.duration {
-                stepIndex += 1
-                elapsed = 0
-                if stepIndex == Self.scenes[scene].count {
-                    interrupt()
-                } else {
-                    let next = Self.scenes[scene][stepIndex]
-                    state = next.state
-                    offset = next.from
-                }
+            remaining = playback.advance(by: remaining)
+            guard playback.isFinished else { return }
+            if scene != nil {
+                scene = nil
+                playback = quietPlayback()
+            } else {
+                startScene()
             }
         }
     }
 
+    /// Partition the chosen quiet interval into whole idle cycles and 3–6s
+    /// neutral rests. Fit the last rest in advance instead of cutting a cycle
+    /// short when an unrelated scene deadline expires.
+    private mutating func quietPlayback() -> PetPlaybackCursor {
+        let quietDuration = random.next(profile.quietRange)
+        let idle = PetPlaybackTimeline.cycle(.idle)
+        let minimum = idle.duration + profile.idleRange.lowerBound
+        let maximum = idle.duration + profile.idleRange.upperBound
+        var choices: [(Int, ClosedRange<Int>)] = []
+        for count in 1...(quietDuration / minimum) {
+            let low = max(profile.idleRange.lowerBound, quietDuration - count * maximum)
+            let high = min(profile.idleRange.upperBound, quietDuration - count * minimum)
+            if low <= high { choices.append((count, low...high)) }
+        }
+        let (count, firstRestRange) = choices[random.next(0...(choices.count - 1))]
+        let firstRest = random.next(firstRestRange)
+        var remaining = quietDuration - firstRest
+        var frames = [PetPlaybackFrame(state: .idle, frameIndex: 0, duration: firstRest)]
+        for cyclesLeft in stride(from: count, through: 1, by: -1) {
+            let low = max(minimum, remaining - (cyclesLeft - 1) * maximum)
+            let high = min(maximum, remaining - (cyclesLeft - 1) * minimum)
+            let duration = random.next(low...high)
+            frames += idle.frames
+            frames.append(PetPlaybackFrame(state: .idle, frameIndex: 0, duration: duration - idle.duration))
+            remaining -= duration
+        }
+        return PetPlaybackCursor(timeline: PetPlaybackTimeline(frames: frames))
+    }
+
     private mutating func startScene() {
         if bag.isEmpty {
-            bag = Array(Self.scenes.indices)
+            bag = Scene.allCases
             for index in stride(from: bag.count - 1, through: 1, by: -1) {
-                bag.swapAt(index, Int(nextRandom() % UInt64(index + 1)))
+                bag.swapAt(index, random.next(0...index))
             }
             if bag.last == previousScene { bag.swapAt(0, bag.count - 1) }
         }
         let selected = bag.removeLast()
         previousScene = selected
         scene = selected
-        stepIndex = 0
-        elapsed = 0
-        state = Self.scenes[selected][0].state
-        offset = 0
-    }
-
-    private mutating func nextRandom() -> UInt64 {
-        random = random &* 6364136223846793005 &+ 1442695040888963407
-        return random
+        playback = PetPlaybackCursor(timeline: selected.timeline(profile: profile))
     }
 }

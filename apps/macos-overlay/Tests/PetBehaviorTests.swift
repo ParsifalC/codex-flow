@@ -4,7 +4,7 @@ import Foundation
     static func main() {
         var behavior = PetBehavior(seed: 42)
         var seen: Set<PetState> = [.idle]
-        for _ in 0..<12_000 {
+        for _ in 0..<18_000 {
             behavior.advance(by: 20)
             seen.insert(behavior.state)
             precondition(abs(behavior.offset) <= 10.001, "Local wandering must stay bounded")
@@ -13,14 +13,14 @@ import Foundation
         precondition(seen == Set(PetState.allCases), "Every row must occur without input or task events")
         behavior.interrupt()
         precondition(behavior.state == .idle && behavior.offset == 0)
-        behavior.advance(by: 14_999)
-        precondition(!behavior.isPerforming, "Quiet intervals must last at least15seconds")
+        behavior.advance(by: 19_999)
+        precondition(!behavior.isPerforming, "Quiet intervals must last at least 20 seconds")
 
         let unattended = PetAnimator(behaviorSeed: 42)
         unattended.setAutonomyEnabled(true)
         unattended.setVisibility(visible: true, expanded: false, reduceMotion: false)
         var rendered: Set<PetState> = []
-        for _ in 0..<12_000 {
+        for _ in 0..<18_000 {
             unattended.advance(by: 20)
             rendered.insert(unattended.state)
             precondition(abs(unattended.horizontalOffset) <= 10.001)

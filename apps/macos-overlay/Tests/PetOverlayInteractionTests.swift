@@ -94,7 +94,7 @@ struct PetOverlayInteractionTests {
         let beforeLive = state.petAnimator.frameIndex
         _ = state.handlePetActivity(completed)
         precondition(state.petAnimator.frameIndex == beforeLive, "Live completion arriving second must not restart the publication jump")
-        state.petAnimator.advance(by: 1_000)
+        state.petAnimator.advance(by: 2_000)
         precondition(state.petAnimator.state == .idle)
         state.update(run: result, notificationTriggered: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
@@ -108,7 +108,7 @@ struct PetOverlayInteractionTests {
         state.update(run: secondRun, notificationTriggered: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         precondition(state.petAnimator.frameIndex > 0, "Publication arriving second must not restart the live jump")
-        state.petAnimator.advance(by: 1_000)
+        state.petAnimator.advance(by: 2_000)
         precondition(state.petAnimator.state == .idle)
 
         try Data("../synthetic-v2".utf8).write(to: current)

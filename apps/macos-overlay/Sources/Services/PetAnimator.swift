@@ -11,11 +11,10 @@ public final class PetAnimator: ObservableObject {
     @Published public private(set) var horizontalOffset: Double = 0
     public private(set) var isPlayingAutonomously = false
     private var behavior: PetBehavior
-    private var autonomousReducer = PetAnimationReducer()
+    private var usingBehavior = false
     private var autonomyEnabled = false
     private var pointerHeld = false
     private var dragging = false
-    private var interactionRemaining = 0
     private var visibleMilliseconds = 0
     private var lastHoverMilliseconds = -8_000
     private var reducer = PetAnimationReducer()
@@ -27,6 +26,21 @@ public final class PetAnimator: ObservableObject {
 
     public init(behaviorSeed: UInt64 = UInt64.random(in: 1...UInt64.max)) {
         behavior = PetBehavior(seed: behaviorSeed)
+        reducer = PetAnimationReducer(seed: behaviorSeed)
+    }
+
+    /// Called only after a resource has been validated and loaded. Unknown IDs
+    /// receive the generic profile; changing pets clears old finite gestures.
+    public func configure(resourceID: String) {
+        let profile = PetPlaybackProfile(resourceID: resourceID)
+        reducer.configure(profile: profile)
+        behavior.configure(profile: profile)
+        pointerHeld = false
+        dragging = false
+        lastHoverMilliseconds = visibleMilliseconds - 8_000
+        usingBehavior = false
+        isPlayingAutonomously = false
+        publish()
     }
 
     public func setAutonomyEnabled(_ enabled: Bool) {
@@ -55,7 +69,7 @@ public final class PetAnimator: ObservableObject {
 
     private func interruptBehavior(initialDelay: Bool = false) {
         behavior.interrupt(initialDelay: initialDelay)
-        autonomousReducer.clear()
+        usingBehavior = false
         isPlayingAutonomously = false
         horizontalOffset = 0
     }
@@ -98,7 +112,6 @@ public final class PetAnimator: ObservableObject {
 
     public func setTaskState(_ state: PetState, preservingTransient: Bool = false) {
         interruptBehavior()
-        if !preservingTransient { interactionRemaining = 0 }
         reducer.setTaskState(state, preservingTransient: preservingTransient)
         publish()
     }
@@ -106,7 +119,6 @@ public final class PetAnimator: ObservableObject {
     public func playTransient(_ state: PetState) {
         interruptBehavior()
         reducer.playTransient(state)
-        interactionRemaining = PetAnimationTable.definition(for: state).frames.reduce(0) { $0 + $1.durationMilliseconds }
         publish()
     }
 
@@ -125,7 +137,6 @@ public final class PetAnimator: ObservableObject {
     }
 
     public func clear() {
-        interactionRemaining = 0
         interruptBehavior()
         reducer.clear()
         publish()
@@ -141,14 +152,11 @@ public final class PetAnimator: ObservableObject {
             remaining -= delta
             visibleMilliseconds += delta
             reducer.advance(by: delta)
-            interactionRemaining = max(0, interactionRemaining - delta)
             let autonomous = autonomyEnabled && reducer.taskState == .idle
-                && !pointerHeld && !dragging && interactionRemaining == 0
+                && !pointerHeld && !dragging && !reducer.isPlayingTransient
+            usingBehavior = autonomous
             if autonomous {
-                let previous = behavior.state
                 behavior.advance(by: delta)
-                if previous != behavior.state { autonomousReducer.setTaskState(behavior.state) }
-                autonomousReducer.advance(by: delta)
                 isPlayingAutonomously = behavior.isPerforming
             } else {
                 isPlayingAutonomously = false
@@ -180,8 +188,8 @@ public final class PetAnimator: ObservableObject {
     }
 
     private func publish() {
-        state = isPlayingAutonomously ? autonomousReducer.state : reducer.state
-        frameIndex = isPlayingAutonomously ? autonomousReducer.frameIndex : reducer.frameIndex
+        state = usingBehavior ? behavior.state : reducer.state
+        frameIndex = usingBehavior ? behavior.frameIndex : reducer.frameIndex
         horizontalOffset = isPlayingAutonomously ? behavior.offset : 0
     }
 }

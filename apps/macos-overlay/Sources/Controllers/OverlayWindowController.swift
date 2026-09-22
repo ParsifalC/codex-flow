@@ -171,6 +171,7 @@ public class OverlayState: ObservableObject {
     private func applyPetReload(_ result: PetResourceLoadResult, selectedID: String) -> PetReloadOutcome {
         let previousSize = compactSize
         defer {
+            petAnimator.configure(resourceID: petResource?.id ?? "default")
             petAnimator.setAutonomyEnabled(petResource != nil)
             if petResource != nil { isDocked = false }
             if compactSize != previousSize { windowController?.updateWindowFrame(animated: false) }

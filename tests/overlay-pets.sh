@@ -35,6 +35,14 @@ swiftc -framework Combine \
   "$ROOT/apps/macos-overlay/Sources/Services/PetAnimator.swift" \
   "$ROOT/apps/macos-overlay/Tests/PetBehaviorTests.swift" \
   -o "$FLOW_PET_BUILD/pet-behavior-tests"
+
+swiftc -framework Combine \
+  "$ROOT/apps/macos-overlay/Sources/Models/PetModels.swift" \
+  "$ROOT/apps/macos-overlay/Sources/Models/PetBehavior.swift" \
+  "$ROOT/apps/macos-overlay/Sources/Services/PetAnimator.swift" \
+  "$ROOT/apps/macos-overlay/Tests/PetPlaybackTests.swift" \
+  -o "$FLOW_PET_BUILD/pet-playback-tests"
+"$FLOW_PET_BUILD/pet-playback-tests"
 "$FLOW_PET_BUILD/pet-behavior-tests"
 
 "$FLOW_PET_BUILD/pet-tests"

@@ -16,8 +16,8 @@ struct PetAnimationTests {
     private static func testAnimationTableAndReducer() {
         let expected: [(PetState, Int, [Int])] = [
             (.idle, 0, [280, 110, 110, 140, 140, 320]),
-            (.runningRight, 1, Array(repeating: 120, count: 7) + [220]),
-            (.runningLeft, 2, Array(repeating: 120, count: 7) + [220]),
+            (.runningRight, 1, Array(repeating: 120, count: 8)),
+            (.runningLeft, 2, Array(repeating: 120, count: 8)),
             (.waving, 3, [140, 140, 140, 280]),
             (.jumping, 4, [140, 140, 140, 140, 280]),
             (.failed, 5, Array(repeating: 140, count: 7) + [240]),
@@ -39,7 +39,7 @@ struct PetAnimationTests {
         reducer.setTaskState(.running)
         reducer.playTransient(.waving)
         precondition(reducer.state == .waving && reducer.frameIndex == 0)
-        reducer.advance(by: 140 + 140 + 140 + 280)
+        reducer.advance(by: 1_400)
         precondition(reducer.state == .running && reducer.frameIndex == 0, "Waving must return to the task state")
 
         reducer.beginDrag(direction: .left)
