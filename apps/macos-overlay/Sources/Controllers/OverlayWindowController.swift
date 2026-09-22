@@ -60,6 +60,8 @@ public class OverlayState: ObservableObject {
     private let readDefaults: UserDefaults
     private let petStore: PetResourceStore
     private var petWindowVisible = false
+    private var celebratedPetTurns: Set<String> = []
+    private var celebratedPetTurnOrder: [String] = []
     @Published private var viewedTurnIds: [String]
     // Keep the completion snapshot: a delayed notification may arrive before
     // its history file, and latestRun may belong to another conversation.
@@ -118,6 +120,7 @@ public class OverlayState: ObservableObject {
         }
         let previousSize = compactSize
         defer {
+            petAnimator.setAutonomyEnabled(petResource != nil)
             if petResource != nil { isDocked = false }
             if compactSize != previousSize { windowController?.updateWindowFrame(animated: false) }
         }
@@ -143,7 +146,7 @@ public class OverlayState: ObservableObject {
 
     public func playPetHover(reduceMotion: Bool = false) {
         guard !reduceMotion else { return }
-        petAnimator.playTransient(.waving)
+        petAnimator.playHover()
     }
 
     public func beginPetDrag(direction: PetDragDirection) {
@@ -164,8 +167,18 @@ public class OverlayState: ObservableObject {
 
     // Live event bridge hooks. Keep the short names on the state owner so a
     // producer does not need to know which animator instance the view owns.
-    public func setTaskState(_ state: PetState) {
-        petAnimator.setTaskState(state)
+    public func setTaskState(_ state: PetState, preservingTransient: Bool = false) {
+        petAnimator.setTaskState(state, preservingTransient: preservingTransient)
+    }
+
+    public func celebratePetResult(session: String, turn: String) {
+        let identity = "\(session.utf8.count):\(session)\(turn)"
+        guard celebratedPetTurns.insert(identity).inserted else { return }
+        celebratedPetTurnOrder.append(identity)
+        if celebratedPetTurnOrder.count > 512 {
+            celebratedPetTurns.remove(celebratedPetTurnOrder.removeFirst())
+        }
+        petAnimator.playTransient(.jumping)
     }
 
     public func playTransient(_ state: PetState) {
@@ -448,7 +461,13 @@ public class OverlayState: ObservableObject {
                 self.notificationRun = run
                 self.selectedTurnIdentity = run.id
                 self.selectedSessionRuns = [run]
-                self.expand(notificationTriggered: true)
+                if self.petResource == nil {
+                    self.expand(notificationTriggered: true)
+                }
+            }
+            if decision.notify, self.petResource != nil,
+               let session = run.sessionId, let turn = run.turnId {
+                self.celebratePetResult(session: session, turn: turn)
             }
             guard decision.refresh else {
                 if decision.notify { self.loadMenuData() }
@@ -907,11 +926,14 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
     @discardableResult
     func beginPointerInteraction() -> Bool {
-        runtime.beginPointerInteraction()
+        let accepted = runtime.beginPointerInteraction()
+        if accepted { state.petAnimator.beginPointerInteraction() }
+        return accepted
     }
 
     func endPointerInteraction(drainPendingPresentation: Bool) {
         runtime.endPointerInteraction()
+        state.petAnimator.endPointerInteraction()
         guard drainPendingPresentation,
               runtime.claimPendingPresentationIfIdle() else { return }
         performPresentationFrameUpdate(animated: pendingPresentationAnimated)
@@ -1150,7 +1172,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
     private func resetDwellTimer() {
         cancelDwellTimer()
-        guard !isInteractingOrDragging, !isGeometryTransitioning else { return }
+        guard state.petResource == nil, !isInteractingOrDragging, !isGeometryTransitioning else { return }
         hoverDwellTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self,
                   !self.state.isExpanded,

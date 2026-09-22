@@ -103,9 +103,9 @@ public struct PetAnimationReducer {
 
     public init() {}
 
-    public mutating func setTaskState(_ state: PetState) {
+    public mutating func setTaskState(_ state: PetState, preservingTransient: Bool = false) {
         taskState = state
-        if dragDirection != nil {
+        if dragDirection != nil || (preservingTransient && transientState != nil) {
             // A task event may arrive while the pointer is still dragging.
             // Keep the directional row until mouse-up, then return to this
             // newer task state.

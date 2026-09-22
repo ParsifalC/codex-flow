@@ -25,6 +25,7 @@ public struct PetView: View {
             }
         }
         .frame(width: OverlayCompactLayout.petSpriteSize.width, height: OverlayCompactLayout.petSpriteSize.height)
+        .offset(x: animator.horizontalOffset)
         .accessibilityHidden(true)
         .onAppear {
             state.refreshPetVisibility(reduceMotion: reduceMotion)

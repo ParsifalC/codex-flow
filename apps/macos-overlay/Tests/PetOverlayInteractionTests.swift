@@ -81,6 +81,36 @@ struct PetOverlayInteractionTests {
         precondition(!state.isDocked, "Loading a pet must leave capsule docking")
         precondition(state.petResource?.id == "synthetic-v2", "valid package reload must publish the decoded pet")
 
+        state.setPetVisibility(true)
+        state.clear()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let result = TaskRun(sessionId: "result-session", turnId: "result-turn", finishedAtMs: Double(now),
+                             publication: PublicationInfo(revision: 1, completedAtMs: Double(now)))
+        state.update(run: result, notificationTriggered: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        precondition(!state.isExpanded && state.petAnimator.state == .jumping, "Pet completion should jump without opening the panel")
+        state.petAnimator.advance(by: 180)
+        let completed = PetActivityEvent(schemaVersion: 1, event: "completed", sessionID: "result-session", turnID: "result-turn", sequence: 1, timestampMilliseconds: now, startedAtMilliseconds: now, source: "test")
+        let beforeLive = state.petAnimator.frameIndex
+        _ = state.handlePetActivity(completed)
+        precondition(state.petAnimator.frameIndex == beforeLive, "Live completion arriving second must not restart the publication jump")
+        state.petAnimator.advance(by: 1_000)
+        precondition(state.petAnimator.state == .idle)
+        state.update(run: result, notificationTriggered: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        precondition(state.petAnimator.state == .idle, "Repeated publication must not celebrate twice")
+
+        let second = PetActivityEvent(schemaVersion: 1, event: "succeeded", sessionID: "second", turnID: "second", sequence: 1, timestampMilliseconds: now + 1, startedAtMilliseconds: now + 1, source: "test")
+        _ = state.handlePetActivity(second)
+        state.petAnimator.advance(by: 180)
+        let secondRun = TaskRun(sessionId: "second", turnId: "second", finishedAtMs: Double(now + 1),
+                                publication: PublicationInfo(revision: 1, completedAtMs: Double(now + 1)))
+        state.update(run: secondRun, notificationTriggered: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        precondition(state.petAnimator.frameIndex > 0, "Publication arriving second must not restart the live jump")
+        state.petAnimator.advance(by: 1_000)
+        precondition(state.petAnimator.state == .idle)
+
         try Data("../synthetic-v2".utf8).write(to: current)
         let rejected = send("pet reload", socketPath: socketPath, box: ResponseBox())
         precondition(rejected.success && rejected.response.contains("\"ok\":false"), "invalid package reload must report an error")

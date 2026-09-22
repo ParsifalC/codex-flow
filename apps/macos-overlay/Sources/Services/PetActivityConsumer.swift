@@ -35,7 +35,7 @@ public final class PetActivityConsumer {
         let clock = nowMilliseconds ?? Self.clockMilliseconds()
         apply(tracker.expire(nowMilliseconds: clock))
         let transition = tracker.consume(event, nowMilliseconds: clock)
-        apply(transition)
+        apply(transition, event: event)
         return transition
     }
 
@@ -67,7 +67,7 @@ public final class PetActivityConsumer {
             event,
             nowMilliseconds: terminalEvents.contains(event.event) ? event.timestampMilliseconds : clock
         )
-        apply(transition)
+        apply(transition, event: event, recovering: true)
     }
 
     @discardableResult
@@ -77,7 +77,7 @@ public final class PetActivityConsumer {
         return transition
     }
 
-    private func apply(_ transition: PetActivityTransition) {
+    private func apply(_ transition: PetActivityTransition, event: PetActivityEvent? = nil, recovering: Bool = false) {
         guard let state else { return }
         if transition.unavailable {
             state.clear()
@@ -88,10 +88,14 @@ public final class PetActivityConsumer {
             state.clear()
         }
         if let taskState = transition.taskState {
-            state.setTaskState(taskState)
+            state.setTaskState(taskState, preservingTransient: transition.transient != nil)
         }
-        if let transient = transition.transient {
-            state.playTransient(transient)
+        if let transient = transition.transient, !recovering {
+            if let event, transient == .jumping || transient == .waving {
+                state.celebratePetResult(session: event.sessionID, turn: event.turnID)
+            } else {
+                state.playTransient(transient)
+            }
         }
         if transition.accepted {
             state.markPetActivityAvailable()

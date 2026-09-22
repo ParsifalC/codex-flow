@@ -95,9 +95,14 @@ enum OverlayCompactHitRegion {
         if expanded { return true }
         if pet {
             let size = OverlayCompactLayout.petContentSize
-            return NSRect(x: hostBounds.midX - size.width / 2,
-                          y: hostBounds.midY - size.height / 2,
-                          width: size.width, height: size.height).contains(point)
+            let content = NSRect(x: hostBounds.midX - size.width / 2,
+                                 y: hostBounds.midY - size.height / 2,
+                                 width: size.width, height: size.height)
+            // The sprite wanders at most10points; keep the stationary caption
+            // and moved sprite clickable without claiming transparent corners.
+            let sprite = NSRect(x: content.minX - 10, y: content.maxY - OverlayCompactLayout.petSpriteSize.height,
+                                width: size.width + 20, height: OverlayCompactLayout.petSpriteSize.height)
+            return content.contains(point) || sprite.contains(point)
         }
 
         if docked {
