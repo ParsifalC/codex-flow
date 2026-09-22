@@ -30,7 +30,13 @@ struct PetOverlayInteractionTests {
         state.setPetVisibility(false)
         state.refreshPetVisibility(reduceMotion: true)
         state.refreshPetVisibility(reduceMotion: false)
-        _ = state.reloadPet()
+        var reloaded = false
+        state.reloadPetAsync { _ in reloaded = true }
+        let reloadDeadline = Date().addingTimeInterval(5)
+        while !reloaded && Date() < reloadDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        precondition(reloaded)
         state.refreshPetVisibility(reduceMotion: false)
         precondition(!state.petAnimator.timerIsRunning, "Reload and motion changes must preserve window occlusion")
         state.setPetVisibility(true)

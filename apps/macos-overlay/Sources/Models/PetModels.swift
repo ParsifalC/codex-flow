@@ -39,14 +39,8 @@ public enum PetAnimationTable {
     public static func definition(for state: PetState) -> PetAnimationDefinition {
         switch state {
         case .idle:
-            return PetAnimationDefinition(row: 0, frames: [
-                PetFrame(column: 0, durationMilliseconds: 280),
-                PetFrame(column: 1, durationMilliseconds: 110),
-                PetFrame(column: 2, durationMilliseconds: 110),
-                PetFrame(column: 3, durationMilliseconds: 140),
-                PetFrame(column: 4, durationMilliseconds: 140),
-                PetFrame(column: 5, durationMilliseconds: 320)
-            ])
+            // Continuous idle loops must not dwell on both sides of the seam.
+            return uniform(row: 0, count: 6, durationMilliseconds: 140, lastDurationMilliseconds: 140)
         case .runningRight:
             return uniform(row: 1, count: 8, durationMilliseconds: 120, lastDurationMilliseconds: 120)
         case .runningLeft:
@@ -107,10 +101,8 @@ struct PetPlaybackProfile: Equatable {
     var failedFrame: Int { resourceID == "deepseek" || resourceID == "lulu-capybara-2" ? 3 : 4 }
     var reviewFrame: Int { resourceID == "dasheng" ? 2 : (resourceID == "lulu-capybara-2" ? 4 : (resourceID == "noir-webling" ? 1 : 3)) }
     var turnPause: Int { resourceID == "lulu-capybara-2" ? 800 : 600 }
-    var quietRange: ClosedRange<Int> { (resourceID == "noir-webling" ? 30_000 : 20_000)...35_000 }
-    var idleRange: ClosedRange<Int> {
-        (resourceID == "noir-webling" ? 4_500 : (resourceID == "lulu-capybara-2" ? 4_000 : 3_000))...6_000
-    }
+    var quietRange: ClosedRange<Int> { 8_000...15_000 }
+
 }
 
 struct PetPlaybackRandom {
@@ -140,11 +132,6 @@ struct PetPlaybackTimeline {
         Self(frames: PetAnimationTable.definition(for: state).frames.enumerated().map {
             PetPlaybackFrame(state: state, frameIndex: $0.offset, duration: $0.element.durationMilliseconds)
         })
-    }
-
-    static func idle(dwell: Int, holdFirst: Bool = false) -> Self {
-        let rest = PetPlaybackFrame(state: .idle, frameIndex: 0, duration: dwell)
-        return Self(frames: holdFirst ? [rest] + cycle(.idle).frames : cycle(.idle).frames + [rest])
     }
 
     static func action(_ state: PetState, profile: PetPlaybackProfile) -> Self {
@@ -237,14 +224,12 @@ public struct PetAnimationReducer {
     public var isPlayingTransient: Bool { transientState != nil }
 
     private var profile = PetPlaybackProfile()
-    private var random: PetPlaybackRandom
     private var playback: PetPlaybackCursor
     private var transientState: PetState?
     private var dragDirection: PetDragDirection?
 
-    public init(seed: UInt64 = UInt64.random(in: 1...UInt64.max)) {
-        random = PetPlaybackRandom(seed: seed)
-        playback = PetPlaybackCursor(timeline: .idle(dwell: random.next(3_000...6_000)))
+    public init() {
+        playback = PetPlaybackCursor(timeline: .cycle(.idle))
     }
 
     mutating func configure(profile: PetPlaybackProfile) {
@@ -292,9 +277,7 @@ public struct PetAnimationReducer {
     }
 
     private mutating func restartTask() {
-        let timeline: PetPlaybackTimeline = taskState == .idle
-            ? .idle(dwell: random.next(profile.idleRange)) : .cycle(taskState)
-        playback = PetPlaybackCursor(timeline: timeline)
+        playback = PetPlaybackCursor(timeline: .cycle(taskState))
     }
 
     public mutating func advance(by milliseconds: Int) {

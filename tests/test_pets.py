@@ -406,3 +406,39 @@ def test_seed_rejects_damaged_bundle_before_selecting(tmp_path, preset_bundle, p
         pets.seed_presets(home)
     assert not pets.pet_paths(home).current.exists()
     assert not (pets.pet_paths(home).installed / "dasheng").exists()
+
+
+@pytest.mark.parametrize("entry", [".interrupted", "local-broken", "unsafe-link"])
+def test_catalog_isolates_invalid_entries(tmp_path, capsys, entry):
+    home = tmp_path / "home"
+    pets.install_local(write_pack(tmp_path / "source"), home=home)
+    bad = pets.pet_paths(home).installed / entry
+    if entry == "unsafe-link":
+        bad.symlink_to(tmp_path / "source", target_is_directory=True)
+    else:
+        bad.mkdir()
+        if entry == "local-broken":
+            (bad / "pet.json").write_text("{")
+    assert [item["id"] for item in pets.list_installed(home)] == ["local-boba"]
+    if not entry.startswith("."):
+        assert entry in capsys.readouterr().err
+
+
+def test_native_selection_can_save_without_notifying(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    pets.seed_presets(home)
+    def unexpected_notify(*args):
+        pytest.fail("Native selection must not issue a second IPC reload")
+    monkeypatch.setattr(pets, "notify_overlay", unexpected_notify)
+    assert pets.main(["--home", str(home), "use", "deepseek", "--no-notify"]) == 0
+    assert pets.read_current(home) == "deepseek"
+
+
+@pytest.mark.parametrize("field,value", [("displayName", 42), ("description", []), ("spritesheetPath", {}), ("displayName", " ")])
+def test_catalog_isolates_metadata_incompatible_with_native_ui(tmp_path, field, value):
+    home = tmp_path / "home"
+    pets.install_local(write_pack(tmp_path / "source"), home=home)
+    bad = pets.pet_paths(home).installed / "local-broken"
+    bad.mkdir()
+    (bad / "pet.json").write_text(json.dumps({"id": "local-broken", field: value}))
+    assert [item["id"] for item in pets.list_installed(home)] == ["local-boba"]

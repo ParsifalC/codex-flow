@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FLOW_PET_BUILD="$(mktemp -d)"
 trap 'rm -rf "$FLOW_PET_BUILD"' EXIT
 
+export CODEX_FLOW_BIN_DIR="$ROOT/bin"
 export PET_FIXTURES_ROOT="$ROOT/tests/fixtures/pets"
 export CODEX_HOME="$FLOW_PET_BUILD/codex-home"
 

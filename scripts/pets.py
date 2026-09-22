@@ -596,7 +596,7 @@ def notify_overlay(home: str | os.PathLike[str] | None = None) -> str:
         return "unavailable"
 
 
-def _activate(installed_id: str, home: str | os.PathLike[str] | None = None) -> dict[str, str]:
+def _activate(installed_id: str, home: str | os.PathLike[str] | None = None, *, notify: bool = True) -> dict[str, str]:
     paths = initialize_store(home)
     with store_lock(paths):
         _ensure_directory(paths.installed)
@@ -604,7 +604,7 @@ def _activate(installed_id: str, home: str | os.PathLike[str] | None = None) -> 
         if not target.is_dir() or target.is_symlink():
             raise PetError(f"installed pet does not exist: {installed_id}")
         _atomic_write_text(paths.current, installed_id)
-    activation = notify_overlay(home)
+    activation = notify_overlay(home) if notify else "saved"
     return {"id": installed_id, "activation": activation}
 
 
@@ -893,28 +893,43 @@ def list_installed(home: str | os.PathLike[str] | None = None) -> list[dict[str,
     if paths.installed.is_symlink():
         raise PetError("installed pet directory may not be a symlink")
     items: list[dict[str, Any]] = []
+    current = read_current(home)
     for target in sorted(paths.installed.iterdir(), key=lambda p: p.name):
-        if target.is_symlink() or not target.is_dir():
-            raise PetError(f"unsafe installed pet entry: {target.name}")
-        metadata = _metadata(_bounded_read(target / "pet.json", MAX_PET_JSON_BYTES, "installed pet.json"))
+        if target.name.startswith("."):
+            continue  # An interrupted or concurrent atomic install is not a package.
+        try:
+            if target.is_symlink() or not target.is_dir():
+                raise PetError("entry is not a safe package directory")
+            if safe_id(target.name) != target.name:
+                raise PetError("invalid installed identifier")
+            metadata = _metadata(_bounded_read(target / "pet.json", MAX_PET_JSON_BYTES, "installed pet.json"))
+            for field in ("displayName", "description", "spritesheetPath"):
+                value = metadata.get(field)
+                if value is not None and not isinstance(value, str):
+                    raise PetError(f"{field} must be a string")
+            if isinstance(metadata.get("displayName"), str) and not metadata["displayName"].strip():
+                raise PetError("displayName must not be empty")
+        except PetError as exc:
+            print(f"codex-flow pets: skipping {target.name}: {exc}", file=sys.stderr)
+            continue
         item = dict(metadata)
         item["id"] = target.name
-        item["current"] = target.name == read_current(home)
+        item["current"] = target.name == current
         item["preset"] = target.name in PRESET_IDS
         item["packagePath"] = str(target.resolve())
         items.append(item)
     return sorted(items, key=lambda item: (PRESET_IDS.index(item["id"]) if item["id"] in PRESET_IDS else len(PRESET_IDS), item["id"]))
 
 
-def use_pet(identifier: str, *, home: str | os.PathLike[str] | None = None) -> dict[str, str]:
+def use_pet(identifier: str, *, home: str | os.PathLike[str] | None = None, notify: bool = True) -> dict[str, str]:
     value = identifier.strip()
     if value == "default":
         paths = initialize_store(home)
         with store_lock(paths):
             _atomic_write_text(paths.current, "default")
-        return {"id": "default", "activation": notify_overlay(home)}
+        return {"id": "default", "activation": notify_overlay(home) if notify else "saved"}
     value = safe_id(value)
-    return _activate(value, home)
+    return _activate(value, home, notify=notify)
 
 
 def _print_result(result: dict[str, str], action: str) -> None:
@@ -963,9 +978,9 @@ def main(argv: list[str] | None = None) -> int:
             if not items:
                 print("default\tDefault")
             return 0
-        if command == "use" and len(args) == 2:
+        if command == "use" and (len(args) == 2 or (len(args) == 3 and args[2] == "--no-notify")):
             seed_presets(home)
-            _print_result(use_pet(args[1], home=home), "using")
+            _print_result(use_pet(args[1], home=home, notify=len(args) == 2), "using")
             return 0
         parser.error("expected: install <slug|petdex:slug|Petdex URL|local-dir|zip>, list [--json], seed, or use <id|default>")
     except PetError as exc:

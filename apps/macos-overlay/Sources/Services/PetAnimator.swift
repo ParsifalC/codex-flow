@@ -26,7 +26,7 @@ public final class PetAnimator: ObservableObject {
 
     public init(behaviorSeed: UInt64 = UInt64.random(in: 1...UInt64.max)) {
         behavior = PetBehavior(seed: behaviorSeed)
-        reducer = PetAnimationReducer(seed: behaviorSeed)
+        reducer = PetAnimationReducer()
     }
 
     /// Called only after a resource has been validated and loaded. Unknown IDs

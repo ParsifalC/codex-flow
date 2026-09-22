@@ -167,22 +167,29 @@ public class IPCService {
             if bytesRead > 0 {
                 let data = Data(buffer[0..<bytesRead])
                 if let command = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-                    let response = handleCommand(command)
-                    if let resData = response.data(using: .utf8) {
-                        _ = resData.withUnsafeBytes { raw in
-                            write(clientSocket, raw.baseAddress, resData.count)
+                    if command == "pet reload" {
+                        // Keep the socket until the background decode has completed.
+                        state.reloadPetAsync { outcome in
+                            self.reply(outcome.json + "\n", to: clientSocket)
+                            close(clientSocket)
                         }
+                        return
                     }
+                    reply(handleCommand(command), to: clientSocket)
                 }
             }
             close(clientSocket)
         }
 
+        private func reply(_ response: String, to socket: Int32) {
+            if let data = response.data(using: .utf8) {
+                _ = data.withUnsafeBytes { write(socket, $0.baseAddress, data.count) }
+            }
+        }
+
         private func handleCommand(_ cmd: String) -> String {
             if cmd == "status" {
                 return "{\"running\": true, \"pid\": \(getpid()), \"isExpanded\": \(state.isExpanded), \"isPinned\": \(state.isPinned), \"activeTab\": \"\(state.activeTab.rawValue)\"}\n"
-            } else if cmd == "pet reload" {
-                return state.reloadPet().json + "\n"
             } else if cmd.hasPrefix("pet event ") {
                 let payload = cmd.dropFirst("pet event ".count)
                 return state.handlePetActivityJSON(String(payload)) + "\n"

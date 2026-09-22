@@ -133,17 +133,24 @@ public class OverlayState: ObservableObject {
         }
     }
 
-    /// Reload the selected native pet after the installer atomically replaces
-    /// its package/current files. Kept synchronous for IPC acknowledgements;
-    /// interactive views and startup use reloadPetAsync. Swift never writes selection.
-    @discardableResult
-    public func reloadPet() -> PetReloadOutcome {
-        if !Thread.isMainThread {
-            return DispatchQueue.main.sync { reloadPet() }
+    /// Selection persistence belongs to the CLI. This owner applies the result once,
+    /// using the same asynchronous loader as external IPC and startup.
+    public var selectedPetID: String { petResource?.id ?? "default" }
+
+    func selectPet(_ id: String, completion: @escaping (PetReloadOutcome) -> Void) {
+        precondition(Thread.isMainThread)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try PetCatalogService.select(id)
+                DispatchQueue.main.async {
+                    self?.reloadPetAsync(completion: completion)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(PetReloadOutcome(accepted: false, selectedID: id, error: error.localizedDescription))
+                }
+            }
         }
-        petReloadGeneration += 1
-        let result = petStore.reload()
-        return applyPetReload(result, selectedID: petStore.lastSelectionID)
     }
 
     /// Decode on a background queue so selecting an atlas never blocks UI work.

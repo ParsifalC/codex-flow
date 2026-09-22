@@ -15,7 +15,7 @@ struct PetAnimationTests {
 
     private static func testAnimationTableAndReducer() {
         let expected: [(PetState, Int, [Int])] = [
-            (.idle, 0, [280, 110, 110, 140, 140, 320]),
+            (.idle, 0, [140, 140, 140, 140, 140, 140]),
             (.runningRight, 1, Array(repeating: 120, count: 8)),
             (.runningLeft, 2, Array(repeating: 120, count: 8)),
             (.waving, 3, [140, 140, 140, 280]),

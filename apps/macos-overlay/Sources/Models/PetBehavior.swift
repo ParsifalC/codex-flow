@@ -31,8 +31,8 @@ struct PetBehavior {
     init(seed: UInt64 = UInt64.random(in: 1...UInt64.max), profile: PetPlaybackProfile = PetPlaybackProfile()) {
         random = PetPlaybackRandom(seed: seed)
         self.profile = profile
-        // The first complete idle cycle and neutral dwell total 4.1 seconds.
-        playback = PetPlaybackCursor(timeline: .idle(dwell: 3_000))
+        // Start with two complete default animation cycles.
+        playback = Self.defaultPlayback(cycles: 2)
     }
 
     mutating func configure(profile: PetPlaybackProfile) {
@@ -45,7 +45,7 @@ struct PetBehavior {
     mutating func interrupt(initialDelay: Bool = false) {
         scene = nil
         playback = initialDelay
-            ? PetPlaybackCursor(timeline: .idle(dwell: 3_000)) : quietPlayback()
+            ? Self.defaultPlayback(cycles: 2) : quietPlayback()
     }
 
     mutating func advance(by milliseconds: Int) {
@@ -62,33 +62,19 @@ struct PetBehavior {
         }
     }
 
-    /// Partition the chosen quiet interval into whole idle cycles and 3–6s
-    /// neutral rests. Fit the last rest in advance instead of cutting a cycle
-    /// short when an unrelated scene deadline expires.
+    /// Fill the interval with complete default animation loops, with no added holds.
     private mutating func quietPlayback() -> PetPlaybackCursor {
-        let quietDuration = random.next(profile.quietRange)
+        let duration = PetPlaybackTimeline.cycle(.idle).duration
+        let minimumCycles = (profile.quietRange.lowerBound + duration - 1) / duration
+        let maximumCycles = profile.quietRange.upperBound / duration
+        return Self.defaultPlayback(cycles: random.next(minimumCycles...maximumCycles))
+    }
+
+    private static func defaultPlayback(cycles: Int) -> PetPlaybackCursor {
         let idle = PetPlaybackTimeline.cycle(.idle)
-        let minimum = idle.duration + profile.idleRange.lowerBound
-        let maximum = idle.duration + profile.idleRange.upperBound
-        var choices: [(Int, ClosedRange<Int>)] = []
-        for count in 1...(quietDuration / minimum) {
-            let low = max(profile.idleRange.lowerBound, quietDuration - count * maximum)
-            let high = min(profile.idleRange.upperBound, quietDuration - count * minimum)
-            if low <= high { choices.append((count, low...high)) }
-        }
-        let (count, firstRestRange) = choices[random.next(0...(choices.count - 1))]
-        let firstRest = random.next(firstRestRange)
-        var remaining = quietDuration - firstRest
-        var frames = [PetPlaybackFrame(state: .idle, frameIndex: 0, duration: firstRest)]
-        for cyclesLeft in stride(from: count, through: 1, by: -1) {
-            let low = max(minimum, remaining - (cyclesLeft - 1) * maximum)
-            let high = min(maximum, remaining - (cyclesLeft - 1) * minimum)
-            let duration = random.next(low...high)
-            frames += idle.frames
-            frames.append(PetPlaybackFrame(state: .idle, frameIndex: 0, duration: duration - idle.duration))
-            remaining -= duration
-        }
-        return PetPlaybackCursor(timeline: PetPlaybackTimeline(frames: frames))
+        return PetPlaybackCursor(timeline: PetPlaybackTimeline(
+            frames: Array(repeating: idle.frames, count: cycles).flatMap { $0 }
+        ))
     }
 
     private mutating func startScene() {

@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @main
 struct PetCatalogTests {
@@ -41,7 +42,7 @@ struct PetCatalogTests {
             calls.append(arguments)
             return "selected"
         }
-        precondition(calls.last == ["pets", "use", "default"], "Selection must use structured arguments")
+        precondition(calls.last == ["pets", "use", "default", "--no-notify"], "Native selection must save without triggering an IPC reload")
         enum ExpectedFailure: Error { case unavailable }
         do {
             try PetCatalogService.select("dasheng") { _ in throw ExpectedFailure.unavailable }
@@ -84,6 +85,35 @@ struct PetCatalogTests {
         }
         let initialSelection = try selectAndReload("synthetic-v1")
         precondition(initialSelection.accepted)
+        // Exercise the actual settings -> CLI -> reload path with a live IPC server.
+        // A notifying CLI plus a second UI reload would publish the resource twice.
+        let socketPath = home.appendingPathComponent("codex-flow/overlay.sock").path
+        let server = IPCService.Server(state: state, socketPath: socketPath)
+        defer { server.stop() }
+        var publications = 0
+        let observation = state.$petResource.dropFirst().sink { _ in publications += 1 }
+        var selectionResult: PetReloadOutcome?
+        state.selectPet("synthetic-v2") { selectionResult = $0 }
+        let selectionDeadline = Date().addingTimeInterval(10)
+        while selectionResult == nil && Date() < selectionDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        precondition(selectionResult?.accepted == true && state.selectedPetID == "synthetic-v2")
+        precondition(publications == 1, "Settings selection must apply the resource exactly once")
+        // An external CLI change must update the same selection observed by settings.
+        try Data("synthetic-v1".utf8).write(to: current, options: .atomic)
+        var externalResponse: String?
+        DispatchQueue.global().async {
+            let response = IPCService.sendCommand("pet reload\n", socketPath: socketPath).response
+            DispatchQueue.main.async { externalResponse = response }
+        }
+        let externalDeadline = Date().addingTimeInterval(5)
+        while externalResponse == nil && Date() < externalDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        precondition(externalResponse?.contains("\"ok\":true") == true)
+        precondition(state.selectedPetID == "synthetic-v1", "External reload must update the settings selection")
+        observation.cancel()
         try Data("invalid image".utf8).write(to: installed.appendingPathComponent("synthetic-v2/spritesheet.png"))
         let rejected = try selectAndReload("synthetic-v2")
         precondition(!rejected.accepted && state.petResource == nil, "Rejected image uses the classic fallback")

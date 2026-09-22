@@ -160,7 +160,7 @@ enum PetCatalogService {
     }
 
     static func select(_ id: String, run: Runner = command) throws {
-        _ = try run(["pets", "use", id])
+        _ = try run(["pets", "use", id, "--no-notify"])
     }
 
     private static func command(_ arguments: [String]) throws -> String {

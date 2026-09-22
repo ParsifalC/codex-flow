@@ -6,7 +6,7 @@ public struct PetSettingsCard: View {
     @ObservedObject private var localization = AppLocalization.shared
     @ObservedObject private var state: OverlayState
     @State private var entries: [PetCatalogEntry] = []
-    @State private var selectedID: String = "default"
+    private var selectedID: String { state.selectedPetID }
     @State private var isLoading = false
     @State private var applyingID: String?
     @State private var message: String?
@@ -140,7 +140,6 @@ public struct PetSettingsCard: View {
                 let parsed = try PetCatalogService.list()
                 DispatchQueue.main.async {
                     entries = parsed
-                    selectedID = parsed.first(where: { $0.current })?.id ?? state.petResource?.id ?? "default"
                     isLoading = false
                 }
             } catch {
@@ -154,35 +153,18 @@ public struct PetSettingsCard: View {
     }
 
     private func select(_ entry: PetCatalogEntry) {
-        guard applyingID == nil, selectedID != entry.id else { return }
+        // A fallback may look selected while the saved resource is invalid.
+        // Allow selecting it explicitly so the CLI can persist the recovery.
+        guard applyingID == nil else { return }
         applyingID = entry.id
         isError = false
         message = nil
-        let id = entry.id
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try PetCatalogService.select(id)
-                DispatchQueue.main.async {
-                    state.reloadPetAsync { outcome in
-                        applyingID = nil
-                        if outcome.accepted {
-                            selectedID = outcome.selectedID
-                            message = L("Using \(entry.displayName).", "正在使用 \(entry.displayName)。")
-                            isError = false
-                        } else {
-                            selectedID = ""
-                            isError = true
-                            message = outcome.error ?? L("The selected pet could not be loaded.", "无法加载所选宠物。")
-                        }
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    applyingID = nil
-                    isError = true
-                    message = error.localizedDescription
-                }
-            }
+        state.selectPet(entry.id) { outcome in
+            applyingID = nil
+            isError = !outcome.accepted
+            message = outcome.accepted
+                ? L("Using \(entry.displayName).", "正在使用 \(entry.displayName)。")
+                : outcome.error ?? L("The selected pet could not be loaded.", "无法加载所选宠物。")
         }
     }
 }

@@ -3,31 +3,31 @@ import Foundation
 @main
 struct PetPlaybackTests {
     static func main() {
-        testNeutralIdleDwell()
+        testContinuousDefaultAnimation()
         testCompleteHoverAndJumpCycles()
         testNoDirectionalBrake()
-        testVariableIdleDwell()
         testProfilesAndAutonomousScenes()
         testPriorityAndProfileReset()
-        print("Natural playback frame cycles, neutral dwell and run continuity passed")
+        print("Continuous default animation, complete action cycles and run continuity passed")
     }
 
-    // Catches holding Dasheng's closed-eye last frame or immediately restarting a blink.
-    private static func testNeutralIdleDwell() {
+    // The default row must loop with its even timing, without a long hold at the loop seam.
+    private static func testContinuousDefaultAnimation() {
         var reducer = PetAnimationReducer()
-        reducer.advance(by: 1_100)
-        precondition(reducer.frameIndex == 0, "Idle must finish on the neutral first atlas frame")
-        for _ in 0..<150 {
-            reducer.advance(by: 20)
-            precondition(reducer.state == .idle && reducer.frameIndex == 0,
-                         "Idle must rest on its first frame for at least three seconds")
+        for _ in 0..<20 {
+            for (index, duration) in [140, 140, 140, 140, 140, 140].enumerated() {
+                precondition(reducer.state == .idle && reducer.frameIndex == index,
+                             "Default animation must continuously loop all six frames")
+                reducer.advance(by: duration - 1)
+                precondition(reducer.frameIndex == index)
+                reducer.advance(by: 1)
+            }
         }
-        var resumed = false
-        for _ in 0..<200 {
-            reducer.advance(by: 20)
-            if reducer.frameIndex != 0 { resumed = true }
-        }
-        precondition(resumed, "Idle must eventually play another complete blink")
+        reducer.playTransient(.jumping)
+        reducer.advance(by: 1_880)
+        precondition(reducer.state == .idle && reducer.frameIndex == 0)
+        reducer.advance(by: 140)
+        precondition(reducer.frameIndex == 1, "Completed action must resume animated idle immediately")
     }
 
     // Counts visible visits to the final frame instead of reading repeat-count constants.
@@ -88,24 +88,6 @@ struct PetPlaybackTests {
         return longest
     }
 
-    private static func testVariableIdleDwell() {
-        var reducer = PetAnimationReducer(seed: 42)
-        var zeroDuration = 0
-        var previous = 0
-        var rests: [Int] = []
-        for _ in 0..<4_000 {
-            if reducer.frameIndex == 0 { zeroDuration += 10 }
-            if reducer.frameIndex != 0 && previous == 0 {
-                if zeroDuration > 280 { rests.append(zeroDuration - 280) }
-                zeroDuration = 0
-            }
-            previous = reducer.frameIndex
-            reducer.advance(by: 10)
-        }
-        precondition(rests.count >= 4 && Set(rests).count > 1, "Idle rests must vary per complete cycle")
-        precondition(rests.allSatisfy { $0 >= 3_000 && $0 <= 6_010 }, "Neutral rests must stay within 3–6 seconds")
-    }
-
     // Samples precisely what the view renders. A scene scheduler with the right
     // constants but a looping/early-cut frame reducer cannot pass these checks.
     private static func testProfilesAndAutonomousScenes() {
@@ -125,6 +107,7 @@ struct PetPlaybackTests {
             var active: [Sample] = []
             var quietStart: Int?
             var quietDurations: [Int] = []
+            var idleHold = 0
             for elapsed in stride(from: 0, through: 360_000, by: 10) {
                 if animator.isPlayingAutonomously {
                     if active.isEmpty, let start = quietStart {
@@ -139,6 +122,8 @@ struct PetPlaybackTests {
                     precondition(animator.state == .idle && animator.frameIndex == 0 && animator.horizontalOffset == 0,
                                  "Completed scene must return to neutral origin: \(id)")
                 }
+                idleHold = !animator.isPlayingAutonomously && animator.state == .idle && animator.frameIndex == 0 ? idleHold + 10 : 0
+                precondition(idleHold <= 140, "Default animation must not insert a frozen pose: \(id)")
                 rendered.insert(animator.state)
                 precondition(abs(animator.horizontalOffset) <= 10.001)
                 animator.advance(by: 10)
@@ -146,7 +131,7 @@ struct PetPlaybackTests {
             precondition(rendered == Set(PetState.allCases), "Every row must actually render for \(id)")
             precondition(quietDurations.count >= 7 && Set(quietDurations).count > 1)
             precondition(quietDurations.allSatisfy {
-                $0 >= (id == "noir-webling" ? 30_000 : 20_000) - 10 && $0 <= 35_010
+                $0 >= 7_990 && $0 <= 15_010
             }, "Quiet scene intervals must stay in the profile range")
             for samples in scenes {
                 let states = Set(samples.map(\.state))
