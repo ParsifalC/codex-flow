@@ -39,6 +39,7 @@ public struct AnalyticsView: View {
                             if !stats.projects.isEmpty { projectBreakdownCard }
                         }.padding(.top, 14)
                     }
+                    .disclosureGroupStyle(OverlayDisclosureStyle())
                     .font(.system(size: 12.5)).tint(OverlayTheme.secondary)
                 }
             }
