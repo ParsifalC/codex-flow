@@ -6,7 +6,8 @@ func L(_ english: String, _ chinese: String) -> String { english }
 struct TelemetryTurnContextTests {
     static func main() throws {
         try testPublishedSnapshotRoundTrips()
-        try testLegacySnapshotRemainsReadableWithoutPublishedLabels()
+        try testLegacySnapshotFallsBackWithoutChangingPublishedFields()
+        try testCurrentTurnRequestFallback()
         try testQueryExcludesUnpublishedNewRuns()
         testPublicationOrderingAndNotifications()
         print("Turn context model/query tests passed")
@@ -49,7 +50,7 @@ struct TelemetryTurnContextTests {
         precondition(decoded.id == run.id)
     }
 
-    private static func testLegacySnapshotRemainsReadableWithoutPublishedLabels() throws {
+    private static func testLegacySnapshotFallsBackWithoutChangingPublishedFields() throws {
         let json = """
         {"session_id":"legacy","turn_id":"turn-1","finished_at_ms":20,
          "summary_info":{"goal":"old transcript goal","conclusion":"old transcript conclusion"},
@@ -60,8 +61,54 @@ struct TelemetryTurnContextTests {
         precondition(run.turnContext == nil)
         precondition(run.result == nil)
         precondition(run.publication == nil)
-        precondition(run.publishedGoal == nil)
-        precondition(run.publishedConclusion == nil)
+        precondition(run.publishedGoal == "old transcript goal")
+        precondition(run.publishedConclusion == "old transcript conclusion")
+        precondition(run.publishedGoalSource == .legacySummary)
+        precondition(run.publishedConclusionSource == .legacySummary)
+        precondition(run.isLegacyGoalFallback)
+        precondition(run.isLegacyConclusionFallback)
+
+        let exact = TaskRun(
+            sessionId: "legacy", turnId: "turn-1",
+            summaryInfo: TaskSummaryInfo(goal: "old goal", conclusion: "old conclusion"),
+            turnContext: TurnContext(goal: TurnGoal(text: "exact goal")),
+            result: TurnResult(text: "exact conclusion")
+        )
+        precondition(exact.publishedGoal == "exact goal")
+        precondition(exact.publishedConclusion == "exact conclusion")
+        precondition(exact.publishedGoalSource == .turnContext)
+        precondition(exact.publishedConclusionSource == .result)
+        precondition(!exact.isLegacyGoalFallback)
+        precondition(!exact.isLegacyConclusionFallback)
+    }
+
+    private static func testCurrentTurnRequestFallback() throws {
+        let json = """
+        {"session_id":"chat","turn_id":"followup","publication_required":true,
+         "prompt_seen":true,"summary":"再短些",
+         "thread":{"name":"整个会话的标题","preview":"上一轮请求"},
+         "publication":{"revision":1,"completed_at_ms":200}}
+        """
+        let run = try JSONDecoder().decode(TaskRun.self, from: Data(json.utf8))
+        precondition(run.publishedGoal == "再短些", "Use the request captured for this turn")
+        precondition(run.publishedGoalSource.rawValue == "turnRequest")
+        precondition(run.turnContext == nil, "A request fallback must not invent an extracted goal")
+        precondition(run.turnPreview == "再短些")
+        let roundTrip = try JSONDecoder().decode(TaskRun.self, from: JSONEncoder().encode(run))
+        precondition(roundTrip.publishedGoal == "再短些")
+
+        var exact = run
+        exact.turnContext = TurnContext(goal: TurnGoal(text: "压缩上一轮的说明"))
+        precondition(exact.publishedGoal == "压缩上一轮的说明")
+        precondition(exact.publishedGoalSource == .turnContext)
+        var blank = run
+        blank.summary = " \n "
+        precondition(blank.publishedGoal == nil, "Never fall back to a conversation title or preview")
+        let legacy = TaskRun(sessionId: "chat", turnId: "old", summary: "来源不明的旧摘要")
+        precondition(legacy.publishedGoal == nil)
+        let unproven = json.replacingOccurrences(of: "\"prompt_seen\":true", with: "\"prompt_seen\":false")
+        let unprovenRun = try JSONDecoder().decode(TaskRun.self, from: Data(unproven.utf8))
+        precondition(unprovenRun.publishedGoal == nil)
     }
 
     private static func testQueryExcludesUnpublishedNewRuns() throws {

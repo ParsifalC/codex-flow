@@ -53,6 +53,7 @@ critical_effort = "xhigh"
 [worker]
 model_policy = "latest-efficient"
 model = "auto"
+model_provider = "auto"
 resolved_model = "gpt-5.6-luna"
 min_reasoning_effort = "xhigh"
 reasoning_policy = "adaptive"
@@ -99,6 +100,29 @@ quality_intent = normal
 ```
 
 `quality_intent` is not persisted. It is current-task TaskProfile semantics and defaults to `normal`.
+
+### Worker model provider
+
+`[worker].model_provider` is an optional persistent Worker runtime setting and
+defaults to `"auto"`. `auto` preserves the existing Codex host provider/model
+defaults. When an explicit provider is selected (for example, `"anthropic"`),
+codex-flow writes both the resolved Worker `model` and `model_provider` into
+the three managed agent files: `~/.codex/agents/worker-explorer.toml`,
+`worker-implementer.toml`, and `worker-reviewer.toml`. This lets the Parent
+keep its provider while Workers use Claude or another provider independently.
+Existing explicit provider settings are preserved across upgrades; switching
+back to `auto` removes the two managed keys so host defaults become authoritative
+again.
+
+```toml
+[worker]
+model = "claude-sonnet-4-5"
+model_provider = "anthropic"
+```
+
+Installers also accept `CODEX_FLOW_WORKER_MODEL_PROVIDER`. Provider selection is
+a persistent Worker/agent-runtime concern, not part of the per-task
+ExecutionPlan, and does not change policy schema v4.
 
 Installer/update migrates to schema v4 while preserving supported existing values. Existing users therefore keep their custom reasoning matrix; the new matrix is primarily the fresh-install release default.
 
@@ -480,6 +504,7 @@ planned_worker_count
 | `CODEX_FLOW_PARENT_MIN_EFFORT` | `high` | Parent reasoning floor |
 | `CODEX_FLOW_WORKER_MODEL_POLICY` | `latest-efficient` | Worker baseline capability policy |
 | `CODEX_FLOW_WORKER_MODEL` | `auto` | Worker baseline model request |
+| `CODEX_FLOW_WORKER_MODEL_PROVIDER` | `auto` | Worker managed-agent model provider; `auto` keeps host defaults |
 | `CODEX_FLOW_WORKER_MIN_EFFORT` | `xhigh` | Worker baseline reasoning floor |
 | `CODEX_FLOW_REASONING_ROLLOUT_MODE` | `shadow` | efficient delegated Worker rollout mode |
 | `CODEX_FLOW_REASONING_ROLLOUT_MINIMUM` | `high` | rollout minimum floor |

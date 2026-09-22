@@ -144,6 +144,11 @@ private struct HistoryRunRow: View {
                             .lineLimit(1).truncationMode(.middle)
                         Text("· " + String((run.turnId ?? "—").prefix(6)))
                             .lineLimit(1).fixedSize()
+                        if run.isLegacyGoalFallback {
+                            Text(L("Legacy", "历史兼容"))
+                                .font(.system(size: 10, weight: .medium))
+                                .help(L("Goal recovered from the historical summary", "目标来自历史摘要兼容读取"))
+                        }
                     }
                     .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(OverlayTheme.muted)
                     Text(run.localizedFormattedDate)

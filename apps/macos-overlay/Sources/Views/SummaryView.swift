@@ -296,7 +296,9 @@ public struct SummaryView: View {
     }
     private func copySummary() {
         guard let run = currentRun, !state.isPrivacyMode else { return }
-        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + L("Goal: ", "本轮目标：") + localizedResultText(run.publishedGoal) + "\n\n" + L("Result: ", "结果：") + localizedResultText(run.publishedConclusion)
+        let goalLabel = run.isLegacyGoalFallback ? L("Goal (legacy): ", "本轮目标（历史兼容）：") : L("Goal: ", "本轮目标：")
+        let resultLabel = run.isLegacyConclusionFallback ? L("Result (legacy): ", "结果（历史兼容）：") : L("Result: ", "结果：")
+        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + goalLabel + localizedResultText(run.publishedGoal) + "\n\n" + resultLabel + localizedResultText(run.publishedConclusion)
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shared completed-turn details. Missing metadata is never inferred from messages.
+/// Shared completed-turn details with explicit provenance for request fallbacks.
 public struct TurnDetailView: View {
     public let run: TaskRun
     public let isPrivacyMode: Bool
@@ -14,9 +14,20 @@ public struct TurnDetailView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 16) {
-                narrative(L("This turn’s goal", "本轮目标"), hint: run.publishedGoal == nil ? nil : L("Extracted need", "需求提炼"), text: run.publishedGoal, accent: true)
+                narrative(
+                    L("This turn’s goal", "本轮目标"),
+                    hint: goalHint,
+                    text: run.publishedGoal,
+                    accent: true
+                )
                 OverlayDivider()
-                narrative(L("Result", "结果"), hint: nil, text: run.publishedConclusion, expanded: $resultExpanded, accent: false)
+                narrative(
+                    L("Result", "结果"),
+                    hint: run.isLegacyConclusionFallback ? L("Legacy history", "历史兼容") : nil,
+                    text: run.publishedConclusion,
+                    expanded: $resultExpanded,
+                    accent: false
+                )
                 if run.result?.truncated == true {
                     Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.52))
                 }
@@ -56,6 +67,14 @@ public struct TurnDetailView: View {
         }
         .onChange(of: run.id) { _, _ in
             resultExpanded = false; planExpanded = false; jsonExpanded = false
+        }
+    }
+    private var goalHint: String? {
+        switch run.publishedGoalSource {
+        case .turnContext: return L("Extracted need", "需求提炼")
+        case .legacySummary: return L("Legacy history", "历史兼容")
+        case .turnRequest: return L("Original request excerpt", "原始请求摘要")
+        default: return nil
         }
     }
     private func narrative(_ title: String, hint: String?, text: String?, expanded: Binding<Bool>? = nil, accent: Bool) -> some View {

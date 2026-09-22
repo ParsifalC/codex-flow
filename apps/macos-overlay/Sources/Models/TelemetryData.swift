@@ -609,6 +609,19 @@ public struct TaskSummaryInfo: Codable {
     }
 }
 
+/// Identifies which persisted field supplied a displayed goal or conclusion.
+///
+/// `legacySummary` is a read-only compatibility path for runs written before
+/// per-turn publication existed. It is intentionally never copied into the
+/// new `turn_context` or `result` fields.
+public enum PublishedTextSource: String, Equatable {
+    case turnContext
+    case result
+    case legacySummary
+    case turnRequest
+    case missing
+}
+
 /// Recursive JSON keeps the original schema-11 execution plan intact while
 /// allowing the native overlay to remain independent of planner revisions.
 public enum JSONValue: Codable, Equatable {
@@ -795,6 +808,7 @@ public struct TaskRun: Codable, Identifiable {
     public var result: TurnResult?
     public var publication: PublicationInfo?
     public var publicationRequired: Bool?
+    public var promptSeen: Bool?
     public var transcriptPath: String?
     public var mergedInto: String?
     public var isSystemTask: Bool?
@@ -825,6 +839,7 @@ public struct TaskRun: Codable, Identifiable {
         case result
         case publication
         case publicationRequired = "publication_required"
+        case promptSeen = "prompt_seen"
         case transcriptPath = "transcript_path"
         case mergedInto = "merged_into"
         case isSystemTask = "is_system_task"
@@ -867,6 +882,7 @@ public struct TaskRun: Codable, Identifiable {
         result = try container.decodeIfPresent(TurnResult.self, forKey: .result)
         publication = try container.decodeIfPresent(PublicationInfo.self, forKey: .publication)
         publicationRequired = try container.decodeIfPresent(Bool.self, forKey: .publicationRequired)
+        promptSeen = try container.decodeIfPresent(Bool.self, forKey: .promptSeen)
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         mergedInto = try container.decodeIfPresent(String.self, forKey: .mergedInto)
         isSystemTask = try container.decodeIfPresent(Bool.self, forKey: .isSystemTask)
@@ -928,6 +944,7 @@ public struct TaskRun: Codable, Identifiable {
         try container.encodeIfPresent(result, forKey: .result)
         try container.encodeIfPresent(publication, forKey: .publication)
         try container.encodeIfPresent(publicationRequired, forKey: .publicationRequired)
+        try container.encodeIfPresent(promptSeen, forKey: .promptSeen)
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
         try container.encodeIfPresent(mergedInto, forKey: .mergedInto)
         try container.encodeIfPresent(isSystemTask, forKey: .isSystemTask)
@@ -1044,18 +1061,76 @@ public struct TaskRun: Codable, Identifiable {
         publishedConclusion
     }
 
-    public var publishedGoal: String? {
-        guard let text = turnContext?.goal?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private static func nonEmptyText(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return text
     }
 
+    /// The exact per-turn goal, when the new publication schema recorded one.
+    public var publishedGoalFromTurnContext: String? {
+        Self.nonEmptyText(turnContext?.goal?.text)
+    }
+
+    /// The old transcript-derived summary retained in legacy run files.
+    /// This is display-only compatibility data and is never treated as a
+    /// newly published turn fact.
+    public var legacyGoal: String? {
+        Self.nonEmptyText(summaryInfo?.goal)
+    }
+
+    /// The exact parent-final result, when the new publication schema recorded one.
+    public var publishedConclusionFromResult: String? {
+        Self.nonEmptyText(result?.text)
+    }
+
+    /// The old transcript-derived summary retained in legacy run files.
+    /// This is display-only compatibility data and is never treated as a
+    /// newly published turn fact.
+    public var legacyConclusion: String? {
+        Self.nonEmptyText(summaryInfo?.conclusion)
+    }
+
+    /// The prompt excerpt captured by UserPromptSubmit for this exact turn.
+    /// Older generic summaries and conversation-wide titles are not evidence.
+    public var capturedTurnRequest: String? {
+        guard publicationRequired == true, promptSeen == true,
+              Self.nonEmptyText(sessionId) != nil, Self.nonEmptyText(turnId) != nil,
+              !isInternalTask, let request = Self.nonEmptyText(summary) else { return nil }
+        return Self.cleanPromptText(request)
+    }
+
+    /// Display fallback only; never write a raw request into turn_context.goal.
+    public var publishedGoal: String? {
+        publishedGoalFromTurnContext ?? legacyGoal ?? capturedTurnRequest
+    }
+
+    /// Prefer the exact parent final and fall back to the legacy summary only
+    /// for historical records that do not have the new field.
     public var publishedConclusion: String? {
-        guard let text = result?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return text
+        publishedConclusionFromResult ?? legacyConclusion
+    }
+
+    public var publishedGoalSource: PublishedTextSource {
+        if publishedGoalFromTurnContext != nil { return .turnContext }
+        if legacyGoal != nil { return .legacySummary }
+        if capturedTurnRequest != nil { return .turnRequest }
+        return .missing
+    }
+
+    public var publishedConclusionSource: PublishedTextSource {
+        if publishedConclusionFromResult != nil { return .result }
+        if legacyConclusion != nil { return .legacySummary }
+        return .missing
+    }
+
+    public var isLegacyGoalFallback: Bool {
+        publishedGoalSource == .legacySummary
+    }
+
+    public var isLegacyConclusionFallback: Bool {
+        publishedConclusionSource == .legacySummary
     }
     
     public var turnPreview: String {
@@ -1706,6 +1781,10 @@ public struct ChatSession: Identifiable {
             }
         }
         return hasObserved ? total : nil
+    }
+
+    public var hasEstimatedQuota: Bool {
+        return runs.contains { $0.isQuotaEstimated }
     }
     
     public var totalWorkersCount: Int {

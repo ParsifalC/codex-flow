@@ -18,11 +18,15 @@
 父 Agent 通过宿主明确传入的本轮凭证调用：
 
 ```bash
-codex-flow telemetry context write-goal --receipt-file receipt.json --text-file goal.txt
+codex-flow telemetry context write-goal --receipt-file receipt.json --stdin <<'GOAL'
+修复本轮目标的显示。
+GOAL
 codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file plan.json --origin compiled
 ```
 
-文件使用 UTF-8。目标允许 1–80 个 Unicode 码点（含标点），优先一句、最多两句；首次成功后只能幂等重写相同
+目标通过 UTF-8 标准输入提交，无需创建或关联 `goal.json` / `goal.txt`。
+也可用 subprocess 的 `input` 传值；已有文件仍可用 `--text-file`。
+标准输入按原样读取，末尾换行也计入长度。目标允许 1–80 个 Unicode 码点（含标点），优先一句、最多两句；首次成功后只能幂等重写相同
 文本。计划必须是 planner 的完整 schema 11 JSON；沿用同一任务的计划时使用
 `--origin reused`，不重置任务预算。凭证不进入公开的 run 或复制摘要。
 
@@ -32,29 +36,25 @@ codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file 
 若写 run 后进程退出，可运行 `codex-flow telemetry recover-last --quiet` 恢复 last；
 恢复不发送完成通知。遥测关闭时写入、锁创建和 IPC 均停止，历史仍可读取。
 
-**兼容性按安装环境验证。** 开发机已通过真实 Desktop 的同轮凭证传递、
-目标/完整计划写入和父 Stop 发布验证，并在本机启用自动传递。
-新安装不会因此自动启用；其他宿主仍需各自验证。没有可验证凭证或父 final 时
-显示“未记录”，不能用最新轮次、唯一活动轮次、用户原文或最后一条 assistant
-消息替代。Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证。
+**宿主传递自动开启。** 每次真实 Codex Desktop 父轮次的 `UserPromptSubmit`
+都会按当前事件自动登记并通过 `hookSpecificOutput.additionalContext` 交付精确
+receipt，不需要用户 arm 探针或运行启用命令。无法识别或未交付 receipt 的宿主
+不会生成提炼目标。界面优先显示已记录目标，其次兼容历史目标；两者都缺失时，
+可显示该轮 `UserPromptSubmit` 已保存的请求摘要，并标记“原始请求摘要”。这只用于
+展示，不补造 `turn_context.goal`，也不使用聊天标题或其他轮次的消息；连本轮请求
+也没有时显示“未记录”。Python/CLI 保留 Windows 兼容实现；Windows 原生锁仍需 CI/实机验证。
 
-仓库提供一次性桌面探针 `tests/turn-context-desktop-probe.py`。显式指定对话 ID
-和工作目录后，`arm --session-id <id> --cwd <绝对路径>` 只允许接下来一个真实
-父轮次通过 `UserPromptSubmit.hookSpecificOutput.additionalContext` 接收凭证路径。
-默认等待 30 分钟；人工联调可加 `--wait-for-next-turn`，等待下一条发言而不按时间过期，
-仍只接收指定对话和目录下的一个真实父轮次。
-必须由用户实际发送消息触发；`status` 只有确认同轮目标、完整计划和父 Stop
-发布一致才成功。合成 Hook 和单测不能证明桌面支持，探针也不会打开全局自动写入。
-
-确认 `status` 返回 `supported_probe` 后，运行以下命令为当前安装启用自动传递。
-未验证时返回 `host_transport_unverified`，不会创建传递配置：
+仓库仍保留 `tests/turn-context-desktop-probe.py` 作为可选诊断工具，用于检查
+宿主转录格式和 receipt 绑定；正常使用不需要运行它。旧的
+`codex-flow telemetry context enable-desktop-transport` 命令也保留作兼容诊断，
+但不再是自动记录的前置条件：
 
 ```bash
 codex-flow telemetry context enable-desktop-transport
 ```
 
-`bash tests/turn-context-host.sh` 读取当前安装的真实探针状态作为验收门；不会启动
-额外模型任务，也不把 CLI marker 当作 Desktop 验证。
+`bash tests/turn-context-host.sh` 仅读取当前安装的可选诊断状态；不会启动额外模型
+任务，也不把 CLI marker 当作 Desktop 证据。
 
 浮窗启动恢复使用 `recover-last --quiet`，避免恢复历史记录时发送 IPC 提醒。
 
@@ -170,7 +170,7 @@ codex-flow telemetry repair --dry-run
 codex-flow telemetry repair
 ```
 
-目标、计划和结果不通过历史修复生成；缺失内容继续显示“未记录”。
+目标、计划和结果不通过历史修复生成，也不会把旧摘要回写成新的发布字段。原生浮窗读取时优先使用新字段；旧记录缺少 `turn_context.goal` 或 `result` 时，兼容读取已有 `summary_info.goal/conclusion`，并标记“历史兼容”。两处都没有数据时才显示“未记录”。
 
 **可恢复性判定原则**：
 - **不覆盖**：仅回填缺失字段，绝不覆盖已有有效数据。

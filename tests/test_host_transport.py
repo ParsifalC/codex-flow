@@ -33,12 +33,18 @@ class DesktopProbeTests(unittest.TestCase):
             host_transport.enable_desktop_transport(state_root=self.root)
         self.assertFalse((self.root / host_transport.TRANSPORT_FILE).exists())
 
-    def test_verified_transport_delivers_multiple_parent_turns_only(self):
-        with patch.object(host_transport, "probe_status", return_value={"goal_plan_stop_chain_verified": True}):
-            host_transport.enable_desktop_transport(state_root=self.root)
+    def test_default_transport_delivers_multiple_parent_turns_only(self):
         for turn in ("one", "two"):
             output = host_transport.hook_context({**self.event, "turn_id": turn}, state_root=self.root)
             self.assertIn("write-goal", output["hookSpecificOutput"]["additionalContext"])
+        self.assertFalse((self.root / host_transport.TRANSPORT_FILE).exists())
+        receipts = sorted((self.root / "turn-receipts").glob("*.json"))
+        self.assertEqual(len(receipts), 2)
+        self.assertEqual(
+            {(json.loads(path.read_text())["session_id"], json.loads(path.read_text())["turn_id"])
+             for path in receipts},
+            {("chat", "one"), ("chat", "two")},
+        )
         for event in ({**self.event, "agent_id": "child"}, {**self.event, "role": "worker"},
                       {**self.event, "hook_event_name": "Stop"}):
             self.assertIsNone(host_transport.hook_context(event, state_root=self.root))

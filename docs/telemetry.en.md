@@ -16,14 +16,18 @@ A project uses `cwd`, a chat uses `session_id`, and a turn uses `turn_id`.
 Goals belong to `session_id + turn_id`. New turns never replace earlier goals
 or rewrite the user's messages.
 
-With an explicit receipt delivered by the host to this parent turn, use UTF-8 files:
+With an explicit receipt delivered by the host to this parent turn, submit the goal through UTF-8 stdin:
 
 ```bash
-codex-flow telemetry context write-goal --receipt-file receipt.json --text-file goal.txt
+codex-flow telemetry context write-goal --receipt-file receipt.json --stdin <<'GOAL'
+Fix this turn's goal display.
+GOAL
 codex-flow telemetry context write-plan --receipt-file receipt.json --plan-file plan.json --origin compiled
 ```
 
-Goals accept 1–80 Unicode code points and at most two sentences and become immutable after the first write.
+No intermediate goal file or chat attachment is needed. Subprocess input also works;
+`--text-file` remains available for existing files. Stdin preserves trailing newlines,
+which count toward the limit. Goals accept 1–80 Unicode code points and at most two sentences and become immutable after the first write.
 Repeated identical writes are idempotent. Plans retain the complete schema-11
 planner JSON. Use `--origin reused` when continuing the same task's existing plan;
 do not reset its budget. Public run snapshots never contain the receipt secret.
@@ -36,33 +40,27 @@ run and last writes, use `codex-flow telemetry recover-last --quiet`. Recovery
 does not send a completion notification. Disabled telemetry performs no state,
 lock, or IPC writes; historical reads remain available.
 
-**Compatibility is verified per installation.** The development installation has
-passed real Desktop receipt delivery, same-turn goal/full-plan writes, and parent
-Stop publication, and has explicitly enabled automatic delivery locally. New
-installations remain off until verified; other hosts need their own validation.
-Missing receipt/final evidence displays “Not recorded” rather than guessing from
-the latest turn, user prompt, or last assistant message. Python/CLI retain
-Windows-compatible code; native Windows locking still needs CI or device validation.
+**Host delivery is automatic.** Each real Codex Desktop parent
+`UserPromptSubmit` registers and delivers the exact current-turn receipt through
+`hookSpecificOutput.additionalContext`; users do not need to arm a probe or run
+an enable command. Hosts that cannot deliver a receipt do not create an extracted goal.
+The overlay prefers a recorded goal, then a legacy goal, then the request excerpt
+captured by this turn's UserPromptSubmit, labeled “Original request excerpt”. This
+display fallback never creates turn_context.goal or uses a chat title or another
+turn's message. If all sources are absent it displays “Not recorded”.
+Python/CLI retain Windows-compatible code; native Windows locking still
+needs CI or device validation.
 
-The repository includes a one-turn Desktop probe in `tests/turn-context-desktop-probe.py`.
-Explicitly select a chat and working directory with `arm --session-id <id> --cwd <absolute-path>`.
-The default wait expires after 30 minutes. Add `--wait-for-next-turn` for manual
-validation across sessions; it still accepts only one parent turn in the selected chat and directory.
-The next real parent turn can receive its receipt path through
-`UserPromptSubmit.hookSpecificOutput.additionalContext`. A real user message must
-trigger the hook. `status` succeeds only after same-turn goal, full plan, and
-parent Stop publication match. Synthetic hooks and unit tests do not establish
-Desktop support, and the probe never enables global automatic writes.
-
-After `status` reports `supported_probe`, enable automatic delivery for this
-installation explicitly. An unverified probe returns `host_transport_unverified`
-without creating transport configuration:
+The repository still includes `tests/turn-context-desktop-probe.py` as an
+optional diagnostic for transcript format and receipt binding. Normal usage does
+not require it. The legacy command remains available for compatibility
+diagnostics, but it is not a prerequisite for automatic recording:
 
 ```bash
 codex-flow telemetry context enable-desktop-transport
 ```
 
-`bash tests/turn-context-host.sh` checks the installation’s actual Desktop probe
+`bash tests/turn-context-host.sh` only reads the optional Desktop diagnostic
 status. It never launches an extra model task or treats a CLI marker as Desktop evidence.
 
 Overlay startup uses `recover-last --quiet` to avoid IPC alerts while restoring history.
@@ -182,6 +180,7 @@ codex-flow telemetry repair
 
 **Backfill Principles**:
 - **Preserve Existing Data**: Only fills in missing fields; never overwrites valid existing data.
+- **Legacy Display Compatibility**: Repair does not generate goals, plans, or results and never writes legacy summaries into new publication fields. The native overlay prefers the new fields; old records without `turn_context.goal` or `result` display `summary_info.goal/conclusion` with a legacy-history label. “Not recorded” is shown only when both sources are absent.
 - **Explicit Estimates**: The app-server finish snapshot remains preferred. If it times out but the exact turn's transcript contains a final `token_count.rate_limits` watermark, telemetry backfills `quota_after` with `quota_after_source=transcript_estimate`. The UI and summary label it as estimated; it is evidence for that run only and is excluded from canonical quota attribution and cumulative statistics.
 - **Idempotent**: Repeated execution safely reports `repaired: 0`.
 - **Authoritative Sync**: Safely updates `last.json` if the repaired run matches the latest session and turn ID.

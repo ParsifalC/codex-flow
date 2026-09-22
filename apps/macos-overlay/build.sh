@@ -22,6 +22,41 @@ mkdir -p "$BIN_DIR"
 
 echo "🔨 Building FlowPilot native macOS widget (this usually takes ~40-50s on macOS)..."
 
+# SwiftUI's newer SDKs expose property wrappers such as @State through the
+# SwiftUIMacros compiler plugin.  A machine can have Xcode installed while
+# xcode-select still points at CommandLineTools, whose SDK does not ship that
+# plugin.  Prefer an installed developer directory that contains the plugin so
+# the build does not depend on the user's global xcode-select setting.
+has_swiftui_macro_plugin() {
+    [[ -f "$1/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]]
+}
+
+developer_dir="${DEVELOPER_DIR:-}"
+if [[ -n "$developer_dir" && "$developer_dir" == *.app ]]; then
+    developer_dir="$developer_dir/Contents/Developer"
+fi
+
+if [[ -z "$developer_dir" ]]; then
+    developer_dir="$(xcode-select -p 2>/dev/null || true)"
+fi
+
+if ! has_swiftui_macro_plugin "$developer_dir"; then
+    developer_dir=""
+    for candidate in /Applications/Xcode*.app/Contents/Developer "$HOME"/Applications/Xcode*.app/Contents/Developer; do
+        if has_swiftui_macro_plugin "$candidate"; then
+            developer_dir="$candidate"
+            break
+        fi
+    done
+fi
+
+SWIFT_COMPILER=(swiftc)
+if [[ -n "$developer_dir" ]]; then
+    swiftui_plugin_dir="$developer_dir/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins"
+    SWIFT_COMPILER=(env "DEVELOPER_DIR=$developer_dir" xcrun swiftc -plugin-path "$swiftui_plugin_dir")
+    echo "Using SwiftUI macro-capable Xcode toolchain: $developer_dir"
+fi
+
 SWIFT_FILES=()
 while IFS= read -r -d '' file; do
     SWIFT_FILES+=("$file")
@@ -36,7 +71,7 @@ fi
 # place can invalidate mapped executable pages and SIGKILL the running process.
 # Atomic rename keeps the old inode alive for the current process while new
 # launches immediately see the freshly built binary.
-swiftc \
+"${SWIFT_COMPILER[@]}" \
     -num-threads "$CORES" \
     -j "$CORES" \
     -framework Cocoa \

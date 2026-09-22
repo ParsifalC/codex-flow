@@ -2,7 +2,7 @@
 
 Receipts enforce correct association, not an adversarial security boundary.
 Host delivery is handled by host_transport only after a real local Desktop
-probe passes. Explicit file APIs never infer turn identity or rewrite prompts.
+probe passes. Explicit receipt APIs never infer turn identity or rewrite prompts.
 """
 from __future__ import annotations
 
@@ -370,12 +370,22 @@ def _write_receipt(path: Path, state_root: Path) -> tuple[TurnReceipt, str | Non
     return receipt, transcript_path, version
 
 
-def write_goal(*, receipt_file: Path, text_file: Path, state_root: Path = STATE_ROOT,
+def write_goal(*, receipt_file: Path, text_file: Path | None = None, text: str | None = None,
+               state_root: Path = STATE_ROOT,
                clock: Callable[[], int] = now_ms) -> dict[str, Any]:
     if not telemetry_writes_enabled():
         return {"status": "disabled"}
+    if (text_file is None) == (text is None):
+        raise ReceiptError("invalid_arguments")
     receipt, transcript_path, version = _write_receipt(receipt_file, state_root)
-    text = _read_utf8(text_file)
+    if text_file is not None:
+        text = _read_utf8(text_file)
+    if not isinstance(text, str):
+        raise ReceiptError("invalid_arguments")
+    try:
+        text.encode("utf-8")
+    except UnicodeError:
+        raise ReceiptError("invalid_utf8") from None
     if not text.strip():
         raise ReceiptError("goal_empty")
     if len(text) > 80:

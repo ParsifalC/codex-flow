@@ -48,6 +48,7 @@ policy_or_default() {
 }
 
 DEFAULT_WORKER_MODEL="$(read_default models worker_model)"
+DEFAULT_WORKER_MODEL_PROVIDER="$(read_default models worker_model_provider)"
 DEFAULT_WORKER_POLICY="$(read_default models worker_policy)"
 DEFAULT_PARENT_POLICY="$(read_default models parent_policy)"
 DEFAULT_PARENT_MIN_MODEL="$(read_default models parent_min_model)"
@@ -88,6 +89,7 @@ EXISTING_PARENT_COMPLEX_EFFORT="$(policy_or_default parent complex_effort "$DEFA
 EXISTING_PARENT_CRITICAL_EFFORT="$(policy_or_default parent critical_effort "$DEFAULT_PARENT_CRITICAL_EFFORT")"
 EXISTING_WORKER_POLICY="$(policy_or_default worker model_policy "$DEFAULT_WORKER_POLICY")"
 EXISTING_WORKER_MODEL="$(policy_or_default worker model auto)"
+EXISTING_WORKER_MODEL_PROVIDER="$(policy_or_default worker model_provider "$DEFAULT_WORKER_MODEL_PROVIDER")"
 EXISTING_WORKER_MIN_EFFORT="$(policy_or_default worker min_reasoning_effort "$DEFAULT_WORKER_MIN_EFFORT")"
 EXISTING_WORKER_ROUTINE_EFFORT="$(policy_or_default worker routine_effort "$DEFAULT_WORKER_ROUTINE_EFFORT")"
 EXISTING_WORKER_COMPLEX_EFFORT="$(policy_or_default worker complex_effort "$DEFAULT_WORKER_COMPLEX_EFFORT")"
@@ -123,6 +125,7 @@ PARENT_CRITICAL_EFFORT="${CODEX_FLOW_PARENT_CRITICAL_EFFORT:-$EXISTING_PARENT_CR
 WORKER_MODEL_POLICY="${CODEX_FLOW_WORKER_MODEL_POLICY:-$EXISTING_WORKER_POLICY}"
 WORKER_MODEL_REQUESTED="${CODEX_FLOW_WORKER_MODEL:-$EXISTING_WORKER_MODEL}"
 WORKER_MODEL="$WORKER_MODEL_REQUESTED"; [[ "$WORKER_MODEL" == "auto" ]] && WORKER_MODEL="$DEFAULT_WORKER_MODEL"
+WORKER_MODEL_PROVIDER="${CODEX_FLOW_WORKER_MODEL_PROVIDER:-$EXISTING_WORKER_MODEL_PROVIDER}"
 WORKER_MIN_EFFORT="${CODEX_FLOW_WORKER_MIN_EFFORT:-$EXISTING_WORKER_MIN_EFFORT}"
 WORKER_ROUTINE_EFFORT="${CODEX_FLOW_WORKER_ROUTINE_EFFORT:-$EXISTING_WORKER_ROUTINE_EFFORT}"
 WORKER_COMPLEX_EFFORT="${CODEX_FLOW_WORKER_COMPLEX_EFFORT:-$EXISTING_WORKER_COMPLEX_EFFORT}"
@@ -170,6 +173,7 @@ case "$UPDATE_NOTIFY_CLI" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_NOTIFY_CL
 case "$UPDATE_NOTIFY_APP" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_NOTIFY_APP must be true or false" >&2; exit 2 ;; esac
 case "$UPDATE_AUTO_INSTALL" in true|false) ;; *) echo "CODEX_FLOW_UPDATE_AUTO_INSTALL must be true or false" >&2; exit 2 ;; esac
 [[ "$UPDATE_INTERVAL" =~ ^[1-9][0-9]*$ ]] || { echo "CODEX_FLOW_UPDATE_CHECK_INTERVAL_HOURS must be a positive integer" >&2; exit 2; }
+[[ -n "$WORKER_MODEL_PROVIDER" && "$WORKER_MODEL_PROVIDER" != *$'\n'* && "$WORKER_MODEL_PROVIDER" != *$'\r'* ]] || { echo "CODEX_FLOW_WORKER_MODEL_PROVIDER must be a non-empty single-line value" >&2; exit 2; }
 
 mkdir -p "$CODEX_HOME/agents" "$CODEX_HOME/skills/flow-pilot" "$STATE_DIR" "$STATE_DIR/state" "$STATE_DIR/versions" "$BIN_DIR"
 # Validate and install the prompt entry before changing policy/configuration.
@@ -236,6 +240,7 @@ critical_effort = "$PARENT_CRITICAL_EFFORT"
 [worker]
 model_policy = "$WORKER_MODEL_POLICY"
 model = "$WORKER_MODEL_REQUESTED"
+model_provider = "$WORKER_MODEL_PROVIDER"
 resolved_model = "$WORKER_MODEL"
 min_reasoning_effort = "$WORKER_MIN_EFFORT"
 reasoning_policy = "adaptive"
@@ -273,6 +278,11 @@ EOF
 cp "$ROOT_DIR/templates/agents/worker-explorer.toml" "$CODEX_HOME/agents/worker-explorer.toml"
 cp "$ROOT_DIR/templates/agents/worker-implementer.toml" "$CODEX_HOME/agents/worker-implementer.toml"
 cp "$ROOT_DIR/templates/agents/worker-reviewer.toml" "$CODEX_HOME/agents/worker-reviewer.toml"
+python3 "$ROOT_DIR/scripts/update_runtime_config.py" \
+  --config "$CONFIG" \
+  --policy "$POLICY" \
+  --defaults "$DEFAULTS" \
+  --agents-dir "$CODEX_HOME/agents"
 cp "$ROOT_DIR/templates/skills/flow-pilot/SKILL.md" "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 rm -f "$CODEX_HOME/agents/luna-explorer.toml" "$CODEX_HOME/agents/luna-implementer.toml"
 

@@ -27,13 +27,16 @@ error instead of treating the failure as a disabled switch.
    use uncertainty about the task as a reason to skip the gate.
 
 4. Only for a FlowPilot-participating parent turn with telemetry enabled and
-   a receipt delivered through a verified host context protocol, save a
-   1–80 Unicode-codepoint goal of at most two sentences to a UTF-8 file and call:
+   a receipt delivered by the current host UserPromptSubmit hook, submit a
+   1–80 Unicode-codepoint goal of at most two sentences through UTF-8 stdin:
 
    ```text
-   codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --text-file <utf8-goal-file>
+   codex-flow telemetry context write-goal --receipt-file <host-receipt-file> --stdin
    ```
 
+   Supply the text through subprocess input or a quoted here-document; no
+   intermediate goal file or chat attachment is needed. `--text-file` remains
+   available for callers with an existing UTF-8 file.
    This happens after the gate and before TaskProfile/planner work. Preserve
    the user's original message. Use concise, accurate, plain language focused
    on the user's desired outcome; omit jargon and process narration. The first successful goal is immutable for
@@ -48,13 +51,13 @@ error instead of treating the failure as a disabled switch.
    re-profile uses `--origin replanned`; it never resets the task ledger or
    its original budget plan.
 
-Automatic goal/plan writes require a locally verified and enabled host transport.
-On such installations, use the exact receipt supplied through the verified
-Desktop UserPromptSubmit `hookSpecificOutput.additionalContext` protocol.
-Unverified installations keep automatic writes disabled and show “未记录”. Do not discover a
-receipt by scanning state, infer one from `CODEX_*`, `last.json`, or an active
-turn, or treat `systemMessage` as a supported transport. Missing/invalid
-receipts and telemetry-disabled results do not interrupt the main task.
+On Codex Desktop, the UserPromptSubmit hook automatically supplies the exact
+current-turn receipt through `hookSpecificOutput.additionalContext`; no probe,
+manual arm step, or enable command is required. If the host does not deliver a
+receipt, show “未记录” for that turn. Do not discover a receipt by scanning state,
+infer one from `CODEX_*`, `last.json`, or an active turn, or treat `systemMessage`
+as a supported transport. Missing/invalid receipts and telemetry-disabled
+results do not interrupt the main task.
 Do not pass parent receipts to workers or forge goals/plans for disabled or
 bypassed tasks. Metadata writes do not publish details; only parent Stop does.
 

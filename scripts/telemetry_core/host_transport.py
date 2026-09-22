@@ -1,4 +1,4 @@
-"""Locally verified Desktop receipt transport and opt-in one-turn probe.
+"""Desktop receipt transport and compatibility one-turn probe.
 
 Protocol: https://developers.openai.com/codex/hooks#userpromptsubmit
 Only hookSpecificOutput.additionalContext is model-visible context. A successful
@@ -18,7 +18,7 @@ TRANSPORT_FILE = "desktop-context-transport.json"
 
 
 def enable_desktop_transport(*, state_root: Path = STATE_ROOT) -> dict[str, Any]:
-    """Enable this installation only after its real parent Stop probe passed."""
+    """Retain the legacy explicit enable API for compatibility diagnostics."""
     if not telemetry_writes_enabled():
         return {"status": "disabled"}
     try:
@@ -33,14 +33,10 @@ def enable_desktop_transport(*, state_root: Path = STATE_ROOT) -> dict[str, Any]
 
 
 def hook_context(event: dict[str, Any], *, state_root: Path = STATE_ROOT) -> dict[str, Any] | None:
-    """Deliver exact receipts only on a locally verified Desktop installation."""
+    """Deliver an exact receipt for each real Desktop parent UserPromptSubmit."""
     if not telemetry_writes_enabled() or not isinstance(event, dict):
         return None
     try:
-        path = Path(state_root) / TRANSPORT_FILE
-        config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        if config != {"schema_version": 1, "enabled": True, "transport": "codex-additional-context-v1"}:
-            return probe_hook_context(event, state_root=state_root)
         if (event.get("hook_event_name") != "UserPromptSubmit" or event.get("agent_id")
                 or event.get("role", "parent") != "parent" or not _desktop_parent(event)):
             return None
@@ -49,11 +45,12 @@ def hook_context(event: dict[str, Any], *, state_root: Path = STATE_ROOT) -> dic
             return None
         receipt_file = Path(state_root) / "turn-receipts" / (receipt_digest(receipt.session_id, receipt.turn_id) + ".json")
         context = (
-            "FlowPilot verified Desktop turn metadata (not the user's request). "
+            "FlowPilot Desktop turn metadata (not the user's request). "
             "The current parent UserPromptSubmit supplied this exact receipt file: "
             + json.dumps(str(receipt_file), ensure_ascii=False) + ". "
             "After the installed FlowPilot strategy gate, if participating, use write-goal and write-plan "
-            "with this receipt. Extract the actual current need (1–80 codepoints, at most two sentences), preserving ongoing task context. "
+            "with this receipt. Submit the goal through write-goal --stdin using UTF-8 input, without creating an intermediate goal file. "
+            "Extract the actual current need (1–80 codepoints, at most two sentences), preserving ongoing task context. "
             "Use concise, accurate, plain language focused on the desired outcome; omit jargon and process narration. "
             "Save the complete actual planner JSON; on follow-ups reuse the existing plan and ledger with origin=reused. "
             "Never reset the task budget, alter user messages, fabricate metadata, scan other receipts, "
@@ -137,7 +134,7 @@ def probe_hook_context(event: dict[str, Any], *, state_root: Path = STATE_ROOT,
                 "FlowPilot skill's write-goal and write-plan commands after its strategy gate. "
                 "Extract the actual current user need (1–80 codepoints, at most two sentences); save the actual complete planner JSON, "
                 "or reuse the existing plan and ledger with origin=reused. Never reset the task budget. "
-                "Outside this probe, automatic writes require a locally verified and enabled transport. "
+                "Normal Desktop delivery is automatic; this probe is diagnostic only. "
                 "Do not display the receipt contents, copy it into worker handoffs, scan for other receipts, "
                 "or edit the user's message/transcript. A successful probe needs both same-turn CLI writes "
                 "and matching parent Stop publication. Continue the user's task if metadata writing fails."
