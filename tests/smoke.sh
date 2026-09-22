@@ -128,14 +128,40 @@ grep -Fq 'implementer_capability_policy' "$CODEX_HOME/skills/flow-pilot/SKILL.md
 grep -Fq 'A `wait()` timeout is never a Worker timeout.' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'cancel_if_superseded' "$CODEX_HOME/skills/flow-pilot/SKILL.md"
 grep -Fq 'UserPromptSubmit' "$CODEX_HOME/hooks.json"
+grep -Fq 'PermissionRequest' "$CODEX_HOME/hooks.json"
+grep -Fq 'PreToolUse' "$CODEX_HOME/hooks.json"
+grep -Fq 'PostToolUse' "$CODEX_HOME/hooks.json"
 grep -Fq 'SubagentStart' "$CODEX_HOME/hooks.json"
 grep -Fq 'SubagentStop' "$CODEX_HOME/hooks.json"
 grep -Fq 'Stop' "$CODEX_HOME/hooks.json"
+grep -Fq 'Interrupt' "$CODEX_HOME/hooks.json"
 grep -Fq 'codex-flow/telemetry.py' "$CODEX_HOME/hooks.json"
 grep -Fxq "$ROOT_DIR" "$CODEX_HOME/codex-flow/source"
 grep -Fxq "$(cat "$ROOT_DIR/VERSION")" "$CODEX_HOME/codex-flow/version"
 
 codex-flow status
+codex-flow help | grep -Fq 'pets install'
+
+# Pet installation stays inside the isolated CODEX_HOME and survives selection changes.
+PET_SOURCE="$TMP/pet-source"
+python3 - "$PET_SOURCE" <<'PY'
+import json, struct, sys, zlib
+from pathlib import Path
+root = Path(sys.argv[1]); root.mkdir(parents=True)
+width, height = 96, 143
+def chunk(kind, payload):
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff)
+rows = b"".join(b"\0" + bytes(width * 4) for _ in range(height))
+(root / "pet.json").write_text(json.dumps({"id":"smoke", "displayName":"Smoke", "spriteVersionNumber":2, "spritesheetPath":"spritesheet.png"}))
+(root / "spritesheet.png").write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+PY
+codex-flow pets install "$PET_SOURCE" > "$TMP/pet-install.out" 2> "$TMP/pet-install.err"
+grep -Fq 'local-smoke' "$TMP/pet-install.out"
+[[ "$(cat "$CODEX_HOME/codex-flow/pets/current")" == 'local-smoke' ]]
+codex-flow pets list | grep -Fq 'local-smoke'
+codex-flow pets use default
+[[ "$(cat "$CODEX_HOME/codex-flow/pets/current")" == 'default' ]]
+[[ -f "$CODEX_HOME/codex-flow/pets/installed/local-smoke/spritesheet.png" ]]
 strategy_show="$(codex-flow strategy show)"
 [[ "$strategy_show" == "enabled=true strategy=efficient routing=adaptive" ]]
 [[ "$(codex-flow strategy)" == "enabled=true strategy=efficient routing=adaptive" ]]
@@ -257,7 +283,7 @@ grep -Fq 'retention_days = 17' "$CODEX_HOME/codex-flow.toml"
 python3 - "$CODEX_HOME/hooks.json" <<'PY'
 import json, sys
 hooks=json.load(open(sys.argv[1]))["hooks"]
-for event in ("UserPromptSubmit","SubagentStart","SubagentStop","Stop"):
+for event in ("UserPromptSubmit","PermissionRequest","PreToolUse","PostToolUse","SubagentStart","SubagentStop","Stop","Interrupt"):
     managed=[entry for entry in hooks[event] if any("codex-flow/telemetry.py" in hook.get("command", "").replace("\\", "/") for hook in entry.get("hooks", []))]
     assert len(managed) == 1, (event, managed)
 stop_hooks = hooks["Stop"][0]["hooks"]
@@ -320,7 +346,9 @@ EOF
 chmod +x "$TMP/no-launchagents/uname"
 PATH="$TMP/no-launchagents:$PATH" env -u CODEX_FLOW_BIN_DIR codex-flow uninstall
 [[ ! -e "$CODEX_HOME/codex-flow.toml" ]]
-[[ ! -e "$CODEX_HOME/codex-flow" ]]
+[[ -d "$CODEX_HOME/codex-flow" ]]
+[[ -f "$CODEX_HOME/codex-flow/pets/installed/local-smoke/spritesheet.png" ]]
+[[ "$(cat "$CODEX_HOME/codex-flow/pets/current")" == 'default' ]]
 [[ ! -e "$CODEX_FLOW_BIN_DIR/codex-flow" ]]
 [[ ! -e "$CODEX_HOME/agents/worker-explorer.toml" ]]
 [[ ! -e "$CODEX_HOME/agents/worker-implementer.toml" ]]
@@ -345,5 +373,10 @@ grep -Fq 'keep_me = true' "$CODEX_HOME/config.toml"
 ! grep -q '^default_subagent_reasoning_effort' "$CODEX_HOME/config.toml"
 cmp "$CODEX_HOME/AGENTS.md" "$TMP/agents-before"
 [[ ! -e "$CODEX_HOME/AGENTS.override.md" ]]
+
+EMPTY_HOME="$TMP/empty-no-pets/.codex"
+mkdir -p "$EMPTY_HOME/codex-flow/pets/installed"
+CODEX_HOME="$EMPTY_HOME" CODEX_FLOW_BIN_DIR="$TMP/empty-bin" bash "$ROOT_DIR/scripts/uninstall" >/dev/null
+[[ ! -e "$EMPTY_HOME/codex-flow" ]]
 
 printf 'smoke test passed\n'

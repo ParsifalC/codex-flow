@@ -102,6 +102,9 @@ if [[ -d "$STATE_BIN" ]]; then
     state_tmp_overlay=""
 fi
 
+# Make the bundled pets available when running the development binary directly.
+python3 "$SCRIPT_DIR/../../scripts/pets.py" --home "$CODEX_HOME" seed
+
 echo "✨ Build succeeded: $FLOWPILOT_OUTPUT"
 echo ""
 echo "🚀 Quick Start:"

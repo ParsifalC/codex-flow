@@ -1,0 +1,6 @@
+{
+  "description": "A compact blue robot-cat Codex pet inspired by 哆啦A梦, simplified into a pixel-adjacent desktop mascot.",
+  "displayName": "Doraemon",
+  "id": "doraemon",
+  "spritesheetPath": "spritesheet.webp"
+}

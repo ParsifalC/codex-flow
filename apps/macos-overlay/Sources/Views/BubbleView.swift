@@ -12,12 +12,18 @@ public struct BubbleView: View {
     public init(state: OverlayState) { self.state = state }
 
     public var body: some View {
-        HStack(spacing: 0) {
-            if state.isDocked && state.dockEdge == .right { Spacer(minLength: 0) }
-            tile
-            if state.isDocked && state.dockEdge != .right { Spacer(minLength: 0) }
+        Group {
+            if state.petResource != nil {
+                petCompanion
+            } else {
+                HStack(spacing: 0) {
+                    if state.isDocked && state.dockEdge == .right { Spacer(minLength: 0) }
+                    tile
+                    if state.isDocked && state.dockEdge != .right { Spacer(minLength: 0) }
+                }
+            }
         }
-        .frame(width: OverlayCompactLayout.hostSize.width, height: OverlayCompactLayout.hostSize.height)
+        .frame(width: state.compactSize.width, height: state.compactSize.height)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isHovered)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: state.isDocked)
         .accessibilityElement(children: .ignore)
@@ -27,10 +33,25 @@ public struct BubbleView: View {
         .help("FlowPilot · " + statusText)
     }
 
+    private var petCompanion: some View {
+        VStack(spacing: 4) {
+            PetView(state: state, animator: state.petAnimator, reduceMotion: reduceMotion)
+            PetCaptionView(run: state.latestRun, reminder: state.petReminderRun,
+                           privacy: state.isPrivacyMode, reduceMotion: reduceMotion)
+                .frame(height: 30)
+        }
+        .frame(width: OverlayCompactLayout.petContentSize.width, height: OverlayCompactLayout.petContentSize.height)
+        .contentShape(Rectangle())
+        .onHover {
+            isHovered = $0
+            if $0 { state.playPetHover(reduceMotion: reduceMotion) }
+        }
+    }
+
     private var tile: some View {
         HStack(spacing: state.isDocked ? 3 : 8) {
             ResultGlow(isUnread: state.hasUnreadResult)
-                .frame(width: 24, height: 28)
+            .frame(width: 24, height: 28)
             if !state.isDocked {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(state.hasUnreadResult ? L("New result", "新结果") : (state.latestRun == nil ? L("Waiting", "等待结果") : L("Done", "已完成")))
@@ -72,7 +93,12 @@ public struct BubbleView: View {
         }
         .shadow(color: .black.opacity(0.22), radius: 4, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: OverlayCompactLayout.cornerRadius, style: .continuous))
-        .onHover { isHovered = $0 }
+        .onHover {
+            isHovered = $0
+            if $0 {
+                state.playPetHover(reduceMotion: reduceMotion)
+            }
+        }
     }
 
     private var statusText: String {
@@ -82,6 +108,9 @@ public struct BubbleView: View {
         }
         if updateService.hasUpdateBadge {
             text += " · " + (updateService.isRestartRequired ? L("Restart required", "需要重启") : L("Update available", "发现新版本"))
+        }
+        if state.petActivityUnavailable {
+            text += " · " + L("Activity unavailable", "活动状态不可用")
         }
         return text
     }

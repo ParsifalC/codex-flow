@@ -37,6 +37,7 @@ from telemetry_core import (
 from telemetry_core.latency import LatencyError
 from telemetry_core.common import telemetry_writes_enabled
 from telemetry_core.turn_context import ReceiptError, write_goal, write_plan
+from telemetry_core.activity import ActivityError, record_receipt_activity
 from telemetry_core.publication import recover_last
 import telemetry_core.collector as _collector
 from localization import resolve_language, tr
@@ -238,6 +239,40 @@ def _latency_option(args: list[str], name: str) -> str | None:
     return None
 
 
+def _activity_cli(args: list[str]) -> int:
+    """Record one explicit, receipt-bound live pet activity event."""
+    if args[1:] in (["--help"], ["-h"]):
+        print("Usage: codex-flow telemetry activity STATUS --receipt-file PATH\n\n"
+              "STATUS: running|waiting|review|succeeded|failed")
+        return 0
+    if not telemetry_writes_enabled():
+        print(json.dumps({"accepted": False, "status": "disabled"}, sort_keys=True))
+        return 0
+    try:
+        if len(args) < 2 or args[1] not in {"running", "waiting", "review", "succeeded", "failed"}:
+            raise ActivityError("invalid_arguments")
+        values: dict[str, str] = {}
+        index = 2
+        while index < len(args):
+            option = args[index]
+            if option != "--receipt-file" or option in values or index + 1 >= len(args):
+                raise ActivityError("invalid_arguments")
+            value = args[index + 1]
+            if not value or value.startswith("--"):
+                raise ActivityError("invalid_arguments")
+            values[option] = value
+            index += 2
+        if set(values) != {"--receipt-file"}:
+            raise ActivityError("invalid_arguments")
+        result = record_receipt_activity(args[1], Path(values["--receipt-file"]))
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+    except (ActivityError, ReceiptError, OSError) as exc:
+        code = exc.code if isinstance(exc, (ActivityError, ReceiptError)) else "file_error"
+        print(json.dumps({"accepted": False, "error": code}, sort_keys=True), file=sys.stderr)
+        return 2
+
+
 def _latency_state_file(args: list[str]) -> str | None:
     return _latency_option(args, "--state-file")
 
@@ -358,6 +393,8 @@ def main() -> int:
         cmd = args[0]
         if cmd == "context":
             return _context_cli(args)
+        if cmd == "activity":
+            return _activity_cli(args)
         if cmd == "latency":
             return _latency_cli(args)
         if cmd == "last":

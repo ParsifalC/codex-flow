@@ -41,7 +41,9 @@ public struct AccountView: View {
                 factRow("Credits", creditsDisplay(snapshot))
                 DisclosureGroup(L("More account information", "更多账户信息"), isExpanded: $accountDetailsExpanded) {
                     accountFactsCard(snapshot).padding(.top, 14)
-                }.font(.system(size: 12.5)).tint(OverlayTheme.secondary)
+                }
+                .disclosureGroupStyle(OverlayDisclosureStyle())
+                .font(.system(size: 12.5)).tint(OverlayTheme.secondary)
             } else {
                 emptyState
             }
@@ -50,8 +52,11 @@ public struct AccountView: View {
                 VStack(spacing: 14) {
                     StrategyModeCard()
                     AutostartCard()
+                    PetSettingsCard(state: state)
                 }.padding(.top, 14)
-            }.font(.system(size: 12.5)).tint(OverlayTheme.secondary)
+            }
+            .disclosureGroupStyle(OverlayDisclosureStyle())
+            .font(.system(size: 12.5)).tint(OverlayTheme.secondary)
         }
         .padding(.vertical, 20)
 

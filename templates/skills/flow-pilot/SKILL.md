@@ -123,6 +123,27 @@ disabled strategy or consumed bypass never produces a fabricated goal or
 ExecutionPlan. Parent Stop alone publishes details; these commands only
 persist sidecar metadata.
 
+## Live pet activity
+
+When the native pet overlay is active, hook events provide bounded activity
+state. If a host does not expose a matching hook, a parent may report a
+verified boundary with the active parent receipt:
+
+```text
+codex-flow telemetry activity waiting --receipt-file <host-receipt-file>
+codex-flow telemetry activity review --receipt-file <host-receipt-file>
+codex-flow telemetry activity running --receipt-file <host-receipt-file>
+codex-flow telemetry activity succeeded --receipt-file <host-receipt-file>
+codex-flow telemetry activity failed --receipt-file <host-receipt-file>
+```
+
+Use `waiting` only while an actual user input or permission boundary is open,
+`review` while an exact reviewer is active, and `running` when that boundary
+has ended. Use `succeeded` only after the task's verified success and `failed`
+only for an actual terminal failure. A Stop hook means the turn was observed
+to complete; it does not prove success, and missing or expired activity must
+remain unknown. These commands are best effort and never replace publication.
+
 ## 1. Build only the semantic TaskProfile
 
 Profile the task before broad execution:

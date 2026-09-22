@@ -286,15 +286,30 @@ class HookPublicationTests(unittest.TestCase):
 
         return wait_for_commands
 
+    def test_first_reviewer_start_records_activity_after_parent_association(self):
+        self.collector.collect_hook(self.event)
+        self.assertFalse((self.state / "worker-index.json").exists())
+        worker = {**self.event, "hook_event_name": "SubagentStart", "turn_id": "review-child", "agent_id": "review-worker", "agent_type": "worker-reviewer"}
+        self.collector.collect_hook(worker)
+        activity_path = self.state / "activity/state.json"
+        current = json.loads(activity_path.read_text())
+        self.assertEqual(current["state"], "review")
+        self.assertEqual(current["turn_id"], self.event["turn_id"])
+        self.collector.collect_hook({**worker, "hook_event_name": "SubagentStop"})
+        self.assertEqual(json.loads(activity_path.read_text())["state"], "running")
+
     def test_real_socket_first_stop_update_and_late_worker_refresh(self):
         self.collector.collect_hook(self.event)
         worker = {**self.event, "hook_event_name": "SubagentStart", "turn_id": "child", "agent_id": "worker", "agent_type": "worker"}
         self.collector.collect_hook(worker)
         self.ipc.side_effect = self.real_notify
-        wait_for_commands = self._overlay_socket(expected=2)
+        wait_for_commands = self._overlay_socket(expected=3)
         self.collector.collect_hook({**self.event, "hook_event_name": "Stop"})
         self.collector.collect_hook({**worker, "hook_event_name": "SubagentStop"})
-        self.assertEqual(wait_for_commands(), [
+        commands = wait_for_commands()
+        self.assertTrue(commands[0].startswith("pet event "))
+        self.assertEqual(json.loads(commands[0].removeprefix("pet event "))["event"], "completed")
+        self.assertEqual(commands[1:], [
             f"update {(self.state / 'runs/chat-a--turn-2.json').resolve()}",
             "refresh",
         ])

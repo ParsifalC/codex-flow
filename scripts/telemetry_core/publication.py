@@ -20,6 +20,7 @@ GLOBAL_LOCK = "global-publication"
 _OBSERVED_FIELDS = {
     "cwd", "parent", "workers", "started_at_ms", "prompt_seen", "transcript_path",
     "thread", "quota_before", "quota_after", "quota_after_source", "quota_change_during_run",
+    "allocated_quota_pp", "quota_allocation",
     "skills_used", "tools_used", "trajectory", "logs", "is_system_task",
     "worker_sources", "worker_correlation", "status",
 }

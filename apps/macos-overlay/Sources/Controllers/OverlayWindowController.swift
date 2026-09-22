@@ -21,6 +21,13 @@ public class OverlayState: ObservableObject {
     @Published public var isDocked: Bool = false
     @Published public var dockEdge: DockEdge = .right
     @Published public var latestRun: TaskRun? = nil
+    @Published public private(set) var petResource: PetResource?
+    @Published public private(set) var petActivityUnavailable: Bool = false
+    public let petAnimator: PetAnimator
+    var compactSize: NSSize {
+        petResource == nil ? OverlayCompactLayout.hostSize : OverlayCompactLayout.petHostSize
+    }
+    public lazy var petActivityConsumer = PetActivityConsumer(state: self)
     // A completion IPC can refer to an older turn than latestRun. Keep that
     // event's content for the notification presentation while preserving the
     // latest snapshot used by the live bubble and history state.
@@ -51,6 +58,11 @@ public class OverlayState: ObservableObject {
     private var publicationGate = PublishedTurnGate()
 
     private let readDefaults: UserDefaults
+    private let petStore: PetResourceStore
+    private var hasStartedPetPresetSeeding = false
+    private var petWindowVisible = false
+    private var celebratedPetTurns: Set<String> = []
+    private var celebratedPetTurnOrder: [String] = []
     @Published private var viewedTurnIds: [String]
     // Keep the completion snapshot: a delayed notification may arrive before
     // its history file, and latestRun may belong to another conversation.
@@ -59,6 +71,19 @@ public class OverlayState: ObservableObject {
         if !unreadNotificationRuns.isEmpty { return true }
         guard let run = latestRun, run.publication != nil else { return false }
         return !viewedTurnIds.contains(run.id)
+    }
+
+    /// Use the same unread turn for the caption and its click destination.
+    public var petReminderRun: TaskRun? {
+        let pending = unreadNotificationRuns.values.max {
+            let lhs = $0.publication?.completedAtMs ?? $0.finishedAtMs ?? $0.startedAtMs ?? 0
+            let rhs = $1.publication?.completedAtMs ?? $1.finishedAtMs ?? $1.startedAtMs ?? 0
+            return lhs == rhs ? $0.id < $1.id : lhs < rhs
+        }
+        if let pending { return pending }
+        guard let run = latestRun, run.publication != nil,
+              !viewedTurnIds.contains(run.id) else { return nil }
+        return run
     }
 
     public var selectedRun: TaskRun? {
@@ -90,10 +115,185 @@ public class OverlayState: ObservableObject {
 
     public init(readDefaults: UserDefaults = .standard) {
         self.readDefaults = readDefaults
+        self.petStore = PetResourceStore()
+        self.petAnimator = PetAnimator()
         self.viewedTurnIds = readDefaults.stringArray(forKey: "viewedCompletedTurns") ?? []
         // TelemetryWatcher owns the initial snapshot after recover-last.
         // Reading last.json here would expose a stale snapshot before recovery.
         loadMenuData()
+        petActivityConsumer.recover()
+    }
+
+    private var petReloadGeneration = 0
+
+    /// Ensure bundled presets are installed when the native app starts. The
+    /// CLI owns seeding and current-selection persistence; native startup only
+    /// asks it to reconcile and then reloads the validated selection.
+    public func seedPetPresetsOnStartup() {
+        guard !hasStartedPetPresetSeeding else { return }
+        hasStartedPetPresetSeeding = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try PetCatalogService.list()
+            } catch {
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.reloadPetAsync { _ in }
+            }
+        }
+    }
+
+    /// Selection persistence belongs to the CLI. This owner applies the result once,
+    /// using the same asynchronous loader as external IPC and startup.
+    public var selectedPetID: String { petResource?.id ?? "default" }
+
+    func selectPet(_ id: String, completion: @escaping (PetReloadOutcome) -> Void) {
+        precondition(Thread.isMainThread)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try PetCatalogService.select(id)
+                DispatchQueue.main.async {
+                    self?.reloadPetAsync(completion: completion)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(PetReloadOutcome(accepted: false, selectedID: id, error: error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    /// Decode on a background queue so selecting an atlas never blocks UI work.
+    public func reloadPetAsync(completion: @escaping (PetReloadOutcome) -> Void) {
+        precondition(Thread.isMainThread)
+        petReloadGeneration += 1
+        let generation = petReloadGeneration
+        let home = petStore.codexHome
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let store = PetResourceStore(codexHome: home)
+            let result = store.reload()
+            let selectedID = store.lastSelectionID
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard generation == self.petReloadGeneration else {
+                    completion(PetReloadOutcome(accepted: false, selectedID: selectedID,
+                        error: L("Pet selection changed. Please retry.", "宠物选择已更新，请重试。")))
+                    return
+                }
+                completion(self.applyPetReload(result, selectedID: selectedID))
+            }
+        }
+    }
+
+    private func applyPetReload(_ result: PetResourceLoadResult, selectedID: String) -> PetReloadOutcome {
+        let previousSize = compactSize
+        defer {
+            petAnimator.configure(resourceID: petResource?.id ?? "default")
+            petAnimator.setAutonomyEnabled(petResource != nil)
+            if petResource != nil { isDocked = false }
+            if compactSize != previousSize { windowController?.updateWindowFrame(animated: false) }
+        }
+        switch result {
+        case .builtIn:
+            petResource = nil
+            return PetReloadOutcome(accepted: true, selectedID: "default")
+        case .loaded(let resource):
+            petResource = resource
+            return PetReloadOutcome(accepted: true, selectedID: resource.id)
+        case .rejected(let error):
+            petResource = nil
+            return PetReloadOutcome(accepted: false, selectedID: selectedID, error: error)
+        }
+    }
+
+    public func setPetTaskState(_ state: PetState) {
+        petAnimator.setTaskState(state)
+    }
+
+    public func playPetHover(reduceMotion: Bool = false) {
+        guard !reduceMotion else { return }
+        petAnimator.playHover()
+    }
+
+    public func beginPetDrag(direction: PetDragDirection) {
+        petAnimator.beginDrag(direction: direction)
+    }
+
+    public func endPetDrag() {
+        petAnimator.endDrag()
+    }
+
+    public func clearPetState() {
+        petAnimator.clear()
+    }
+
+    public func stopPet() {
+        petAnimator.stop()
+    }
+
+    // Live event bridge hooks. Keep the short names on the state owner so a
+    // producer does not need to know which animator instance the view owns.
+    public func setTaskState(_ state: PetState, preservingTransient: Bool = false) {
+        petAnimator.setTaskState(state, preservingTransient: preservingTransient)
+    }
+
+    public func celebratePetResult(session: String, turn: String) {
+        let identity = "\(session.utf8.count):\(session)\(turn)"
+        guard celebratedPetTurns.insert(identity).inserted else { return }
+        celebratedPetTurnOrder.append(identity)
+        if celebratedPetTurnOrder.count > 512 {
+            celebratedPetTurns.remove(celebratedPetTurnOrder.removeFirst())
+        }
+        petAnimator.playCelebration()
+    }
+
+    public func playTransient(_ state: PetState) {
+        petAnimator.playTransient(state)
+    }
+
+    public func beginDrag(direction: PetDragDirection) {
+        petAnimator.beginDrag(direction: direction)
+    }
+
+    public func endDrag() {
+        petAnimator.endDrag()
+    }
+
+    public func clear() {
+        petAnimator.clear()
+    }
+
+    public func stop() {
+        petAnimator.stop()
+    }
+
+    public func markPetActivityUnavailable() {
+        petActivityUnavailable = true
+    }
+
+    public func markPetActivityAvailable() {
+        petActivityUnavailable = false
+    }
+
+    @discardableResult
+    public func handlePetActivity(_ event: PetActivityEvent) -> PetActivityTransition {
+        petActivityConsumer.consume(event)
+    }
+
+    public func handlePetActivityJSON(_ payload: String) -> String {
+        petActivityConsumer.consumeJSON(payload)
+    }
+
+    public func setPetVisibility(_ visible: Bool, reduceMotion: Bool = false) {
+        petWindowVisible = visible
+        refreshPetVisibility(reduceMotion: reduceMotion)
+    }
+
+    public func refreshPetVisibility(reduceMotion: Bool) {
+        petAnimator.setVisibility(visible: petWindowVisible, expanded: isExpanded, reduceMotion: reduceMotion)
     }
 
     public func loadMenuData() {
@@ -186,11 +386,7 @@ public class OverlayState: ObservableObject {
     }
 
     public func openLatest() {
-        let unread = unreadNotificationRuns.values.max {
-            let lhs = $0.publication?.completedAtMs ?? $0.finishedAtMs ?? $0.startedAtMs ?? 0
-            let rhs = $1.publication?.completedAtMs ?? $1.finishedAtMs ?? $1.startedAtMs ?? 0
-            return lhs == rhs ? $0.id < $1.id : lhs < rhs
-        }
+        let unread = petReminderRun
         if let unread {
             inspect(run: unread)
         } else {
@@ -330,7 +526,13 @@ public class OverlayState: ObservableObject {
                 self.notificationRun = run
                 self.selectedTurnIdentity = run.id
                 self.selectedSessionRuns = [run]
-                self.expand(notificationTriggered: true)
+                if self.petResource == nil {
+                    self.expand(notificationTriggered: true)
+                }
+            }
+            if decision.notify, self.petResource != nil,
+               let session = run.sessionId, let turn = run.turnId {
+                self.celebratePetResult(session: session, turn: turn)
             }
             guard decision.refresh else {
                 if decision.notify { self.loadMenuData() }
@@ -382,7 +584,7 @@ public struct OverlayRootView: View {
                     )
             } else {
                 BubbleView(state: state)
-                    .frame(width: OverlayCompactLayout.hostSize.width, height: OverlayCompactLayout.hostSize.height)
+                    .frame(width: state.compactSize.width, height: state.compactSize.height)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing)),
@@ -405,6 +607,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
     private var initialMouseScreenLocation: NSPoint = .zero
     private var initialWindowOrigin: NSPoint = .zero
     private var isDragging = false
+    private var petDragStarted = false
     private var ownsPointerInteraction = false
 
     required public init(rootView: Content) {
@@ -494,6 +697,7 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         initialMouseScreenLocation = NSEvent.mouseLocation
         initialWindowOrigin = window.frame.origin
         isDragging = false
+        petDragStarted = false
         windowController.cancelDwellTimer()
         windowController.cancelTuckTimer()
         windowController.cancelNotificationAutoCollapseTimer()
@@ -515,6 +719,13 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
 
         if isDragging || abs(deltaX) > dragThreshold || abs(deltaY) > dragThreshold {
             isDragging = true
+            if !petDragStarted,
+               abs(deltaX) > dragThreshold,
+               abs(deltaX) >= abs(deltaY),
+               !windowController.state.isExpanded {
+                petDragStarted = true
+                windowController.state.beginPetDrag(direction: deltaX < 0 ? .left : .right)
+            }
             windowController.cancelDwellTimer()
             windowController.cancelTuckTimer()
 
@@ -548,6 +759,10 @@ class TrackingHostingView<Content: View>: NSHostingView<Content> {
         ownsPointerInteraction = false
         let dragged = isDragging
         isDragging = false
+        if petDragStarted {
+            windowController?.state.endPetDrag()
+            petDragStarted = false
+        }
 
         if dragged, let window, let windowController {
             windowController.endPointerInteraction(drainPendingPresentation: false)
@@ -682,7 +897,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var pendingPresentationAnimated = true
     private var needsPointerReconciliationAfterGeometry = false
 
-    private let bubbleSize = OverlayCompactLayout.hostSize
+    private var bubbleSize: NSSize { state.compactSize }
     static let summarySize = NSSize(width: 404, height: 660)
     private let snapMargin: CGFloat = 8.0
     private let snapThreshold: CGFloat = 36.0
@@ -748,6 +963,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         hostingView.windowController = self
         window.contentView = hostingView
         window.orderFrontRegardless()
+        updatePetVisibility()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.scheduleTuck()
@@ -768,17 +984,21 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             point,
             in: hostBounds,
             expanded: state.isExpanded,
-            docked: state.isDocked
+            docked: state.isDocked,
+            pet: state.petResource != nil
         )
     }
 
     @discardableResult
     func beginPointerInteraction() -> Bool {
-        runtime.beginPointerInteraction()
+        let accepted = runtime.beginPointerInteraction()
+        if accepted { state.petAnimator.beginPointerInteraction() }
+        return accepted
     }
 
     func endPointerInteraction(drainPendingPresentation: Bool) {
         runtime.endPointerInteraction()
+        state.petAnimator.endPointerInteraction()
         guard drainPendingPresentation,
               runtime.claimPendingPresentationIfIdle() else { return }
         performPresentationFrameUpdate(animated: pendingPresentationAnimated)
@@ -831,6 +1051,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         let completed: () -> Void = { [weak self] in
             guard let self else { return }
             self.window.orderFrontRegardless()
+            self.updatePetVisibility()
             self.presentationFrameDidSet(targetOrigin: newOrigin, collapsed: collapsedAfterAnimation)
             let startedNext = self.finishGeometryActivity()
             if !startedNext, collapsedAfterAnimation, !self.state.isExpanded {
@@ -856,6 +1077,18 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         if collapsed && !state.isExpanded {
             saveWindowPosition(targetOrigin)
         }
+    }
+
+    private func updatePetVisibility() {
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        state.setPetVisibility(
+            visible,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+    }
+
+    public func windowDidChangeOcclusionState(_ notification: Notification) {
+        updatePetVisibility()
     }
 
     @discardableResult
@@ -926,7 +1159,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     /// Compact docking is visual-only. Capsule and docked tile share the same stationary
     /// compact host; no NSWindow frame is changed here.
     public func tuckBubble(animated: Bool = true) {
-        guard !state.isExpanded,
+        guard state.petResource == nil,
+              !state.isExpanded,
               !state.isPinned,
               !isInteractingOrDragging,
               !state.isDocked,
@@ -949,7 +1183,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
                 pointerLocationInHost,
                 in: NSRect(origin: .zero, size: bubbleSize),
                 expanded: false,
-                docked: false
+                docked: false,
+                pet: state.petResource != nil
            ),
            !isInteractingOrDragging {
             resetDwellTimer()
@@ -1002,7 +1237,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
 
     private func resetDwellTimer() {
         cancelDwellTimer()
-        guard !isInteractingOrDragging, !isGeometryTransitioning else { return }
+        guard state.petResource == nil, !isInteractingOrDragging, !isGeometryTransitioning else { return }
         hoverDwellTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self,
                   !self.state.isExpanded,

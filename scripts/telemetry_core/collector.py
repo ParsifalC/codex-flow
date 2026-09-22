@@ -52,6 +52,7 @@ from .common import (
 from .turn_context import ReceiptError, load_receipt, receipt_digest, register_receipt, seal_receipt, validate_receipt
 from .turn_result import extract_parent_final, parent_turn_completed_at
 from .publication import GLOBAL_LOCK, PublicationResult, publish_late_worker, publish_parent_stop, update_run
+from .activity import record_hook_activity
 from .render import (
     aggregate_usage_value,
     render_summary,
@@ -995,10 +996,62 @@ def _emit_publication(publication: PublicationResult, *, summary=False) -> None:
         write_stop_output(render_summary(publication.snapshot))
 
 
+def _refresh_quota_allocations(run: dict[str, Any], key: str) -> dict[str, Any]:
+    """Recompute SQLite attribution and apply affected run fields via publication."""
+    try:
+        from .quota_ledger import allocate_quota_segments, get_db
+        with get_db() as db_conn:
+            updates = allocate_quota_segments(db_conn, runs={key: run}, state_root=_common.STATE_ROOT)
+        own = updates.get(key)
+        if own:
+            own_values = dict(own)
+            own_clear = own_values.pop("clear", False)
+            _apply_quota_fields(run, own_values, own_clear)
+        for run_key_value, fields in updates.items():
+            candidate = run if run_key_value == key else read_json_object(run_path_for_key(run_key_value))
+            if not isinstance(candidate, dict):
+                continue
+            identity = {"session_id": candidate.get("session_id"), "turn_id": candidate.get("turn_id")}
+            values = dict(fields)
+            clear = values.pop("clear", False)
+            candidate_snapshot = dict(candidate)
+            publication = update_run(
+                run_key=run_key_value, identity=identity,
+                transform=lambda current, values=values, clear=clear, snapshot=candidate_snapshot: _apply_quota_fields({**current, **snapshot}, values, clear),
+                state_root=_common.STATE_ROOT,
+            )
+            _emit_publication(publication)
+    except Exception:
+        pass
+    return run
+
+
+def _apply_quota_fields(current: dict[str, Any], values: dict[str, Any], clear: bool) -> dict[str, Any]:
+    if clear:
+        current.pop("allocated_quota_pp", None)
+        current.pop("quota_allocation", None)
+    current.update(values)
+    return current
+
+
 def collect_hook(event: dict[str, Any]) -> None:
     if not telemetry_writes_enabled():
         return
     kind = event.get("hook_event_name")
+    # Live pet activity is a bounded, local reducer.  Record it before the
+    # publication path and keep fast hook events free of app-server/transcript
+    # reads.  Fail closed: activity must never interfere with publication.
+    if kind in {"PermissionRequest", "PreToolUse", "PostToolUse", "Interrupt"}:
+        try:
+            record_hook_activity(event)
+        except Exception:
+            pass
+        return
+    if kind in {"UserPromptSubmit", "Stop"}:
+        try:
+            record_hook_activity(event)
+        except Exception:
+            pass
     if kind not in {"UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"}:
         return
 
@@ -1248,6 +1301,7 @@ def collect_hook(event: dict[str, Any]) -> None:
             return
         run = publication.snapshot
         worker = run["workers"][agent_id]
+        _refresh_quota_allocations(run, key)
         _emit_publication(publication)
         remember_worker_parent(
             agent_id,
@@ -1259,6 +1313,12 @@ def collect_hook(event: dict[str, Any]) -> None:
             worker.get("finished_at_ms") if kind == "SubagentStop" else None,
             worker.get("transcript_path"),
         )
+        # Resolve the exact child execution before emitting reviewer activity.
+        # A first SubagentStart has no worker-index entry on arrival.
+        try:
+            record_hook_activity(event)
+        except Exception:
+            pass
         return
 
     if kind == "Stop":
@@ -1268,6 +1328,13 @@ def collect_hook(event: dict[str, Any]) -> None:
         if isinstance(run.get("publication"), dict):
             # A replay must not charge a later turn's cumulative usage or quota
             # to this already completed parent. Exact final evidence may arrive later.
+            _refresh_quota_allocations(run, key)
+            try:
+                from .quota_ledger import export_quota_summary, get_db
+                with get_db() as db_conn:
+                    export_quota_summary(db_conn)
+            except Exception:
+                pass
             publication = publish_parent_stop(run_key=key, observed=run,
                 result=extract_parent_final(run.get("transcript_path"), run.get("turn_id"), session_id=run["session_id"]),
                 completed_at_ms=run["publication"]["completed_at_ms"], state_root=_common.STATE_ROOT)
@@ -1340,7 +1407,6 @@ def collect_hook(event: dict[str, Any]) -> None:
                                 resets_at_ms=w.get("resets_at"),
                                 run_id=key,
                             )
-                            export_quota_summary(db_conn)
             except Exception:
                 pass
             run["parent"]["usage_after"] = parent_after
@@ -1419,7 +1485,15 @@ def collect_hook(event: dict[str, Any]) -> None:
         result = extract_parent_final(run.get("transcript_path"), run.get("turn_id"), session_id=run["session_id"])
         completed = parent_turn_completed_at(run.get("transcript_path"), run.get("turn_id"), session_id=run["session_id"])
         reconcile_orphan_workers()
+        run["finished_at_ms"] = completed if completed is not None else now_ms()
+        _refresh_quota_allocations(run, key)
+        try:
+            from .quota_ledger import export_quota_summary, get_db
+            with get_db() as db_conn:
+                export_quota_summary(db_conn)
+        except Exception:
+            pass
         publication = publish_parent_stop(run_key=key, observed=run, result=result,
-            completed_at_ms=completed if completed is not None else now_ms(), state_root=_common.STATE_ROOT)
+            completed_at_ms=run["finished_at_ms"], state_root=_common.STATE_ROOT)
     run_maintenance()
     _emit_publication(publication, summary=True)

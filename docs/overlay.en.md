@@ -156,6 +156,31 @@ codex-flow overlay restart
 codex-flow overlay stop
 ```
 
+### Pet animations
+
+Choose a pet on [Petdex](https://petdex.dev) and install it with one command:
+
+```bash
+codex-flow pets install boba
+codex-flow pets list
+codex-flow pets use default
+```
+
+Installation selects the pet immediately, or saves it for the next overlay launch.
+No Petdex desktop app or Node installation is required. Local directories and ZIP
+files can use the same `pets install` command when they contain compatible
+`pet.json` metadata and a PNG/WebP atlas. GIF and Shimeji formats need conversion.
+
+The overlay supports Petdex's nine animations: idle, running-right, running-left,
+waving, jumping, failed, waiting, running, and review. Task activity comes from
+host events and explicit execution reports; a normal Stop is not assumed to mean
+success. Activity does not change completed details or unread indicators. Reduced
+motion uses a still pose, and hidden or expanded views stop the animation timer.
+
+Resources remain in `$CODEX_HOME/codex-flow/pets/` across updates and uninstall.
+After updating hooks, approve any normal hook-trust prompt shown by Codex to
+enable activity events. See the [pet guide (Chinese)](pets.md) for format details.
+
 ---
 
 ## 🖱️ Mouse & Keyboard Interactions

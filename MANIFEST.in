@@ -9,6 +9,7 @@ include install-release.ps1
 include smithery.yaml
 include glama.json
 recursive-include scripts *.py *.sh
+recursive-include scripts/pet_presets *
 recursive-include policy *.toml
 recursive-include templates *
 recursive-include completions *

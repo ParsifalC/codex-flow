@@ -6,6 +6,7 @@ _codex_flow() {
         'status:Show installed version and effective FlowPilot strategy'
         'strategy:Inspect or configure the multi-strategy runtime'
         'language:Show or set UI language (auto/zh/en)'
+        'pets:Install and select Petdex-compatible pets'
         'update:Pull the checkout and refresh recommendations'
         'doctor:Verify installation, strategy runtime, and telemetry'
         'overlay:Manage the native macOS floating widget'
@@ -30,6 +31,10 @@ _codex_flow() {
         _describe 'plan option' '(--profile --routing --review --fanout --complexity --uncertainty --risk --scope --parallelism --write-conflict --exploration-need --verification-cost --iteration-intensity --writable-workstreams --quality-intent --quota-pressure --max-threads --max-repairs)'
     elif (( CURRENT == 3 )) && [[ "${words[2]}" == language ]]; then
         _describe 'language' '(auto zh en)'
+    elif (( CURRENT == 3 )) && [[ "${words[2]}" == pets ]]; then
+        _describe 'pets command' '(install list use)'
+    elif (( CURRENT == 4 )) && [[ "${words[2]}" == pets && "${words[3]}" == use ]]; then
+        _describe 'pet selection' '(default)'
     elif (( CURRENT == 3 )) && [[ "${words[2]}" == benchmark-local || "${words[2]}" == benchmark-corpus ]]; then
         _describe 'profile' '(quick full)'
     elif (( CURRENT == 3 )) && [[ "${words[2]}" == usage || "${words[2]}" == telemetry ]]; then

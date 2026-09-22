@@ -940,6 +940,7 @@ def _snapshot(current: str) -> Path:
     managed.mkdir()
     instruction_managed_names = {
         "manage-instructions.py",
+        "pets.py",
         "flow-pilot-instructions.md",
         "instructions-state.json",
     }
@@ -953,6 +954,7 @@ def _snapshot(current: str) -> Path:
         "menu.py",
         "localization.py",
         "ui.py",
+        "pets.py",
         "doctor.py",
         "strategy_runtime.py",
         "flow-pilot-instructions.md",
@@ -964,7 +966,7 @@ def _snapshot(current: str) -> Path:
         if path.exists():
             shutil.copy2(path, managed / name)
     atomic_write_json(managed / "instructions-presence.json", instruction_presence)
-    for name in ("strategies", "telemetry_core"):
+    for name in ("strategies", "telemetry_core", "pet_presets"):
         path = _state_dir() / name
         if path.exists():
             shutil.copytree(path, managed / name)
@@ -1144,13 +1146,14 @@ def _sync_managed_runtime(package_root: Path) -> None:
         "menu.py",
         "localization.py",
         "ui.py",
+        "pets.py",
         "doctor.py",
         "strategy_runtime.py",
     ):
         src = scripts / name
         if src.exists():
             _atomic_copy(src, state / name, executable=True)
-    for name in ("strategies", "telemetry_core"):
+    for name in ("strategies", "telemetry_core", "pet_presets"):
         src = scripts / name
         if src.exists():
             _replace_dir(src, state / name)
@@ -1298,11 +1301,11 @@ def _ensure_current_version_package(version: str) -> Path | None:
             (staging / "VERSION").write_text(version + "\n", encoding="utf-8")
             scripts = staging / "scripts"
             scripts.mkdir(parents=True)
-            for name in ("updater.py", "update_runtime_config.py", "telemetry.py", "manage-hooks.py", "manage-instructions.py", "menu.py", "localization.py", "ui.py", "doctor.py", "strategy_runtime.py"):
+            for name in ("updater.py", "update_runtime_config.py", "telemetry.py", "manage-hooks.py", "manage-instructions.py", "menu.py", "localization.py", "ui.py", "pets.py", "doctor.py", "strategy_runtime.py"):
                 src = _state_dir() / name
                 if src.exists():
                     shutil.copy2(src, scripts / name)
-            for name in ("strategies", "telemetry_core"):
+            for name in ("strategies", "telemetry_core", "pet_presets"):
                 src = _state_dir() / name
                 if src.exists():
                     shutil.copytree(src, scripts / name)

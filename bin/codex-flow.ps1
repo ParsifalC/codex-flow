@@ -65,6 +65,12 @@ switch ($cmd) {
         & python3 $ui language @rest
         exit $LASTEXITCODE
     }
+    'pets' {
+        $pets = Get-ScriptPath 'pets.py'
+        if (-not $pets) { throw (L 'pet helper is missing; reinstall codex-flow' '宠物组件缺失，请重新安装 codex-flow') }
+        & python3 $pets @rest
+        exit $LASTEXITCODE
+    }
     'strategy' {
         $strategy = Get-ScriptPath 'strategy_runtime.py'
         if (-not $strategy) { throw (L 'strategy runtime is missing; reinstall codex-flow' '策略运行时缺失，请重新安装 codex-flow') }

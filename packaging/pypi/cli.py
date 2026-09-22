@@ -179,6 +179,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         return run_python_script(ui, ["language", *rest])
 
+    if cmd == "pets":
+        pets = find_script("pets.py", root)
+        if not pets:
+            print("Error: pets.py helper not found; reinstall codex-flow", file=sys.stderr)
+            return 1
+        return run_python_script(pets, rest)
+
     if cmd == "strategy":
         strat = find_script("strategy_runtime.py", root)
         if not strat:

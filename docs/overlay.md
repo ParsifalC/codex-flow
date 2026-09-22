@@ -150,6 +150,18 @@ codex-flow overlay restart
 codex-flow overlay stop
 ```
 
+### 宠物动画
+
+从 [Petdex](https://petdex.dev) 选一个宠物，用一条命令替换悬浮入口的默认形象：
+
+```bash
+codex-flow pets install boba
+codex-flow pets list
+codex-flow pets use default
+```
+
+支持 Petdex 九种动作，以及同格式的本地目录／ZIP 导入。浮窗未启动时会保存选择；不需要安装 Petdex 客户端或 Node。任务动画与已完成详情、未读状态分别更新。详见[宠物安装与状态说明](pets.md)。
+
 ---
 
 ## 🖱️ 鼠标与快捷交互

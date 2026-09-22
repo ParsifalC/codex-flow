@@ -217,6 +217,7 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
                 stats["unchanged"] += 1
 
     if not dry_run:
+        _backfill_and_hydrate_quota_history()
         recovered = recover_last(state_root=_common.STATE_ROOT)
         if recovered.last_updated:
             from .collector import notify_overlay_if_active
@@ -225,6 +226,61 @@ def repair_history(dry_run: bool = False, verbose: bool = True) -> dict[str, int
         print(format_repair_summary(stats))
 
     return stats
+
+
+def _backfill_and_hydrate_quota_history() -> None:
+    """Backfill SQLite quota evidence, allocate it, then publish run hydration."""
+    from .quota_ledger import (
+        allocate_quota_segments,
+        backfill_historical_observations,
+        export_quota_summary,
+        get_db,
+    )
+
+    snapshots: dict[str, dict[str, Any]] = {}
+    for path in iter_run_files():
+        value = read_json_object(path)
+        if isinstance(value, dict):
+            snapshots[path.stem] = value
+    db_path = _common.STATE_ROOT / "quota_ledger.db"
+    with get_db(db_path) as conn:
+        backfill_historical_observations(conn, snapshots)
+        updates = allocate_quota_segments(
+            conn,
+            runs=snapshots,
+            state_root=_common.STATE_ROOT,
+        )
+        export_quota_summary(
+            conn,
+            output_path=_common.STATE_ROOT / "quota_summary.json",
+        )
+
+    for key, fields in updates.items():
+        path = _common.STATE_ROOT / "runs" / (key + ".json")
+        current = read_json_object(path)
+        if not isinstance(current, dict):
+            continue
+        clear = fields.get("clear") is True
+        values = {name: value for name, value in fields.items() if name != "clear"}
+        publication = update_run(
+            run_key=key,
+            identity=current,
+            transform=lambda run, values=values, clear=clear: _apply_quota_allocation_delta(run, values, clear),
+            state_root=_common.STATE_ROOT,
+        )
+        if publication.last_updated:
+            from .collector import notify_overlay_if_active
+            notify_overlay_if_active(publication.snapshot, notify=False)
+
+
+def _apply_quota_allocation_delta(
+    run: dict[str, Any], values: dict[str, Any], clear: bool,
+) -> dict[str, Any]:
+    if clear:
+        run.pop("allocated_quota_pp", None)
+        run.pop("quota_allocation", None)
+    run.update(copy.deepcopy(values))
+    return run
 
 
 def _apply_repair_delta(current: dict[str, Any], before: dict[str, Any], repaired: dict[str, Any]) -> dict[str, Any]:
