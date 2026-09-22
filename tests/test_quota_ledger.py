@@ -8,11 +8,26 @@ from pathlib import Path
 import pytest
 
 from scripts.telemetry_core.quota_ledger import (
+    allocate_quota_segments,
     compute_cycle_id,
     export_quota_summary,
     get_db,
     record_observation,
 )
+
+
+def _runtime_runs(*, first_weight=100, second_weight=300, first_run="run-a", second_run="run-b"):
+    base = {"started_at_ms": 1000, "finished_at_ms": 3000}
+    return {
+        first_run: {**base, "session_id": "session-a", "parent": {"usage_delta": {"total_tokens": first_weight}}},
+        second_run: {**base, "session_id": "session-b", "parent": {"usage_delta": {"total_tokens": second_weight}}},
+    }
+
+
+def _runtime_segment(conn, account="runtime", first_run="run-a", second_run="run-b"):
+    record_observation(conn, account, "primary", 0.0, 1000, "turn_start", run_id=first_run)
+    record_observation(conn, account, "primary", 10.0, 3000, "turn_finish", run_id=second_run)
+    return conn.execute("SELECT segment_id FROM quota_segments WHERE status='active'").fetchone()[0]
 
 
 @pytest.fixture
@@ -507,3 +522,43 @@ def test_reconciliation_failure_rolls_back_observations_segments_and_allocations
         record_observation(conn, "acc", "secondary", 20, 1000, "late")
     after = {table: [tuple(r) for r in conn.execute(f"SELECT * FROM {table}")] for table in tables}
     assert after == before
+
+
+def test_runtime_allocation_is_weighted_deterministic_and_idempotent(conn, tmp_path):
+    _runtime_segment(conn)
+    runs = _runtime_runs()
+    first_revision = conn.execute("SELECT current_revision FROM quota_ledger_metadata").fetchone()[0]
+    updates = allocate_quota_segments(conn, runs=runs, state_root=tmp_path, now=3000)
+    assert updates["run-a"]["allocated_quota_pp"] == 2.5
+    assert updates["run-b"]["allocated_quota_pp"] == 7.5
+    assert sum(row[0] for row in conn.execute("SELECT allocated_pp FROM quota_allocations WHERE status='active'")) == 10.0
+    changed_revision = conn.execute("SELECT current_revision FROM quota_ledger_metadata").fetchone()[0]
+    assert changed_revision == first_revision + 1
+    allocation_ids = [row[0] for row in conn.execute("SELECT allocation_id FROM quota_allocations ORDER BY allocation_id")]
+    assert allocate_quota_segments(conn, runs=runs, state_root=tmp_path, now=3000) == updates
+    assert conn.execute("SELECT current_revision FROM quota_ledger_metadata").fetchone()[0] == changed_revision
+    assert [row[0] for row in conn.execute("SELECT allocation_id FROM quota_allocations ORDER BY allocation_id")] == allocation_ids
+
+
+def test_runtime_candidates_are_cycle_isolated_and_missing_or_zero_wait(conn, tmp_path):
+    _runtime_segment(conn, account="account-a", first_run="a-1", second_run="a-2")
+    record_observation(conn, "account-b", "primary", 0.0, 1000, "turn_start", run_id="b-1")
+    record_observation(conn, "account-b", "primary", 5.0, 3000, "turn_finish", run_id="b-2")
+    runs = {**_runtime_runs(first_run="a-1", second_run="a-2"), **_runtime_runs(first_run="b-1", second_run="b-2", first_weight=0, second_weight=0)}
+    updates = allocate_quota_segments(conn, runs=runs, state_root=tmp_path, now=3000)
+    assert set(updates) == {"a-1", "a-2"}
+    assert conn.execute("SELECT COUNT(*) FROM quota_allocations WHERE status='active'").fetchone()[0] == 2
+    runs["a-2"]["parent"] = {}
+    updates = allocate_quota_segments(conn, runs=runs, state_root=tmp_path, now=3000)
+    assert updates["a-1"] == {"clear": True} or updates["a-2"] == {"clear": True}
+    assert conn.execute("SELECT COUNT(*) FROM quota_allocations WHERE status='active'").fetchone()[0] == 0
+    assert conn.execute("SELECT attribution_status, unattributed_pp FROM quota_segments WHERE cycle_id LIKE 'account-a:%'").fetchone()[0] == "waiting_weights"
+
+
+def test_runtime_allocation_explicit_clear_and_zero_weight_wait(conn, tmp_path):
+    _runtime_segment(conn)
+    runs = _runtime_runs(first_weight=0, second_weight=0)
+    updates = allocate_quota_segments(conn, runs=runs, state_root=tmp_path, now=3000)
+    assert updates == {}
+    segment = conn.execute("SELECT attribution_status, unattributed_pp FROM quota_segments WHERE status='active'").fetchone()
+    assert segment["attribution_status"] == "waiting_weights" and segment["unattributed_pp"] == 10

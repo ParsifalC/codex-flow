@@ -10,6 +10,7 @@ import json
 import sqlite3
 import time
 import uuid
+from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ WEEKLY_WINDOW_MINS = 10080
 QUOTA_LEDGER_DB = STATE_ROOT / "quota_ledger.db"
 QUOTA_SUMMARY_FILE = STATE_ROOT / "quota_summary.json"
 QUOTA_LOCK_KEY = "quota_ledger"
+ALLOCATION_METHOD = "token_weight"
 
 
 def get_db(db_path: Path = QUOTA_LEDGER_DB) -> sqlite3.Connection:
@@ -272,6 +274,66 @@ def record_observation(
     return result
 
 
+def backfill_historical_observations(
+    conn: sqlite3.Connection,
+    runs: dict[str, dict[str, Any]],
+) -> dict[str, int]:
+    """Seed immutable weekly observations from completed historical run JSON.
+
+    Only host/app-server snapshots are evidence here: transcript estimates are
+    intentionally excluded.  Snapshot timestamps win; lifecycle timestamps are
+    used only when a snapshot omitted ``sampled_at_ms``.
+    """
+    seeded = 0
+    duplicates = 0
+    skipped = 0
+    for run_id in sorted(runs):
+        run = runs[run_id]
+        if not isinstance(run, dict):
+            continue
+        account_default = run.get("account_id") or resolve_account_id()
+        for phase, fallback_field in (("quota_before", "started_at_ms"), ("quota_after", "finished_at_ms")):
+            if phase == "quota_after" and run.get("quota_after_source") == "transcript_estimate":
+                skipped += 1
+                continue
+            windows = run.get(phase)
+            if not isinstance(windows, list):
+                continue
+            fallback = run.get(fallback_field)
+            for window in windows:
+                if not isinstance(window, dict) or window.get("window_duration_mins") != WEEKLY_WINDOW_MINS:
+                    continue
+                used = window.get("used_percent")
+                if not isinstance(used, (int, float)) or isinstance(used, bool):
+                    skipped += 1
+                    continue
+                sampled_at = window.get("sampled_at_ms")
+                if not isinstance(sampled_at, (int, float)):
+                    sampled_at = fallback
+                if not isinstance(sampled_at, (int, float)):
+                    skipped += 1
+                    continue
+                account = window.get("account_id") or account_default
+                result = record_observation(
+                    conn=conn,
+                    account_id=account,
+                    bucket_id=window.get("slot") or window.get("bucket_id") or "primary",
+                    used_percent=float(used),
+                    sampled_at_ms=int(sampled_at),
+                    sample_source="historical_repair",
+                    resets_at_ms=window.get("resets_at"),
+                    baseline_generation=int(window.get("baseline_generation") or 0),
+                    run_id=run_id,
+                )
+                if result.get("status") == "idempotent_duplicate":
+                    duplicates += 1
+                elif result.get("status") in {"success", "anomaly_detected"}:
+                    seeded += 1
+                else:
+                    skipped += 1
+    return {"seeded": seeded, "duplicates": duplicates, "skipped": skipped}
+
+
 def _reconcile_cycle(
     conn: sqlite3.Connection, cycle_id: str, revision: int,
 ) -> tuple[list[str], list[str], set[str]]:
@@ -366,6 +428,138 @@ def _crosses_midnight(start_ms: int, end_ms: int) -> bool:
     d1 = datetime.fromtimestamp(start_ms / 1000.0)
     d2 = datetime.fromtimestamp(end_ms / 1000.0)
     return d1.date() != d2.date()
+
+
+def _run_token_weight(run: dict[str, Any]) -> int | None:
+    """Return strict participant total tokens, preserving explicit zeroes.
+
+    Every participant present in the finalized run must have a numeric total.
+    This prevents partial snapshots from silently receiving a proportional share.
+    """
+    participants: list[dict[str, Any]] = []
+    parent = run.get("parent")
+    if isinstance(parent, dict):
+        participants.append(parent)
+    workers = run.get("workers")
+    if isinstance(workers, dict):
+        participants.extend(worker for worker in workers.values() if isinstance(worker, dict))
+    if not participants:
+        return None
+    values: list[int] = []
+    for participant in participants:
+        usage = participant.get("usage_delta") if participant is parent else participant.get("usage")
+        value = usage.get("total_tokens") if isinstance(usage, dict) else None
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            return None
+        values.append(int(value))
+    return sum(values)
+
+
+def allocate_quota_segments(
+    conn: sqlite3.Connection,
+    *,
+    runs: dict[str, dict[str, Any]] | None = None,
+    state_root: Path = STATE_ROOT,
+    now: int | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Allocate active weekly segments over overlapping runs by token weight.
+
+    Allocation IDs are deterministic ``segment_id:run_id`` keys, so replaying
+    the collector updates the same rows rather than charging quota twice.  The
+    SQLite transaction also updates segment attribution state atomically.
+    """
+    root = Path(state_root)
+    snapshot: dict[str, dict[str, Any]] = {}
+    try:
+        from .common import iter_run_files, read_json_object
+        for path in iter_run_files() if root == STATE_ROOT else sorted((root / "runs").glob("*.json")):
+            value = read_json_object(path)
+            if isinstance(value, dict):
+                snapshot[path.stem] = value
+    except Exception:
+        pass
+    if runs:
+        snapshot.update({str(key): value for key, value in runs.items() if isinstance(value, dict)})
+    clock = now if now is not None else int(time.time() * 1000)
+    result: dict[str, dict[str, Any]] = {}
+    with conn:
+        meta = conn.execute("SELECT current_revision FROM quota_ledger_metadata WHERE id = 1").fetchone()
+        old_revision = int(meta[0]) if meta else 1
+        segments = conn.execute("SELECT * FROM quota_segments WHERE status = 'active' ORDER BY segment_id").fetchall()
+        old_active = conn.execute("SELECT * FROM quota_allocations WHERE status = 'active' ORDER BY allocation_id").fetchall()
+        old_by_id = {str(row["allocation_id"]): row for row in old_active}
+        desired_rows: dict[str, tuple[Any, ...]] = {}
+        desired_segments: dict[str, tuple[str, float]] = {}
+        old_runs = {str(row["run_id"]) for row in conn.execute("SELECT DISTINCT run_id FROM quota_allocations").fetchall()}
+        for segment in segments:
+            cycle_runs = {
+                str(row["run_id"])
+                for row in conn.execute(
+                    "SELECT DISTINCT run_id FROM quota_observations WHERE cycle_id=? AND run_id IS NOT NULL",
+                    (segment["cycle_id"],),
+                ).fetchall()
+            }
+            candidates: list[tuple[str, dict[str, Any], int | None]] = []
+            for run_id in sorted(cycle_runs):
+                run = snapshot.get(run_id)
+                if not isinstance(run, dict) or not isinstance(run.get("finished_at_ms"), (int, float)):
+                    continue
+                started = run.get("started_at_ms")
+                if not isinstance(started, (int, float)) or started > segment["end_time_ms"] or run["finished_at_ms"] < segment["start_time_ms"]:
+                    continue
+                candidates.append((run_id, run, _run_token_weight(run)))
+            # Any missing participant weight blocks the entire segment. Explicit
+            # zero weights remain candidates and all-zero totals stay waiting.
+            blocked = any(weight is None for _, _, weight in candidates)
+            total = sum(weight or 0 for _, _, weight in candidates)
+            if not candidates or blocked or total <= 0:
+                desired_segments[segment["segment_id"]] = ("waiting_weights", float(segment["delta_pp"]))
+                continue
+            remaining = Decimal(str(segment["delta_pp"]))
+            ids: set[str] = set()
+            for index, (run_id, run, weight) in enumerate(candidates):
+                allocation_id = f"{segment['segment_id']}:{run_id}"
+                value = remaining if index == len(candidates) - 1 else (Decimal(str(segment["delta_pp"])) * int(weight) / total).quantize(Decimal("0.000000000001"))
+                remaining -= value
+                ids.add(allocation_id)
+                desired_rows[allocation_id] = (segment["segment_id"], run_id, str(run.get("session_id") or ""), float(value), int(weight), int(weight) / total)
+            desired_segments[segment["segment_id"]] = ("fully_attributed", 0.0)
+        semantic_changed = set(old_by_id) != set(desired_rows)
+        for allocation_id, row in desired_rows.items():
+            old = old_by_id.get(allocation_id)
+            if old is None or any(old[key] != value for key, value in (("segment_id", row[0]), ("run_id", row[1]), ("session_id", row[2]), ("allocated_pp", row[3]), ("token_weight", row[4]), ("weight_share", row[5]))):
+                semantic_changed = True
+        for segment_id, (status, unattributed) in desired_segments.items():
+            current = conn.execute("SELECT attribution_status, unattributed_pp FROM quota_segments WHERE segment_id=?", (segment_id,)).fetchone()
+            if current and (current["attribution_status"] != status or float(current["unattributed_pp"]) != unattributed):
+                semantic_changed = True
+        revision = old_revision + 1 if semantic_changed else old_revision
+        if semantic_changed:
+            conn.execute("UPDATE quota_ledger_metadata SET current_revision=?, last_rebuilt_at_ms=? WHERE id=1", (revision, clock))
+        for allocation_id in set(old_by_id) - set(desired_rows):
+            conn.execute("UPDATE quota_allocations SET status='revoked', revision=? WHERE allocation_id=?", (revision, allocation_id))
+        for allocation_id, row in desired_rows.items():
+            conn.execute(
+                "INSERT INTO quota_allocations (allocation_id,segment_id,run_id,session_id,allocated_pp,token_weight,weight_share,attribution_method,assumption,status,revision) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(allocation_id) DO UPDATE SET allocated_pp=excluded.allocated_pp, token_weight=excluded.token_weight, weight_share=excluded.weight_share, session_id=excluded.session_id, status='active', revision=excluded.revision",
+                (allocation_id, row[0], row[1], row[2], row[3], row[4], row[5], ALLOCATION_METHOD, None, "active", revision),
+            )
+        for segment_id, (status, unattributed) in desired_segments.items():
+            conn.execute("UPDATE quota_segments SET attribution_status=?, unattributed_pp=?, reason_code=? WHERE segment_id=?", (status, unattributed, None if status == "fully_attributed" else "waiting_attribution", segment_id))
+        active = conn.execute("SELECT * FROM quota_allocations WHERE status='active' ORDER BY allocation_id").fetchall()
+        aggregate: dict[str, list[sqlite3.Row]] = {}
+        for row in active:
+            aggregate.setdefault(str(row["run_id"]), []).append(row)
+        all_runs = old_runs | set(aggregate)
+        for run_id in sorted(all_runs):
+            rows = aggregate.get(run_id, [])
+            if not rows:
+                result[run_id] = {"clear": True}
+                continue
+            total_pp = sum(float(row["allocated_pp"]) for row in rows)
+            total_weight = sum(int(row["token_weight"]) for row in rows)
+            ids = sorted(str(row["allocation_id"]) for row in rows)
+            result[run_id] = {"allocated_quota_pp": total_pp, "quota_allocation": {"allocation_id": ids[0] if len(ids) == 1 else None, "allocated_pp": total_pp, "token_weight": total_weight, "attribution_method": ALLOCATION_METHOD, "status": "active"}}
+    return result
 
 
 def export_quota_summary(
