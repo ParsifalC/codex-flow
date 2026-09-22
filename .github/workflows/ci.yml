@@ -253,7 +253,11 @@ jobs:
           & (Join-Path $tmp 'bin-installed/codex-flow.cmd') uninstall
           if (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow.toml')) { throw 'policy survived uninstall' }
           if (Test-Path (Join-Path $env:CODEX_HOME 'skills/flow-pilot')) { throw 'FlowPilot skill survived uninstall' }
-          if (Test-Path (Join-Path $env:CODEX_HOME 'codex-flow')) { throw 'state survived uninstall' }
+          $stateDir = Join-Path $env:CODEX_HOME 'codex-flow'
+          $petsDir = Join-Path $stateDir 'pets'
+          if (-not (Test-Path -LiteralPath $petsDir -PathType Container)) { throw 'pet state was not preserved by uninstall' }
+          $remainingState = @(Get-ChildItem -LiteralPath $stateDir -Force | Where-Object { $_.Name -ne 'pets' })
+          if ($remainingState.Count -ne 0) { throw 'unrelated state survived uninstall' }
           if (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.cmd')) { throw 'custom cmd wrapper survived uninstall' }
           if (Test-Path (Join-Path $tmp 'bin-installed/codex-flow.ps1')) { throw 'custom PowerShell wrapper survived uninstall' }
           $config = [System.IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'config.toml'), $utf8NoBom)
