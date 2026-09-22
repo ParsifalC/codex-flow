@@ -12,12 +12,18 @@ public struct BubbleView: View {
     public init(state: OverlayState) { self.state = state }
 
     public var body: some View {
-        HStack(spacing: 0) {
-            if state.isDocked && state.dockEdge == .right { Spacer(minLength: 0) }
-            tile
-            if state.isDocked && state.dockEdge != .right { Spacer(minLength: 0) }
+        Group {
+            if state.petResource != nil {
+                petCompanion
+            } else {
+                HStack(spacing: 0) {
+                    if state.isDocked && state.dockEdge == .right { Spacer(minLength: 0) }
+                    tile
+                    if state.isDocked && state.dockEdge != .right { Spacer(minLength: 0) }
+                }
+            }
         }
-        .frame(width: OverlayCompactLayout.hostSize.width, height: OverlayCompactLayout.hostSize.height)
+        .frame(width: state.compactSize.width, height: state.compactSize.height)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isHovered)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: state.isDocked)
         .accessibilityElement(children: .ignore)
@@ -27,15 +33,29 @@ public struct BubbleView: View {
         .help("FlowPilot · " + statusText)
     }
 
+    private var petCompanion: some View {
+        VStack(spacing: 4) {
+            PetView(state: state, animator: state.petAnimator, reduceMotion: reduceMotion)
+            Text(state.latestRun.map { $0.totalTokens > 0 ? $0.formattedTotalTokens + " tokens" : "— tokens" } ?? "— tokens")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .shadow(color: .black.opacity(0.95), radius: 2, y: 1)
+                .shadow(color: .black.opacity(0.8), radius: 1)
+                .frame(height: 14)
+        }
+        .frame(width: OverlayCompactLayout.petContentSize.width, height: OverlayCompactLayout.petContentSize.height)
+        .contentShape(Rectangle())
+        .onHover {
+            isHovered = $0
+            if $0 { state.playPetHover(reduceMotion: reduceMotion) }
+        }
+    }
+
     private var tile: some View {
         HStack(spacing: state.isDocked ? 3 : 8) {
-            Group {
-                if state.petResource != nil {
-                    PetView(state: state, animator: state.petAnimator, reduceMotion: reduceMotion)
-                } else {
-                    ResultGlow(isUnread: state.hasUnreadResult)
-                }
-            }
+            ResultGlow(isUnread: state.hasUnreadResult)
             .frame(width: 24, height: 28)
             if !state.isDocked {
                 VStack(alignment: .leading, spacing: 3) {

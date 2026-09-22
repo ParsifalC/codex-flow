@@ -71,6 +71,9 @@ struct OverlayRuntimeState {
 /// One geometry contract for the SwiftUI tile, window host and pointer filtering.
 enum OverlayCompactLayout {
     static let hostSize = NSSize(width: 128, height: 64)
+    static let petHostSize = NSSize(width: 128, height: 136)
+    static let petSpriteSize = NSSize(width: 96, height: 104)
+    static let petContentSize = NSSize(width: 96, height: 122)
     static let tileSize = NSSize(width: 112, height: 48)
     static let dockedSize = NSSize(width: 36, height: 48)
     static let cornerRadius: CGFloat = 16
@@ -85,10 +88,17 @@ enum OverlayCompactHitRegion {
         _ point: NSPoint,
         in hostBounds: NSRect,
         expanded: Bool,
-        docked: Bool
+        docked: Bool,
+        pet: Bool = false
     ) -> Bool {
         guard hostBounds.contains(point) else { return false }
         if expanded { return true }
+        if pet {
+            let size = OverlayCompactLayout.petContentSize
+            return NSRect(x: hostBounds.midX - size.width / 2,
+                          y: hostBounds.midY - size.height / 2,
+                          width: size.width, height: size.height).contains(point)
+        }
 
         if docked {
             let pillSize = OverlayCompactLayout.dockedSize

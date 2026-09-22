@@ -24,7 +24,7 @@ public struct PetView: View {
                 Color.clear
             }
         }
-        .frame(width: 24, height: 28)
+        .frame(width: OverlayCompactLayout.petSpriteSize.width, height: OverlayCompactLayout.petSpriteSize.height)
         .accessibilityHidden(true)
         .onAppear {
             state.refreshPetVisibility(reduceMotion: reduceMotion)

@@ -20,6 +20,10 @@ struct PetOverlayInteractionTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let state = OverlayState(readDefaults: defaults)
+        let petBounds = NSRect(origin: .zero, size: OverlayCompactLayout.petHostSize)
+        precondition(OverlayCompactHitRegion.contains(NSPoint(x: 64, y: 70), in: petBounds, expanded: false, docked: false, pet: true), "The pet must remain draggable")
+        precondition(OverlayCompactHitRegion.contains(NSPoint(x: 64, y: 16), in: petBounds, expanded: false, docked: false, pet: true), "The consumption label must remain clickable")
+        precondition(!OverlayCompactHitRegion.contains(NSPoint(x: 4, y: 70), in: petBounds, expanded: false, docked: false, pet: true), "Transparent side margins must pass through")
 
         state.setPetVisibility(true)
         precondition(state.petAnimator.timerIsRunning, "A visible compact pet must animate")
@@ -71,8 +75,10 @@ struct PetOverlayInteractionTests {
         try FileManager.default.createDirectory(at: packageRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: fixtureRoot.appendingPathComponent("synthetic-v2"), to: packageRoot)
         try Data("synthetic-v2".utf8).write(to: current)
+        state.isDocked = true
         let accepted = send("pet reload", socketPath: socketPath, box: ResponseBox())
         precondition(accepted.success && accepted.response.contains("\"ok\":true"), "valid package reload must acknowledge after decode")
+        precondition(!state.isDocked, "Loading a pet must leave capsule docking")
         precondition(state.petResource?.id == "synthetic-v2", "valid package reload must publish the decoded pet")
 
         try Data("../synthetic-v2".utf8).write(to: current)

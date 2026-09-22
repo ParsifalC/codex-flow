@@ -24,6 +24,9 @@ public class OverlayState: ObservableObject {
     @Published public private(set) var petResource: PetResource?
     @Published public private(set) var petActivityUnavailable: Bool = false
     public let petAnimator: PetAnimator
+    var compactSize: NSSize {
+        petResource == nil ? OverlayCompactLayout.hostSize : OverlayCompactLayout.petHostSize
+    }
     public lazy var petActivityConsumer = PetActivityConsumer(state: self)
     // A completion IPC can refer to an older turn than latestRun. Keep that
     // event's content for the notification presentation while preserving the
@@ -112,6 +115,11 @@ public class OverlayState: ObservableObject {
     public func reloadPet() -> PetReloadOutcome {
         if !Thread.isMainThread {
             return DispatchQueue.main.sync { reloadPet() }
+        }
+        let previousSize = compactSize
+        defer {
+            if petResource != nil { isDocked = false }
+            if compactSize != previousSize { windowController?.updateWindowFrame(animated: false) }
         }
         let result = DispatchQueue.global(qos: .userInitiated).sync {
             petStore.reload()
@@ -492,7 +500,7 @@ public struct OverlayRootView: View {
                     )
             } else {
                 BubbleView(state: state)
-                    .frame(width: OverlayCompactLayout.hostSize.width, height: OverlayCompactLayout.hostSize.height)
+                    .frame(width: state.compactSize.width, height: state.compactSize.height)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing)),
@@ -805,7 +813,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     private var pendingPresentationAnimated = true
     private var needsPointerReconciliationAfterGeometry = false
 
-    private let bubbleSize = OverlayCompactLayout.hostSize
+    private var bubbleSize: NSSize { state.compactSize }
     static let summarySize = NSSize(width: 404, height: 660)
     private let snapMargin: CGFloat = 8.0
     private let snapThreshold: CGFloat = 36.0
@@ -892,7 +900,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
             point,
             in: hostBounds,
             expanded: state.isExpanded,
-            docked: state.isDocked
+            docked: state.isDocked,
+            pet: state.petResource != nil
         )
     }
 
@@ -1063,7 +1072,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
     /// Compact docking is visual-only. Capsule and docked tile share the same stationary
     /// compact host; no NSWindow frame is changed here.
     public func tuckBubble(animated: Bool = true) {
-        guard !state.isExpanded,
+        guard state.petResource == nil,
+              !state.isExpanded,
               !state.isPinned,
               !isInteractingOrDragging,
               !state.isDocked,
@@ -1086,7 +1096,8 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
                 pointerLocationInHost,
                 in: NSRect(origin: .zero, size: bubbleSize),
                 expanded: false,
-                docked: false
+                docked: false,
+                pet: state.petResource != nil
            ),
            !isInteractingOrDragging {
             resetDwellTimer()

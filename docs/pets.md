@@ -12,7 +12,7 @@ codex-flow pets install boba
 codex-flow overlay start
 ```
 
-不需要安装 Petdex 客户端或 Node。动画显示目前支持 macOS 原生浮窗。
+不需要安装 Petdex 客户端或 Node。动画显示目前支持 macOS 原生浮窗。宠物以透明背景独立显示，消耗文字位于下方；点击打开详情，拖动可以移动位置。
 
 ## 安装和切换
 
