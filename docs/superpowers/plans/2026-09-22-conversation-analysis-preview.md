@@ -47,7 +47,7 @@ Consumes units 1+2; produces start/status/stop commands and usable native window
 - [x] Implement launcher using source paths, guarded private state, no global installation.
 - [x] Run Python and relevant Swift regressions, compile full native binary using isolated CODEX_HOME.
 - [x] Start actual model analysis for this explicitly selected conversation with bounded requests; inspect model results.
-- [ ] Complete visual UI and button inspection after the user unlocks macOS; the native preview is running.
+- [x] Complete visual UI and button inspection after macOS is unlocked; see the 2026-09-23 acceptance findings below.
 - [x] Run two independent read-only reviews, fix actionable issues with regression tests, and commit the branch.
 Validation: analysis tests, turn-result/publication regression, native build, live actual-model snapshot and native preview.
 
@@ -60,3 +60,21 @@ Validation: analysis tests, turn-result/publication regression, native build, li
 - Three real analysis operations succeeded against the explicitly selected conversation: requirement, reply summary and manually requested skill draft. Existing generated skill metadata is normalized before display/export.
 - Original checkout's README, AccountView, OverlayTheme and development-guide edits were preserved.
 - Visual UI clicking remains pending because the desktop automation reported macOS locked; user was asked to unlock. No visual acceptance is claimed.
+
+## Acceptance findings (2026-09-23)
+
+The earlier lock-screen blocker is resolved. Acceptance is **not fully passed**: the following UI paths passed, but the source-classification issue below remains open.
+
+- The actual current user message generated a requirement automatically. The later question reply updated the same turn from revision 20 to 21; the unfinished reply correctly remained without a summary.
+- Selected historical source messages and complete original replies expanded successfully. The previous final reply had a real model-generated summary.
+- Clicking the native skill button added exactly one skill call (1 to 2), progressing through waiting/running/succeeded. Later user input did not automatically extract another skill.
+- Editing, clearing and refreshing the draft worked. Privacy mode hid source/derived text and the editor, disabled extraction, and preserved the edited draft when switched off.
+- The native save panel exported the original draft, then an edited draft. The exported file contained the added acceptance marker and canonical name/description frontmatter. Test exports were moved from Documents into the private preview state's `acceptance-export` directory; no skill was installed.
+- Clicking the window close button stopped the supervisor, worker and UI; no private `auth.json` remained. The preview was restarted for continued user inspection.
+- Restart exposed an invalid bundle signature: the launcher copied a signed executable without generating a matching signature for the new bundle. A regression test reproduced `code has no resources but signature indicates they must be present`. The launcher now replaces the executable atomically and signs only its private preview bundle. All 38 analysis tests passed; real window close/restart was verified again.
+
+### Open finding: automatic goal continuation classified as user speech
+
+The live transcript contains two messages with authoritative content kind `goal.internal_context`. They appear in the history as user messages containing `<codex_internal_context source="goal">` and caused requirement calls. `source.py` currently excludes other host wrappers but not this kind. This does not satisfy the requirement to analyze genuine user messages. Repair must cover both future parsing and already imported preview state, while preserving message order, job identity, and historical results; adding a filter alone would leave persisted input and indexes inconsistent. This finding remains unimplemented and prevents an unconditional acceptance claim.
+
+During UI automation, Stage Manager background thumbnails and native save-panel transitions caused intermittent timeouts. The completed checks above are based on final AX states, actual exported bytes and owned-process checks, rather than attempted clicks.

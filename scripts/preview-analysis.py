@@ -120,9 +120,20 @@ def ui_binary(args, state):
     app = state / 'FlowPilot Analysis Preview.app' / 'Contents'
     executable = app / 'MacOS' / 'FlowPilotAnalysisPreview'
     executable.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(binary), str(executable))
+    # Replace the inode instead of overwriting a potentially mapped Mach-O.
+    # The source signature belongs to its original bundle, not this preview.
+    fd, temporary = tempfile.mkstemp(dir=str(executable.parent))
+    os.close(fd)
+    try:
+        shutil.copy2(str(binary), temporary)
+        os.replace(temporary, str(executable))
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
     with (app / 'Info.plist').open('wb') as stream:
         plistlib.dump({'CFBundleExecutable': executable.name, 'CFBundleIdentifier': 'local.codexflow.analysis-preview', 'CFBundleName': 'FlowPilot Analysis Preview', 'CFBundlePackageType': 'APPL', 'NSHighResolutionCapable': True}, stream)
+    signed = subprocess.run(['codesign', '--force', '--sign', '-', str(app.parent)], capture_output=True, text=True)
+    if signed.returncode:
+        raise ValueError('preview bundle signing failed: ' + signed.stderr.strip())
     return executable
 
 

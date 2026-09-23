@@ -2,7 +2,9 @@ import importlib.util
 import json
 import os
 import socket
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -153,6 +155,18 @@ class LauncherTests(unittest.TestCase):
     def start(self):
         args = self.launcher.parser().parse_args(['start', '--state-dir', str(self.state), '--transcript', str(self.source), '--session-id', 'session-a', '--model', 'fake', '--auth-home', str(self.root / 'empty-auth'), '--codex-bin', '/usr/bin/false', '--ui-binary', str(self.ui)])
         return self.launcher.start(args)
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS bundle signature')
+    def test_generated_bundle_has_valid_signature_after_repeated_preparation(self):
+        binary = self.root / 'apps/macos-overlay/bin/FlowPilot'
+        binary.parent.mkdir(parents=True)
+        shutil.copy('/usr/bin/true', binary)
+        args = self.launcher.parser().parse_args(['start', '--state-dir', str(self.state)])
+        with patch.object(self.launcher, 'ROOT', self.root):
+            for _ in range(2):
+                executable = self.launcher.ui_binary(args, self.state)
+                result = subprocess.run(['codesign', '--verify', '--strict', str(executable.parents[2])], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_duplicate_start_private_state_safe_argv_and_window_close_cleanup(self):
         first = self.start()
