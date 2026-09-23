@@ -1,42 +1,85 @@
 import SwiftUI
+import AppKit
 
 /// Shared completed-turn details with explicit provenance for request fallbacks.
 public struct TurnDetailView: View {
     public let run: TaskRun
     public let isPrivacyMode: Bool
+    public var analysis: ConversationAnalysisProjection?
+    public var analysisService: ConversationAnalysisService?
+    @State private var needExpanded = false
+    @State private var summaryExpanded = false
     @State private var resultExpanded = false
     @State private var planExpanded = false
     @State private var jsonExpanded = false
+    @State private var sourceExpanded = false
+    @State private var skillExpanded = false
+    @State private var skillDraft = AnalysisSkillDraftState()
+    @State private var exportMessage: String?
 
-    public init(run: TaskRun, isPrivacyMode: Bool = false) {
+    public init(run: TaskRun, isPrivacyMode: Bool = false,
+                analysis: ConversationAnalysisProjection? = nil, analysisService: ConversationAnalysisService? = nil) {
         self.run = run; self.isPrivacyMode = isPrivacyMode
+        self.analysis = analysis; self.analysisService = analysisService
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 16) {
-                narrative(
-                    L("This turn’s goal", "本轮目标"),
-                    hint: goalHint,
-                    text: run.publishedGoal,
-                    accent: true
-                )
-                OverlayDivider()
-                narrative(
-                    L("Result", "结果"),
-                    hint: run.isLegacyConclusionFallback ? L("Legacy history", "历史兼容") : nil,
-                    text: run.publishedConclusion,
-                    expanded: $resultExpanded,
-                    accent: false
-                )
+            VStack(alignment: .leading, spacing: 14) {
+                if let analysis {
+                    let need = analysis.selectedTurn?.requirement
+                    let ready = need?.status == "succeeded" && need?.turnGoal != nil
+                    narrative(L("Conversation goal", "会话目标"), hint: nil,
+                        text: ready ? analysis.requirementText : need?.error == "context_limit_exceeded" ? L("Request history exceeds the analysis limit", "需求记录超出分析上限") : stateText(need?.status == "succeeded" ? nil : need?.status), accent: false)
+                        .help(L("Conversation goal as of the selected turn", "截至所选轮次的会话目标"))
+                    OverlayDivider()
+                    narrative(L("Turn goal", "本轮目标"), hint: nil,
+                        text: ready ? need?.turnGoal : L("Awaiting extraction", "待提炼"), accent: true)
+                    coverageNote(need?.coverage)
+                    DisclosureGroup(L("Need details", "需求详情"), isExpanded: $needExpanded) {
+                        needDetails(need)
+                    }.font(.system(size: 12)).disclosureGroupStyle(OverlayDisclosureStyle())
+                    OverlayDivider()
+                    narrative(L("Turn result", "本轮结果"), hint: nil,
+                        text: analysis.summaryText ?? (analysis.selectedTurn?.summary.error == "context_limit_exceeded" ? L("Reply too long to summarize; open the original below", "回复超出摘要上限，请查看原文") : analysis.currentTurnWaitingForFinal ? L("Awaiting reply", "待回复") : stateText(analysis.selectedTurn?.summary.status)),
+                        expanded: (analysis.summaryText?.count ?? 0) > 120 ? $summaryExpanded : nil, accent: false)
+                    coverageNote(analysis.selectedTurn?.summary.coverage)
+                    if !isPrivacyMode, !(analysis.selectedTurn?.summary.caveats.isEmpty ?? true) {
+                        DisclosureGroup(L("Result qualifications", "结果说明")) { analysisNotes(analysis.selectedTurn?.summary) }
+                            .font(.system(size: 12)).disclosureGroupStyle(OverlayDisclosureStyle())
+                    }
+                    if let original = analysis.originalResult ?? run.publishedConclusion {
+                        DisclosureGroup(L("Full original reply", "回复原文"), isExpanded: $resultExpanded) {
+                            Text(isPrivacyMode ? L("Hidden", "已隐藏") : original)
+                                .font(.system(size: 13)).textSelection(.enabled)
+                        }.disclosureGroupStyle(OverlayDisclosureStyle()).font(.system(size: 12))
+                    }
+                    if analysis.selectedTurn?.summary.status == "not_analyzed" && !analysis.currentTurnWaitingForFinal ||
+                       need?.status == "not_analyzed" || (need?.status == "succeeded" && need?.turnGoal == nil) {
+                        Button(L("Update extraction", "更新提炼")) { perform("analyze-turn") }
+                            .disabled(isPrivacyMode || !analysis.snapshot.enabled)
+                    }
+                    if analysis.retryJobID(for: .requirement) != nil {
+                        Button(L("Retry requirement", "重试需求")) { perform("retry", kind: .requirement) }.disabled(isPrivacyMode)
+                    }
+                    if analysis.retryJobID(for: .summary) != nil {
+                        Button(L("Retry summary", "重试结果")) { perform("retry", kind: .summary) }.disabled(isPrivacyMode)
+                    }
+                } else {
+                    narrative(L("Turn goal", "本轮目标"), hint: goalHint, text: run.publishedGoal, accent: true)
+                    OverlayDivider()
+                    narrative(L("Turn result", "本轮结果"), hint: nil, text: run.publishedConclusion,
+                        expanded: $resultExpanded, accent: false)
+                }
                 if run.result?.truncated == true {
                     Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.52))
                 }
             }
             .padding(.vertical, 2)
+            if analysis != nil { OverlayDivider(); skillSection }
             OverlayDivider()
-            taskMetrics
             DisclosureGroup(isExpanded: $planExpanded) {
                 VStack(alignment: .leading, spacing: 12) {
+                    taskMetrics
                     if let orchestration = run.turnContext?.orchestration, let plan = orchestration.executionPlan {
                         planRow(L("Strategy", "策略"), value(plan, "strategy"))
                         planRow(L("Routing", "路由"), value(plan, "routing"))
@@ -56,17 +99,121 @@ public struct TurnDetailView: View {
             } label: {
                 HStack {
                     Text(L("Execution details", "执行详情")).fontWeight(.semibold)
-                    Spacer()
-                    Text(run.turnContext?.orchestration == nil ? L("Not recorded", "未记录") : L("Orchestration", "编排计划"))
-                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
                 }
             }
             .disclosureGroupStyle(OverlayDisclosureStyle())
             .font(.system(size: 14)).tint(OverlayTheme.secondary)
             .overlay(alignment: .top) { OverlayDivider() }
         }
+        // Recreate selectable native text views so accessibility drops cached private text.
+        .id(isPrivacyMode)
         .onChange(of: run.id) { _, _ in
             resultExpanded = false; planExpanded = false; jsonExpanded = false
+            needExpanded = false; summaryExpanded = false; sourceExpanded = false; skillExpanded = false; skillDraft = AnalysisSkillDraftState(); loadDraft()
+        }
+        .onAppear { loadDraft() }
+        .onChange(of: analysis?.selectedSkill) { _, _ in loadDraft() }
+        .onChange(of: isPrivacyMode) { _, hidden in if !hidden { loadDraft() } }
+        .alert(L("Export skill", "导出 Skill"), isPresented: Binding(get: { exportMessage != nil }, set: { if !$0 { exportMessage = nil } })) {
+            Button(L("OK", "好")) { exportMessage = nil }
+        } message: { Text(exportMessage ?? "") }
+    }
+
+    @ViewBuilder private func needDetails(_ need: AnalysisJobState?) -> some View {
+        if isPrivacyMode { Text(L("Hidden", "已隐藏")) }
+        else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L("Real need", "真正需求")).fontWeight(.semibold)
+                Text(need?.text ?? L("Not analyzed yet", "尚未提炼"))
+                needNotes(L("Evidence", "证据"), need?.evidence ?? [])
+                needNotes(L("Conflict", "矛盾"), need?.conflicts ?? [])
+                needNotes(L("Gap", "缺口"), need?.gaps ?? [])
+                Text(L("Better wording", "更好说法")).fontWeight(.semibold)
+                Text(need?.betterPrompt ?? L("Awaiting update", "待更新"))
+                Text(L("Next step", "下一步")).fontWeight(.semibold)
+                Text(need?.nextStep ?? L("Awaiting update", "待更新"))
+                analysisNotes(need)
+                DisclosureGroup(L("Original request", "原始发言"), isExpanded: $sourceExpanded) {
+                    if let goal = run.publishedGoal { Text(goal) }
+                    Text(analysis?.selectedTurn?.userText ?? "")
+                }.disclosureGroupStyle(OverlayDisclosureStyle())
+            }.textSelection(.enabled).padding(.top, 8)
+        }
+    }
+    @ViewBuilder private func needNotes(_ title: String, _ values: [String]) -> some View {
+        ForEach(values, id: \.self) { Text(title + ": " + $0).foregroundStyle(OverlayTheme.secondary) }
+    }
+
+    private func loadDraft() {
+        if !isPrivacyMode { skillDraft.load(skill: analysis?.selectedSkill) }
+    }
+    private func perform(_ command: String, kind: AnalysisJobKind? = nil) {
+        guard !isPrivacyMode else { return }
+        _ = analysisService?.performForTurn(command, sessionID: run.sessionId, turnID: run.turnId, kind: kind)
+    }
+    private func stateText(_ status: String?) -> String {
+        switch status {
+        case "pending": return L("Queued for analysis…", "等待提炼…")
+        case "running": return L("Analyzing…", "正在提炼…")
+        case "failed": return L("Extraction failed", "提炼失败")
+        default: return L("Not analyzed yet", "尚未提炼")
+        }
+    }
+    @ViewBuilder private func coverageNote(_ coverage: AnalysisModelCoverage?) -> some View {
+        if !isPrivacyMode, coverage?.inputTruncated == true {
+            Text(L("Input is incomplete due to the length limit", "输入超出长度限制，未完整纳入分析"))
+                .font(.system(size: 11)).foregroundStyle(OverlayTheme.warning)
+        }
+    }
+    @ViewBuilder private func analysisNotes(_ job: AnalysisJobState?) -> some View {
+        if !isPrivacyMode {
+            if let revision = job?.revision {
+                Text(L("Revision \(revision)", "修订 \(revision)")).font(.system(size: 10)).foregroundStyle(OverlayTheme.muted)
+            }
+            ForEach(job?.caveats ?? [], id: \.self) { text in
+                Text(text).font(.system(size: 11)).foregroundStyle(OverlayTheme.warning)
+            }
+        }
+    }
+    private var skillSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Button(L("Extract skill", "提炼技能")) { skillExpanded = true; perform("extract-skill") }
+                    .help(L("Extract from the conversation through this turn", "从会话开始至本轮提炼技能"))
+                    .disabled(isPrivacyMode || analysis?.canExtractSkill != true || ["pending", "running"].contains(analysis?.selectedSkill?.status ?? ""))
+            }
+            if let skill = analysis?.selectedSkill {
+                coverageNote(skill.coverage)
+                DisclosureGroup(L("Skill draft", "技能草稿"), isExpanded: $skillExpanded) {
+                    if isPrivacyMode { Text(L("Hidden in privacy mode", "隐私模式已隐藏")) }
+                    else if skill.status == "succeeded" {
+                        Text(skill.description ?? "").font(.system(size: 12)).foregroundStyle(OverlayTheme.secondary)
+                        TextEditor(text: $skillDraft.text)
+                            .font(.system(size: 12, design: .monospaced)).frame(height: 180)
+                            .accessibilityLabel(L("Edit skill draft", "编辑技能草稿"))
+                        ForEach(skill.caveats, id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(OverlayTheme.warning) }
+                        Button(L("Export SKILL.md", "导出 SKILL.md")) { exportSkill() }
+                            .disabled(skillDraft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } else {
+                        Text(stateText(skill.status)).font(.system(size: 12))
+                        if skill.status == "failed" { Button(L("Retry", "重试")) { perform("retry", kind: .skill) } }
+                    }
+                }.disclosureGroupStyle(OverlayDisclosureStyle()).font(.system(size: 12))
+            }
+        }.buttonStyle(.plain).tint(OverlayTheme.accent)
+    }
+    private func exportSkill() {
+        guard !isPrivacyMode, analysis?.canExportSkill == true else { return }
+        let draft = skillDraft.text
+        let job = analysis?.selectedSkill?.jobID
+        let session = run.sessionId, turn = run.turnId
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "SKILL.md"
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let saved = analysisService?.exportDraft(draft, sessionID: session, turnID: turn, jobID: job, to: url) == true
+            exportMessage = saved ? L("Skill draft exported.", "技能草稿已导出。") : L("Could not export the draft.", "无法导出草稿，请重试。")
         }
     }
     private var goalHint: String? {
@@ -91,7 +238,7 @@ public struct TurnDetailView: View {
                 Spacer(minLength: 0)
             }.font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.52))
             Text(isPrivacyMode ? L("Hidden in privacy mode", "隐私模式已隐藏") : localizedResultText(text))
-                .font(.system(size: accent ? 19 : 13.5, weight: accent ? .semibold : .regular))
+                .font(.system(size: accent ? 16 : 14, weight: accent ? .medium : .regular))
                 .foregroundStyle(text == nil ? .white.opacity(0.52) : (accent ? .white.opacity(0.95) : .white.opacity(0.72)))
                 .lineSpacing(accent ? 3 : 4).lineLimit(expanded?.wrappedValue == false ? 3 : nil)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -129,16 +276,30 @@ public struct TurnDetailView: View {
                                 Rectangle().fill(OverlayTheme.good).frame(width: geometry.size.width * worker)
                             }.clipShape(Capsule())
                         }
+                        HStack {
+                            barTokenCount(tokens.parentTokens, role: "Parent")
+                            Spacer(minLength: 8)
+                            barTokenCount(tokens.workerTokens, role: "Worker")
+                        }.padding(.horizontal, 4)
                     }
-                }.frame(height: 6).accessibilityHidden(true)
-                HStack(spacing: 16) {
-                    tokenShare("Parent", count: tokens.parentTokens, share: tokens.parentShare, color: OverlayTheme.accent)
-                    tokenShare("Worker", count: tokens.workerTokens, share: tokens.workerShare, color: OverlayTheme.good)
+                }.frame(height: 22)
+                HStack(alignment: .top, spacing: 16) {
+                    tokenShare("Parent", models: run.parent.map { [$0] } ?? [], share: tokens.parentShare, color: OverlayTheme.accent)
+                    tokenShare("Worker", models: run.allWorkers, share: tokens.workerShare, color: OverlayTheme.good)
                 }
             }
         }.padding(.vertical, 4)
     }
-    private func tokenShare(_ title: String, count: Int?, share: Double?, color: Color) -> some View {
+    private func barTokenCount(_ count: Int?, role: String) -> some View {
+        Text(count.map { TaskRun.formatTokenCount($0) } ?? "—")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(.black.opacity(0.65), in: Capsule())
+            .accessibilityLabel(role + " " + (count.map { "\($0) tokens" } ?? L("Not recorded", "未记录")))
+            .help(role + " " + (count.map { "\($0) tokens" } ?? L("Not recorded", "未记录")))
+    }
+    private func tokenShare(_ title: String, models: [ParticipantInfo], share: Double?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
                 Circle().fill(color).frame(width: 5, height: 5)
@@ -146,11 +307,19 @@ public struct TurnDetailView: View {
                 Spacer(minLength: 0)
                 Text(share.map { String(format: "%.1f%%", $0 * 100) } ?? "—").foregroundStyle(color)
             }.font(.system(size: 11.5, weight: .medium, design: .monospaced))
-            Text(count.map { TaskRun.formatTokenCount($0) + " tokens" } ?? "—")
+            Text(modelNames(models))
                 .font(.system(size: 11, design: .monospaced)).foregroundStyle(OverlayTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help(count.map { "\($0) tokens" } ?? L("Usage not recorded", "用量未记录"))
+        .help(modelNames(models))
+    }
+    private func modelNames(_ participants: [ParticipantInfo]) -> String {
+        guard !participants.isEmpty else { return "—" }
+        return Array(Set(participants.map { participant in
+            let model = participant.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return model.isEmpty || model == "unknown" ? L("Not recorded", "未记录") : model
+        })).sorted().joined(separator: "\n")
     }
     private func quotaChange(_ quota: TurnWeeklyQuotaSummary) -> String {
         guard let consumption = quota.displayConsumption else { return quota.didReset ? L("Reset", "已重置") : "—" }
