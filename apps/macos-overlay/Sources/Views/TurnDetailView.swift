@@ -267,16 +267,30 @@ public struct TurnDetailView: View {
                                 Rectangle().fill(OverlayTheme.good).frame(width: geometry.size.width * worker)
                             }.clipShape(Capsule())
                         }
+                        HStack {
+                            barTokenCount(tokens.parentTokens, role: "Parent")
+                            Spacer(minLength: 8)
+                            barTokenCount(tokens.workerTokens, role: "Worker")
+                        }.padding(.horizontal, 4)
                     }
-                }.frame(height: 6).accessibilityHidden(true)
-                HStack(spacing: 16) {
-                    tokenShare("Parent", count: tokens.parentTokens, share: tokens.parentShare, color: OverlayTheme.accent)
-                    tokenShare("Worker", count: tokens.workerTokens, share: tokens.workerShare, color: OverlayTheme.good)
+                }.frame(height: 22)
+                HStack(alignment: .top, spacing: 16) {
+                    tokenShare("Parent", models: run.parent.map { [$0] } ?? [], share: tokens.parentShare, color: OverlayTheme.accent)
+                    tokenShare("Worker", models: run.allWorkers, share: tokens.workerShare, color: OverlayTheme.good)
                 }
             }
         }.padding(.vertical, 4)
     }
-    private func tokenShare(_ title: String, count: Int?, share: Double?, color: Color) -> some View {
+    private func barTokenCount(_ count: Int?, role: String) -> some View {
+        Text(count.map { TaskRun.formatTokenCount($0) } ?? "—")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(.black.opacity(0.65), in: Capsule())
+            .accessibilityLabel(role + " " + (count.map { "\($0) tokens" } ?? L("Not recorded", "未记录")))
+            .help(role + " " + (count.map { "\($0) tokens" } ?? L("Not recorded", "未记录")))
+    }
+    private func tokenShare(_ title: String, models: [ParticipantInfo], share: Double?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
                 Circle().fill(color).frame(width: 5, height: 5)
@@ -284,11 +298,19 @@ public struct TurnDetailView: View {
                 Spacer(minLength: 0)
                 Text(share.map { String(format: "%.1f%%", $0 * 100) } ?? "—").foregroundStyle(color)
             }.font(.system(size: 11.5, weight: .medium, design: .monospaced))
-            Text(count.map { TaskRun.formatTokenCount($0) + " tokens" } ?? "—")
+            Text(modelNames(models))
                 .font(.system(size: 11, design: .monospaced)).foregroundStyle(OverlayTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help(count.map { "\($0) tokens" } ?? L("Usage not recorded", "用量未记录"))
+        .help(modelNames(models))
+    }
+    private func modelNames(_ participants: [ParticipantInfo]) -> String {
+        guard !participants.isEmpty else { return "—" }
+        return Array(Set(participants.map { participant in
+            let model = participant.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return model.isEmpty || model == "unknown" ? L("Not recorded", "未记录") : model
+        })).sorted().joined(separator: "\n")
     }
     private func quotaChange(_ quota: TurnWeeklyQuotaSummary) -> String {
         guard let consumption = quota.displayConsumption else { return quota.didReset ? L("Reset", "已重置") : "—" }
