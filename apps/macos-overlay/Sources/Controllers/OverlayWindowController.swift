@@ -45,6 +45,18 @@ public class OverlayState: ObservableObject {
         analysisSnapshot?.projection(sessionID: run.sessionId, turnID: run.turnId, privacyMode: isPrivacyMode)
     }
 
+    /// The analyzed conversation owns the task destination; global telemetry
+    /// can enrich matching turns but cannot move it to a different conversation.
+    public var currentTaskRun: TaskRun? {
+        guard let latest = analysisSnapshot?.overlayRuns.last else { return latestRun }
+        if latestRun?.id == latest.id { return latestRun }
+        return telemetryChats.flatMap(\.runs).first(where: { $0.id == latest.id }) ?? latest
+    }
+
+    public var isInspectingHistory: Bool {
+        currentTaskRun != nil && (inspectedRun != nil || notificationRun != nil || selectedRun?.id != currentTaskRun?.id)
+    }
+
     public func attachAnalysis(_ service: ConversationAnalysisService) {
         analysisSubscription?.cancel()
         analysisService?.stop()
@@ -54,12 +66,13 @@ public class OverlayState: ObservableObject {
         analysisSubscription = service.$projection.sink { [weak self] projection in
             guard let self else { return }
             let followLatest = self.inspectedRun == nil && self.notificationRun == nil &&
-                (self.selectedTurnIdentity == nil || self.selectedTurnIdentity == self.latestRun?.id)
+                (self.selectedTurnIdentity == nil || self.selectedTurnIdentity == self.currentTaskRun?.id)
             self.analysisSnapshot = projection.snapshot
-            if let latest = projection.snapshot.overlayRuns.last,
-               self.latestRun == nil || self.latestRun?.sessionId == latest.sessionId {
-                self.latestRun = self.telemetryChats.flatMap(\.runs).first(where: { $0.id == latest.id }) ?? latest
-                if followLatest { self.selectedTurnIdentity = latest.id }
+            if followLatest, let current = self.currentTaskRun {
+                self.selectedTurnIdentity = current.id
+                if !self.selectedSessionRuns.contains(where: { $0.id == current.id }) {
+                    self.selectedSessionRuns.append(current)
+                }
             }
             let chats = self.chatsWithAnalysis(self.telemetryChats)
             self.recentChats = Array(chats.prefix(15))
@@ -142,12 +155,12 @@ public class OverlayState: ObservableObject {
             if let run = selectedSessionRuns.first(where: { $0.id == selectedTurnIdentity }) {
                 return run
             }
-            if let run = [notificationRun, inspectedRun, latestRun].compactMap({ $0 }).first(where: { $0.id == selectedTurnIdentity }) {
+            if let run = [notificationRun, inspectedRun, currentTaskRun, latestRun].compactMap({ $0 }).first(where: { $0.id == selectedTurnIdentity }) {
                 return run
             }
             return nil
         }
-        return notificationRun ?? inspectedRun ?? latestRun
+        return notificationRun ?? inspectedRun ?? currentTaskRun
     }
 
     public var turnNavigation: TurnNavigation {
@@ -487,12 +500,10 @@ public class OverlayState: ObservableObject {
         DispatchQueue.main.async {
             self.notificationRun = nil
             self.inspectedRun = nil
-            self.selectedTurnIdentity = self.latestRun?.id
-            if let latestRun = self.latestRun,
-               !self.selectedSessionRuns.contains(where: { $0.id == latestRun.id }) {
-                self.selectedSessionRuns = [latestRun]
-            }
-            self.markResultViewed(self.latestRun)
+            let current = self.currentTaskRun
+            self.selectedTurnIdentity = current?.id
+            self.selectedSessionRuns = current.map { [$0] } ?? []
+            self.markResultViewed(current)
             self.activeTab = .inspector
             self.windowController?.updateWindowFrame(animated: true)
             self.loadMenuData()
@@ -582,7 +593,7 @@ public class OverlayState: ObservableObject {
             } else if decision.notify && !self.viewedTurnIds.contains(run.id) {
                 self.unreadNotificationRuns[run.id] = run
             }
-            if decision.notify && !(self.isExpanded && self.inspectedRun != nil) {
+            if decision.notify && self.analysisSnapshot?.overlayRuns.isEmpty != false && !(self.isExpanded && self.inspectedRun != nil) {
                 self.notificationRun = run
                 self.selectedTurnIdentity = run.id
                 self.selectedSessionRuns = [run]

@@ -103,3 +103,12 @@ A launcher regression test reproduced missing history/statistics/account inputs 
 A separate regression test added sixteen newer conversations ahead of the selected historical session and reproduced missing previous/next turns. The full telemetry chat collection is now retained for historical navigation; only the recent-conversation menu is limited to fifteen. The goal-continuation source-classification finding remains separate and unresolved.
 
 Validation after the repair: all 39 Python analysis tests, account snapshot fixtures (including custom CODEX_HOME and bounded failures), native turn navigation, analysis projection/guards, startup/IPC/capsule tests, and the full native build passed. The final build was reopened and history, statistics and account data were verified again in the actual popup.
+
+
+## Current-task selection repair (2026-09-23)
+
+Global telemetry and the explicitly analyzed conversation previously competed for `latestRun`. Current-task selection is now derived independently: the latest source turn in the configured conversation is the task destination, enriched only by telemetry matching the same session and turn. Global telemetry remains available for original history/statistics and notification bookkeeping. Browsing history preserves the selected turn; a persistent task-page status and Return to current task button distinguish history from following the current conversation. The switch menu uses the same destination.
+
+Native analysis regression tests now cover unrelated telemetry arriving before attachment, historical selection during updates, returning to the newest analyzed turn, and continuing to follow another new turn without overwriting the global telemetry record. The initial test fixture omitted the legacy completion timestamp and was corrected to pass the existing publication gate; the final assertions pass. Existing startup/notification/IPC and historical navigation tests passed, and the native build succeeded.
+
+Actual native acceptance: opened another project's completed history, observed Viewing history and the return button, clicked the button and returned to this conversation's current analyzed turn (revision 29, turn 14/14). Statistics and account still loaded their existing data; returning from those tabs retained the current analysis. The popup remains open on Current task. Analysis scope remains the explicitly configured conversation; other conversations retain their original details. The separate goal-continuation parser finding remains open.

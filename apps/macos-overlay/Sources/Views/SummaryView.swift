@@ -19,7 +19,7 @@ public struct SummaryView: View {
     }
     private var conversationTitle: String {
         if state.isPrivacyMode { return L("Hidden conversation", "会话已隐藏") }
-        return currentRun?.thread?.name ?? L("Untitled conversation", "未命名会话")
+        return currentRun?.thread?.name ?? state.recentChats.first(where: { $0.sessionId == currentRun?.sessionId })?.title ?? L("Untitled conversation", "未命名会话")
     }
     private var currentRun: TaskRun? { state.selectedRun }
     public var body: some View {
@@ -31,6 +31,16 @@ public struct SummaryView: View {
             OverlayDivider()
             Group {
                 if state.activeTab == .inspector {
+                    HStack {
+                        Text(state.isInspectingHistory ? L("Viewing history", "正在查看历史") : L("Current task", "当前任务"))
+                            .foregroundStyle(OverlayTheme.secondary)
+                        Spacer()
+                        if state.isInspectingHistory {
+                            Button(L("Return to current task", "返回当前任务")) { state.jumpToLive() }
+                                .foregroundStyle(OverlayTheme.accent)
+                        }
+                    }.font(.system(size: 12)).buttonStyle(.plain)
+                        .padding(.horizontal, 20).padding(.vertical, 8)
                     inspector
                     turnFooter
                 } else {
@@ -70,10 +80,10 @@ public struct SummaryView: View {
                 .frame(width: 32, height: 32)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
                 .overlay(alignment: .bottomTrailing) {
-                    Circle().fill(state.latestRun?.isRunning == true ? OverlayTheme.good : OverlayTheme.muted)
+                    Circle().fill(state.currentTaskRun?.isRunning == true ? OverlayTheme.good : OverlayTheme.muted)
                         .frame(width: 6, height: 6)
                 }
-                .accessibilityLabel(state.latestRun?.isRunning == true ? L("Running", "运行中") : L("Ready", "就绪"))
+                .accessibilityLabel(state.currentTaskRun?.isRunning == true ? L("Running", "运行中") : L("Ready", "就绪"))
             Text("FlowPilot").font(.system(size: 16, weight: .semibold, design: .rounded))
             Button {
                 NSWorkspace.shared.open(URL(string: "https://github.com/ParsifalC/codex-flow")!)
@@ -199,14 +209,14 @@ public struct SummaryView: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 20).padding(.vertical, 12)
-        .accessibilityLabel(L("Switch completed turn", "切换已完成轮次"))
+        .accessibilityLabel(L("Switch conversation or turn", "切换会话或轮次"))
         .popover(isPresented: $showPicker, arrowEdge: .bottom) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    Text(L("Switch completed turn", "切换已完成轮次")).font(.headline)
+                    Text(L("Switch conversation or turn", "切换会话或轮次")).font(.headline)
 
-            if let latest = state.latestRun {
-                Button(L("Latest completed turn", "最近完成轮次") + " · " + (state.isPrivacyMode ? L("Hidden project", "项目已隐藏") : latest.projectName)) { state.jumpToLive(); showPicker = false }
+            if let latest = state.currentTaskRun {
+                Button(L("Current task", "当前任务") + " · " + (state.isPrivacyMode ? L("Hidden project", "项目已隐藏") : latest.projectName)) { state.jumpToLive(); showPicker = false }
             }
             ForEach(state.recentChats) { chat in
                 Section(state.isPrivacyMode ? L("Chat", "对话") : chat.projectName + " · " + chat.title) {

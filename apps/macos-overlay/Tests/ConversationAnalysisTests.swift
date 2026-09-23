@@ -61,6 +61,13 @@ struct ConversationAnalysisTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let state = OverlayState(readDefaults: defaults)
+        var unrelated = snapshot.overlayRuns[0]
+        unrelated.sessionId = "other-session"
+        unrelated.turnId = "global-latest"
+        unrelated.status = "completed"
+        unrelated.finishedAtMs = 1000
+        state.update(run: unrelated, recovery: true)
+        waitUntil { state.latestRun?.sessionId == "other-session" }
         state.attachAnalysis(service)
         waitUntil { state.selectedRun?.turnId == "turn-2" }
         state.moveTurn(by: -1)
@@ -86,14 +93,26 @@ struct ConversationAnalysisTests {
         precondition(service.exportDraft("edited", sessionID: "session-a", turnID: "turn-2", jobID: "job-skill-2", to: export))
         let saved = try String(contentsOf: export, encoding: .utf8)
         precondition(saved == "edited")
+        state.update(run: unrelated, recovery: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        precondition(state.selectedRun?.turnId == "turn-1", "Telemetry cannot steal historical selection")
         state.jumpToLive()
         waitUntil { state.selectedRun?.turnId == "turn-3" }
+        state.update(run: unrelated, recovery: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        snapshot.turns.append(AnalysisTurn(turnID: "turn-4", sequence: 4, userText: "follow up",
+            requirement: AnalysisJobState(status: "pending"), summary: AnalysisJobState(status: "not_analyzed"),
+            originalResult: nil, skills: []))
+        try JSONEncoder().encode(snapshot).write(to: view, options: .atomic)
+        service.reloadNow()
+        waitUntil { state.selectedRun?.turnId == "turn-4" }
+        precondition(state.latestRun?.sessionId == "other-session", "Analysis must not replace the telemetry source")
     }
 
-    private static func waitUntil(_ condition: () -> Bool) {
+    private static func waitUntil(line: UInt = #line, _ condition: () -> Bool) {
         let deadline = Date().addingTimeInterval(3)
         while !condition() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
-        precondition(condition(), "asynchronous overlay state did not converge")
+        precondition(condition(), "asynchronous overlay state did not converge at line \(line)")
     }
 
     private static func testLatestSkillAndEditableDraft() {
