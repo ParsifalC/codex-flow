@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -21,6 +21,7 @@ WRAPPER_KINDS = frozenset(
         "AGENTS.md",
         "environments.environment_context",
         "environment_context",
+        "goal.internal_context",
     )
 )
 
@@ -86,6 +87,7 @@ class Transcript:
     messages: List[TranscriptMessage]
     turns: List[TranscriptTurn]
     coverage: Dict[str, Any]
+    excluded_message_ids: Tuple[str, ...] = ()
 
     @property
     def user_messages(self) -> List[TranscriptMessage]:
@@ -300,6 +302,8 @@ def parse_transcript(path: Path, session_id: str) -> Transcript:
     messages: List[TranscriptMessage] = []
     turn_by_id: Dict[str, TranscriptTurn] = {}
     session_seen = False
+    automatic_turns = set()
+    excluded_ids = set()
     partial = False
     parsed_lines = 0
     lines = text.splitlines(keepends=True)
@@ -340,26 +344,37 @@ def parse_transcript(path: Path, session_id: str) -> Transcript:
         candidate = _parse_message(row, raw_line_number, len(messages) + 1)
         parsed_lines += 1
         if candidate is None:
+            payload = row.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+            meta = payload.get("internal_chat_message_metadata_passthrough", payload.get("internalChatMessageMetadataPassthrough", {}))
+            if (isinstance(meta, dict) and payload.get("role") == "user" and "goal.internal_context" in WRAPPER_KINDS
+                    and _nonempty_string(payload.get("id")) and _nonempty_string(meta.get("turn_id"))
+                    and "goal.internal_context" in _content_kinds(meta.get("content_item_kinds"))):
+                automatic_turns.add(meta.get("turn_id"))
+                excluded_ids.add(payload.get("id"))
             continue
         if candidate.message_id in {message.message_id for message in messages}:
             continue
         messages.append(candidate)
-        turn = turn_by_id.get(candidate.turn_id)
-        if turn is None:
-            turn = TranscriptTurn(candidate.turn_id, len(turn_by_id) + 1)
-            turn_by_id[candidate.turn_id] = turn
-        if candidate.role == "user":
-            turn.user_messages.append(candidate)
-        else:
-            turn.final_messages.append(candidate)
     if not session_seen:
         raise SourceError("missing_session_meta")
+    real_user_turns = {message.turn_id for message in messages if message.role == "user"}
+    automatic_turns -= real_user_turns
+    excluded_ids.update(message.message_id for message in messages if message.turn_id in automatic_turns)
+    messages = [replace(message, source_index=index) for index, message in enumerate(
+        (message for message in messages if message.turn_id not in automatic_turns), 1)]
+    turn_by_id = {}
+    for message in messages:
+        turn = turn_by_id.setdefault(message.turn_id, TranscriptTurn(message.turn_id, len(turn_by_id) + 1))
+        (turn.user_messages if message.role == "user" else turn.final_messages).append(message)
     coverage = {
         "status": "partial" if partial else "complete",
+        "excluded_turn_ids": sorted(automatic_turns),
         "truncated": partial,
         "line_count": len(lines),
         "parsed_lines": parsed_lines,
         "bytes": len(raw),
         "last_offset": byte_offset,
     }
-    return Transcript(session_id, messages, list(turn_by_id.values()), coverage)
+    return Transcript(session_id, messages, list(turn_by_id.values()), coverage, tuple(sorted(excluded_ids)))

@@ -10,6 +10,11 @@ public extension AnalysisSnapshot {
         return value
     }
 
+    func excludes(_ run: TaskRun) -> Bool {
+        guard run.sessionId == sessionID, let turnID = run.turnId else { return false }
+        return source?.excludedTurnIDs?.contains(turnID) == true
+    }
+
     /// Display-only identities for turns not yet available in telemetry history.
     /// No timestamps, usage, goals or publication events are invented.
     var overlayRuns: [TaskRun] {
@@ -97,6 +102,7 @@ public struct AnalysisSourceCoverage: Codable, Equatable {
     public var parsedLines: Int?
     public var bytes: Int?
     public var lastOffset: Int?
+    public var excludedTurnIDs: [String]?
     public var path: String?
 
     public init(
@@ -106,6 +112,7 @@ public struct AnalysisSourceCoverage: Codable, Equatable {
         parsedLines: Int? = nil,
         bytes: Int? = nil,
         lastOffset: Int? = nil,
+        excludedTurnIDs: [String]? = nil,
         path: String? = nil
     ) {
         self.status = status
@@ -114,6 +121,7 @@ public struct AnalysisSourceCoverage: Codable, Equatable {
         self.parsedLines = parsedLines
         self.bytes = bytes
         self.lastOffset = lastOffset
+        self.excludedTurnIDs = excludedTurnIDs
         self.path = path
     }
 
@@ -124,6 +132,7 @@ public struct AnalysisSourceCoverage: Codable, Equatable {
         case parsedLines = "parsed_lines"
         case bytes
         case lastOffset = "last_offset"
+        case excludedTurnIDs = "excluded_turn_ids"
         case path
     }
 }
@@ -179,9 +188,22 @@ public struct AnalysisModelCoverage: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case inputChars = "included_chars"
+        case inputTruncated = "truncated"
+        case outputTokens = "output_tokens"
+    }
+
+    private enum LegacyKeys: String, CodingKey {
         case inputChars = "input_chars"
         case inputTruncated = "input_truncated"
-        case outputTokens = "output_tokens"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        inputChars = try values.decodeIfPresent(Int.self, forKey: .inputChars) ?? legacy.decodeIfPresent(Int.self, forKey: .inputChars)
+        inputTruncated = try values.decodeIfPresent(Bool.self, forKey: .inputTruncated) ?? legacy.decodeIfPresent(Bool.self, forKey: .inputTruncated)
+        outputTokens = try values.decodeIfPresent(Int.self, forKey: .outputTokens)
     }
 }
 
@@ -478,7 +500,7 @@ public struct ConversationAnalysisProjection {
         case .summary: state = selectedTurn?.summary
         case .skill: return selectedSkill?.status == "failed" ? selectedSkill?.jobID : nil
         }
-        guard state?.status == "failed" else { return nil }
+        guard state?.status == "failed", state?.error != "context_limit_exceeded" else { return nil }
         return state?.jobID
     }
 

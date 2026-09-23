@@ -17,7 +17,8 @@ ANALYSIS_INSTRUCTIONS = {
         "Use the true-need method: diagnose what the user is trying to accomplish, not a conversation summary. "
         "Each quoted message has a turn_id. The payload turn_id identifies the current round; other rounds are context only. "
         "session_start_request is the initial overall request. text must state that overall capability/outcome, updated only "
-        "by explicit user changes of scope. Later debugging or UI polishing requests belong ONLY in turn_goal. "
+        "by explicit user changes of scope. All user messages are retained in chronological order; their later explicit "
+        "corrections override the initial request. Assistant history may be partial. Later debugging or UI polishing requests belong ONLY in turn_goal. "
         "Do not collapse these two scopes into paraphrases of the latest message. "
         "Stay close to user evidence; never invent hidden motives or treat assistant claims as verified facts. "
         "Return JSON in the user's language. text: the overall SESSION goal as ONE sentence, target 16-30 Chinese "
@@ -144,6 +145,7 @@ class AnalysisService:
             boundary = {"index": max((m.source_index for m in transcript.messages), default=0), "selected": selected}
             self.store.set_meta("auto_boundary", boundary)
         self.store.upsert_transcript(transcript)
+        boundary = self.store.get_meta("auto_boundary")  # migration may remap the bootstrap boundary
         coverage = dict(transcript.coverage)
         coverage["path"] = str(self._transcript_path())
         source_warning = {"code": "partial_tail", "message": "partial_tail"} if coverage.get("truncated") else None
@@ -160,18 +162,19 @@ class AnalysisService:
 
     def _enqueue_message_job(self, kind: str, message: TranscriptMessage, transcript: Transcript) -> Dict[str, Any]:
         source_limit = message.source_index
-        context, coverage = self._context(source_limit)
+        context, coverage = self._context(source_limit, kind=kind)
         instruction = ANALYSIS_INSTRUCTIONS[kind]
         session_start = next((m for m in self.store.messages_before(source_limit) if m["role"] == "user"), None)
         payload = {
             "session_start_request": session_start["text"][:1200] if session_start else None,
-            "format_version": 5,
+            "format_version": 6,
             "kind": kind,
             "session_id": self.store.session_id,
             "turn_id": message.turn_id,
             "source_message_id": message.message_id,
             "source_index": source_limit,
             "coverage": coverage,
+            "input_error": "context_limit_exceeded" if coverage.get("blocked") else None,
             "instruction": instruction,
             "messages": context,
         }
@@ -209,23 +212,24 @@ class AnalysisService:
 
     def _enqueue_stored_job(self, kind: str, message: Dict[str, Any]) -> Dict[str, Any]:
         instruction = ANALYSIS_INSTRUCTIONS[kind]
-        context, coverage = self._context(message["source_index"])
+        context, coverage = self._context(message["source_index"], kind=kind)
         session_start = next((m for m in self.store.messages_before(message["source_index"]) if m["role"] == "user"), None)
         payload = {
             "session_start_request": session_start["text"][:1200] if session_start else None,
-            "format_version": 5,
+            "format_version": 6,
             "kind": kind,
             "session_id": self.store.session_id,
             "turn_id": message["turn_id"],
             "source_message_id": message["message_id"],
             "source_index": message["source_index"],
             "coverage": coverage,
+            "input_error": "context_limit_exceeded" if coverage.get("blocked") else None,
             "instruction": instruction,
             "messages": context,
         }
         turn = self.store.turn(message["turn_id"]) or {}
         existing = self.store.get_job(turn.get(kind + "_job_id")) or {}
-        version = existing.get("analyzer_version", "analysis-v1") if existing.get("input", {}).get("format_version") == 5 else "analysis-ui-v5"
+        version = existing.get("analyzer_version", "analysis-v1") if existing.get("input", {}).get("format_version") == 6 else "analysis-ui-v6"
         return self.store.enqueue_job(
             kind,
             message["message_id"],
@@ -252,6 +256,7 @@ class AnalysisService:
             "source_message_id": "turn:" + turn_id,
             "source_index": limit,
             "coverage": coverage,
+            "input_error": "context_limit_exceeded" if coverage.get("blocked") else None,
             "instruction": (
                 "Draft one reusable candidate SKILL.md from this selected conversation only, with YAML name/description "
                 "frontmatter, when to use it, concrete steps, and verification guidance. "
@@ -271,34 +276,56 @@ class AnalysisService:
         )
         return self.store.snapshot()
 
-    def _context(self, source_index: int):
+    def _context(self, source_index: int, *, kind: str = "skill"):
         source = self.store.messages_before(source_index)
+        if kind == "summary":
+            # History is irrelevant to a final-answer summary. Never send only
+            # a prefix of the target answer: a failure may be anywhere in it.
+            source = [item for item in source if item["source_index"] == source_index]
         source_chars = sum(len(item["text"]) for item in source)
-        configured = self.config().get("max_context_chars", 32000)
         try:
-            max_chars = max(1, int(configured))
+            max_chars = max(1, int(self.config().get("max_context_chars", 32000)))
         except (TypeError, ValueError):
             max_chars = 32000
-        selected = []
+        if kind == "summary":
+            required = source
+        elif kind == "requirement":
+            required = [item for item in source if item["role"] == "user"]
+        else:
+            required = []
+        required_chars = sum(len(item["text"]) for item in required)
+        blocked = required_chars > max_chars
+        selected = {}
         remaining = max_chars
-        for item in reversed(source):
-            if remaining <= 0:
-                break
-            text = item["text"]
-            clipped = text[:remaining]
-            selected.append({"role": item["role"], "turn_id": item["turn_id"], "text": clipped})
-            remaining -= len(clipped)
-        selected.reverse()
-        included_chars = sum(len(item["text"]) for item in selected)
+        if not blocked:
+            for item in required:
+                selected[item["source_index"]] = item["text"]
+                remaining -= len(item["text"])
+            for item in reversed(source):
+                if item["source_index"] in selected:
+                    continue
+                if remaining <= 0:
+                    break
+                text = item["text"]
+                if len(text) > remaining:
+                    # Preserve both ends of optional evidence; report omissions.
+                    head = remaining // 2
+                    text = text[:head] + text[-(remaining - head):]
+                selected[item["source_index"]] = text
+                remaining -= len(text)
+        context = [{"role": item["role"], "turn_id": item["turn_id"], "text": selected[item["source_index"]]}
+                   for item in source if item["source_index"] in selected]
+        included_chars = sum(len(item["text"]) for item in context)
         coverage = {
             "source_message_count": len(source),
-            "included_message_count": len(selected),
+            "included_message_count": len(context),
             "source_chars": source_chars,
             "included_chars": included_chars,
             "max_chars": max_chars,
             "truncated": included_chars < source_chars,
+            "blocked": blocked,
         }
-        return selected, coverage
+        return context, coverage
 
     def retry(self, job_id: Any) -> Dict[str, Any]:
         self.store.retry_job(job_id)

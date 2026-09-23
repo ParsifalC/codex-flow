@@ -3,6 +3,8 @@ import Foundation
 @main
 struct ConversationAnalysisTests {
     static func main() throws {
+        try testNavigationDropsExcludedTelemetryTurns()
+        try testCoverageUsesBackendFields()
         try testStructuredNeedKeepsGoalScopesDistinct()
         testOverlayBindingUsesSessionAndTurn()
         testOverlayNavigationIncludesUnfinishedAnalysisTurn()
@@ -16,6 +18,39 @@ struct ConversationAnalysisTests {
         try testPrivacyGuardsActionsAndExport()
         try testLaunchConfigurationRequiresExplicitAbsolutePaths()
         print("Conversation analysis projection and command guard tests passed")
+    }
+
+    private static func testNavigationDropsExcludedTelemetryTurns() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("analysis-filter-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("{}".utf8).write(to: root.appendingPathComponent("config.json"))
+        let raw = snapshotJSON.replacingOccurrences(of: "\"line_count\": 8", with: "\"line_count\": 8, \"excluded_turn_ids\": [\"auto-turn\"]")
+        let view = root.appendingPathComponent("view.json")
+        try Data(raw.utf8).write(to: view)
+        let service = ConversationAnalysisService(configuration: AnalysisPreviewConfiguration(stateDirectory: root,
+            analysisScript: view, pythonExecutable: URL(fileURLWithPath: "/usr/bin/true")), runner: RecordingAnalysisRunner())
+        defer { service.stop() }
+        let suite = "analysis-filter-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let state = OverlayState(readDefaults: defaults)
+        state.attachAnalysis(service)
+        waitUntil { state.analysisSnapshot?.turns.count == 2 }
+        var automatic = decode(snapshotJSON).overlayRuns[0]
+        automatic.turnId = "auto-turn"
+        automatic.status = "completed"
+        automatic.result = TurnResult(text: "automatic completion", source: "transcript", turnId: "auto-turn")
+        state.inspect(run: automatic)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        precondition(!state.turnNavigation.runs.contains { $0.turnId == "auto-turn" }, "Telemetry must not restore excluded turns")
+    }
+
+    private static func testCoverageUsesBackendFields() throws {
+        let raw = #"{"status":"succeeded","text":"partial","coverage":{"included_chars":32000,"source_chars":45000,"truncated":true}}"#
+        let job = try JSONDecoder().decode(AnalysisJobState.self, from: Data(raw.utf8))
+        precondition(job.coverage?.inputTruncated == true, "Backend truncation must reach the UI")
+        precondition(job.coverage?.inputChars == 32000)
     }
 
     private static func testStructuredNeedKeepsGoalScopesDistinct() throws {

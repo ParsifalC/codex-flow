@@ -199,11 +199,14 @@ class AnalysisStore:
         new_messages: List[Any] = []
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            self._reconcile_filtered_source(transcript)
             for message in transcript.messages:
                 self._conn.execute(
-                    """INSERT OR IGNORE INTO messages
+                    """INSERT INTO messages
                     (message_id, turn_id, role, text, source_index, raw_line, create_time, phase, content_kinds)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(message_id) DO UPDATE SET text=excluded.text,
+                    source_index=excluded.source_index, content_kinds=excluded.content_kinds""",
                     (
                         message.message_id,
                         message.turn_id,
@@ -263,6 +266,53 @@ class AnalysisStore:
         self._write_snapshot()
         return new_messages, before == 0
 
+    def _reconcile_filtered_source(self, transcript: Any) -> None:
+        """Migrate previously imported harness context in the source transaction.
+
+        Keep unaffected results and usage. Retire affected jobs (rather than
+        deleting them) so an in-flight old result cannot restore stale content.
+        Only bootstrap's selected latest jobs are regenerated automatically.
+        """
+        old = {row["message_id"]: dict(row) for row in self._conn.execute("SELECT * FROM messages")}
+        fresh = {message.message_id: message for message in transcript.messages}
+        removed = set(transcript.excluded_message_ids) & set(old)
+        changed = {identity for identity in fresh.keys() & old.keys() if fresh[identity].text != old[identity]["text"]}
+        jobs = list(self._conn.execute("SELECT * FROM jobs WHERE status != 'superseded'"))
+        outdated = set()
+        for row in jobs:
+            payload = _decode(row["input_json"], {})
+            if (row["kind"] in ("requirement", "summary") and payload.get("format_version") != 6
+                    and payload.get("coverage", {}).get("truncated")):
+                outdated.add(row["job_id"])
+        if not removed and not changed and not outdated:
+            return
+        earliest = min((old[identity]["source_index"] for identity in removed | changed), default=float("inf"))
+        for row in jobs:
+            affected = (row["job_id"] in outdated or row["source_id"] in removed | changed or
+                        (row["kind"] != "summary" and row["source_index"] >= earliest))
+            if affected:
+                self._conn.execute("UPDATE jobs SET status='superseded', job_key=job_key || ':superseded:' || job_id, lease_until=NULL WHERE job_id=?", (row["job_id"],))
+                if row["kind"] in ("requirement", "summary"):
+                    prefix = row["kind"]
+                    self._conn.execute(
+                        "UPDATE turns SET {0}_status='not_analyzed', {0}_text=NULL, {0}_job_id=NULL, {0}_error=NULL WHERE {0}_job_id=?".format(prefix),
+                        (row["job_id"],))
+            elif row["source_id"] in fresh:
+                self._conn.execute("UPDATE jobs SET source_index=? WHERE job_id=?", (fresh[row["source_id"]].source_index, row["job_id"]))
+        for identity in removed:
+            self._conn.execute("DELETE FROM messages WHERE message_id=?", (identity,))
+        valid_turns = {message.turn_id for message in transcript.messages}
+        for turn_id in {old[identity]["turn_id"] for identity in removed} - valid_turns:
+            self._conn.execute("DELETE FROM turns WHERE turn_id=?", (turn_id,))
+        boundary = self.get_meta("auto_boundary")
+        if boundary is not None:
+            # Imported history is already accounted for, even if it arrived
+            # after the original bootstrap. Never charge to replay that history.
+            boundary["index"] = max((fresh[identity].source_index for identity in fresh.keys() & old.keys()), default=0)
+            boundary["selected"] = [message.message_id for message in
+                                    (transcript.user_messages[-1:] + transcript.final_messages[-1:])]
+            self._conn.execute("UPDATE meta SET value=? WHERE key='auto_boundary'", (_json(boundary),))
+
     def messages_before(self, source_index: int) -> List[Dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT message_id, turn_id, role, text, source_index FROM messages WHERE source_index <= ? ORDER BY source_index",
@@ -279,8 +329,9 @@ class AnalysisStore:
         return [dict(row) for row in rows]
 
     def has_job(self, kind: str, source_id: str) -> bool:
-        key = "%s:%s:%s:%s" % (kind, self.session_id, source_id, ANALYZER_VERSION)
-        return self._conn.execute("SELECT 1 FROM jobs WHERE job_key=?", (key,)).fetchone() is not None
+        return self._conn.execute(
+            "SELECT 1 FROM jobs WHERE kind=? AND session_id=? AND source_id=? AND status != 'superseded'",
+            (kind, self.session_id, source_id)).fetchone() is not None
 
     def enqueue_job(
         self,
@@ -312,6 +363,10 @@ class AnalysisStore:
             row = self._conn.execute("SELECT * FROM jobs WHERE job_key = ?", (key,)).fetchone()
             if kind in ("requirement", "summary") and (inserted.rowcount == 1 or row["status"] == "pending"):
                 self._set_analysis_pending(kind, turn_id, source_index, row["job_id"])
+            if input_snapshot.get("input_error") and (inserted.rowcount == 1 or row["status"] == "pending"):
+                self._conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
+                                   (input_snapshot["input_error"], row["job_id"]))
+                row = self._conn.execute("SELECT * FROM jobs WHERE job_id=?", (row["job_id"],)).fetchone()
             self._conn.commit()
         except Exception:
             self._conn.rollback()
@@ -452,27 +507,32 @@ class AnalysisStore:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             self._conn.execute(
-                "UPDATE jobs SET status=?, result_json=?, error=?, lease_until=NULL, updated_at=? WHERE job_id=?",
+                "UPDATE jobs SET status=?, result_json=?, error=?, lease_until=NULL, updated_at=? WHERE job_id=? AND status != 'superseded'",
                 (status, _json(result) if result is not None else None, error, timestamp, str(job_id)),
             )
             self._conn.commit()
         except Exception:
             self._conn.rollback()
             raise
-        self._record_call(row["kind"], status == "succeeded")
-        return self.get_job(job_id)  # type: ignore
+        updated = self.get_job(job_id)
+        if updated["status"] != "superseded":
+            self._record_call(row["kind"], status == "succeeded")
+        return updated
 
     def complete_job(self, job_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
         job = self.get_job(job_id)
         if job is None:
             raise ValueError("job_not_found")
+        if job["status"] == "superseded":
+            return job
         completed = self._set_job_result(job_id, "succeeded", result, None)
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute("SELECT * FROM turns WHERE turn_id = ?", (job["turn_id"],)).fetchone()
             if row is not None and job["kind"] in ("requirement", "summary"):
                 current_index = row["user_source_index"] if job["kind"] == "requirement" else row["final_source_index"]
-                if current_index is None or job["source_index"] >= current_index:
+                if (row[job["kind"] + "_job_id"] == job["job_id"] and
+                        (current_index is None or job["source_index"] >= current_index)):
                     prefix = "requirement" if job["kind"] == "requirement" else "summary"
                     text = result.get("text") if isinstance(result, dict) else None
                     if not isinstance(text, str):
@@ -498,6 +558,8 @@ class AnalysisStore:
         job = self.get_job(job_id)
         if job is None:
             raise ValueError("job_not_found")
+        if job["status"] == "superseded":
+            return job
         safe_error = str(error).replace("\n", " ")[:500]
         failed = self._set_job_result(job_id, "failed", None, safe_error)
         self._conn.execute("BEGIN IMMEDIATE")
@@ -505,7 +567,8 @@ class AnalysisStore:
             row = self._conn.execute("SELECT * FROM turns WHERE turn_id = ?", (job["turn_id"],)).fetchone()
             if row is not None and job["kind"] in ("requirement", "summary"):
                 current_index = row["user_source_index"] if job["kind"] == "requirement" else row["final_source_index"]
-                if current_index is None or job["source_index"] >= current_index:
+                if (row[job["kind"] + "_job_id"] == job["job_id"] and
+                        (current_index is None or job["source_index"] >= current_index)):
                     prefix = "requirement" if job["kind"] == "requirement" else "summary"
                     self._conn.execute(
                         "UPDATE turns SET %s_status='failed', %s_job_id=?, %s_error=? WHERE turn_id=?"
@@ -523,6 +586,8 @@ class AnalysisStore:
         job = self.get_job(job_id)
         if job is None:
             raise ValueError("job_not_found")
+        if job.get("input", {}).get("input_error"):
+            raise ValueError(job["input"]["input_error"])
         if job["status"] != "failed":
             raise ValueError("job_not_failed")
         if job["attempts"] >= job["max_attempts"]:
@@ -558,6 +623,8 @@ class AnalysisStore:
         for row in self.turns():
             skills = []
             for job in self.jobs_for_turn(row["turn_id"], "skill"):
+                if job["status"] == "superseded":
+                    continue
                 result = job.get("result") if isinstance(job.get("result"), dict) else {}
                 if job["status"] == "succeeded":
                     result = normalize_skill(result)

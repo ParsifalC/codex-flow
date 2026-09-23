@@ -68,6 +68,12 @@ public class OverlayState: ObservableObject {
             let followLatest = self.inspectedRun == nil && self.notificationRun == nil &&
                 (self.selectedTurnIdentity == nil || self.selectedTurnIdentity == self.currentTaskRun?.id)
             self.analysisSnapshot = projection.snapshot
+            if let selected = self.selectedRun, projection.snapshot.excludes(selected) {
+                self.inspectedRun = nil
+                self.notificationRun = nil
+                self.selectedTurnIdentity = self.currentTaskRun?.id
+                self.selectedSessionRuns = self.currentTaskRun.map { [$0] } ?? []
+            }
             if followLatest, let current = self.currentTaskRun {
                 self.selectedTurnIdentity = current.id
                 if !self.selectedSessionRuns.contains(where: { $0.id == current.id }) {
@@ -83,7 +89,8 @@ public class OverlayState: ObservableObject {
 
     private func runsWithAnalysis(_ runs: [TaskRun]) -> [TaskRun] {
         let known = Set(runs.map(\.id))
-        return runs + (analysisSnapshot?.overlayRuns ?? []).filter { !known.contains($0.id) }
+        return runs.filter { analysisSnapshot?.excludes($0) != true } +
+            (analysisSnapshot?.overlayRuns ?? []).filter { !known.contains($0.id) }
     }
 
     private func chatsWithAnalysis(_ chats: [ChatSession]) -> [ChatSession] {
@@ -166,7 +173,7 @@ public class OverlayState: ObservableObject {
     public var turnNavigation: TurnNavigation {
         let runs = selectedSessionRuns.isEmpty ? selectedRun.map { [$0] } ?? [] : selectedSessionRuns
         let source = analysisSnapshot?.overlayRuns ?? []
-        return TurnNavigation(runs: runs, selectedIdentity: selectedTurnIdentity,
+        return TurnNavigation(runs: runs.filter { analysisSnapshot?.excludes($0) != true }, selectedIdentity: selectedTurnIdentity,
             additionalVisibleIDs: Set(source.map(\.id)),
             sourceOrder: Dictionary(uniqueKeysWithValues: source.enumerated().map { ($0.element.id, $0.offset) }))
     }
@@ -478,6 +485,7 @@ public class OverlayState: ObservableObject {
     }
 
     public func inspect(run: TaskRun) {
+        if analysisSnapshot?.excludes(run) == true { jumpToLive(); return }
         DispatchQueue.main.async {
             self.notificationRun = nil
             self.inspectedRun = run

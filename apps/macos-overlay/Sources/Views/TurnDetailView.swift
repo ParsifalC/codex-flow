@@ -29,18 +29,20 @@ public struct TurnDetailView: View {
                     let need = analysis.selectedTurn?.requirement
                     let ready = need?.status == "succeeded" && need?.turnGoal != nil
                     narrative(L("Conversation goal", "会话目标"), hint: nil,
-                        text: ready ? analysis.requirementText : stateText(need?.status == "succeeded" ? nil : need?.status), accent: false)
+                        text: ready ? analysis.requirementText : need?.error == "context_limit_exceeded" ? L("Request history exceeds the analysis limit", "需求记录超出分析上限") : stateText(need?.status == "succeeded" ? nil : need?.status), accent: false)
                         .help(L("Conversation goal as of the selected turn", "截至所选轮次的会话目标"))
                     OverlayDivider()
                     narrative(L("Turn goal", "本轮目标"), hint: nil,
                         text: ready ? need?.turnGoal : L("Awaiting extraction", "待提炼"), accent: true)
+                    coverageNote(need?.coverage)
                     DisclosureGroup(L("Need details", "需求详情"), isExpanded: $needExpanded) {
                         needDetails(need)
                     }.font(.system(size: 12)).disclosureGroupStyle(OverlayDisclosureStyle())
                     OverlayDivider()
                     narrative(L("Turn result", "本轮结果"), hint: nil,
-                        text: analysis.summaryText ?? (analysis.currentTurnWaitingForFinal ? L("Awaiting reply", "待回复") : stateText(analysis.selectedTurn?.summary.status)),
+                        text: analysis.summaryText ?? (analysis.selectedTurn?.summary.error == "context_limit_exceeded" ? L("Reply too long to summarize; open the original below", "回复超出摘要上限，请查看原文") : analysis.currentTurnWaitingForFinal ? L("Awaiting reply", "待回复") : stateText(analysis.selectedTurn?.summary.status)),
                         expanded: (analysis.summaryText?.count ?? 0) > 120 ? $summaryExpanded : nil, accent: false)
+                    coverageNote(analysis.selectedTurn?.summary.coverage)
                     if !isPrivacyMode, !(analysis.selectedTurn?.summary.caveats.isEmpty ?? true) {
                         DisclosureGroup(L("Result qualifications", "结果说明")) { analysisNotes(analysis.selectedTurn?.summary) }
                             .font(.system(size: 12)).disclosureGroupStyle(OverlayDisclosureStyle())
@@ -157,6 +159,12 @@ public struct TurnDetailView: View {
         default: return L("Not analyzed yet", "尚未提炼")
         }
     }
+    @ViewBuilder private func coverageNote(_ coverage: AnalysisModelCoverage?) -> some View {
+        if !isPrivacyMode, coverage?.inputTruncated == true {
+            Text(L("Input is incomplete due to the length limit", "输入超出长度限制，未完整纳入分析"))
+                .font(.system(size: 11)).foregroundStyle(OverlayTheme.warning)
+        }
+    }
     @ViewBuilder private func analysisNotes(_ job: AnalysisJobState?) -> some View {
         if !isPrivacyMode {
             if let revision = job?.revision {
@@ -175,6 +183,7 @@ public struct TurnDetailView: View {
                     .disabled(isPrivacyMode || analysis?.canExtractSkill != true || ["pending", "running"].contains(analysis?.selectedSkill?.status ?? ""))
             }
             if let skill = analysis?.selectedSkill {
+                coverageNote(skill.coverage)
                 DisclosureGroup(L("Skill draft", "技能草稿"), isExpanded: $skillExpanded) {
                     if isPrivacyMode { Text(L("Hidden in privacy mode", "隐私模式已隐藏")) }
                     else if skill.status == "succeeded" {
