@@ -61,8 +61,9 @@ public class OverlayState: ObservableObject {
                 self.latestRun = self.telemetryChats.flatMap(\.runs).first(where: { $0.id == latest.id }) ?? latest
                 if followLatest { self.selectedTurnIdentity = latest.id }
             }
-            self.recentChats = self.chatsWithAnalysis(self.telemetryChats)
-            self.refreshSelectedSessionRuns(from: self.recentChats)
+            let chats = self.chatsWithAnalysis(self.telemetryChats)
+            self.recentChats = Array(chats.prefix(15))
+            self.refreshSelectedSessionRuns(from: chats)
         }
         service.start()
     }
@@ -356,9 +357,10 @@ public class OverlayState: ObservableObject {
             let chats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 0)
             DispatchQueue.main.async {
                 guard generation == self.menuLoadGeneration else { return }
-                self.telemetryChats = Array(chats.prefix(15))
-                self.recentChats = self.chatsWithAnalysis(self.telemetryChats)
-                self.refreshSelectedSessionRuns(from: self.recentChats)
+                self.telemetryChats = chats
+                let mergedChats = self.chatsWithAnalysis(chats)
+                self.recentChats = Array(mergedChats.prefix(15))
+                self.refreshSelectedSessionRuns(from: mergedChats)
             }
         }
     }

@@ -156,6 +156,33 @@ class LauncherTests(unittest.TestCase):
         args = self.launcher.parser().parse_args(['start', '--state-dir', str(self.state), '--transcript', str(self.source), '--session-id', 'session-a', '--model', 'fake', '--auth-home', str(self.root / 'empty-auth'), '--codex-bin', '/usr/bin/false', '--ui-binary', str(self.ui)])
         return self.launcher.start(args)
 
+    def test_original_pages_receive_existing_codex_home_not_analysis_home(self):
+        # A native-boundary probe reads the same home-dependent inputs as the
+        # original history/statistics/account services, without using real auth.
+        existing = self.root / 'existing codex'
+        existing.mkdir()
+        for name, value in [('history.json', 'history-present'), ('stats.json', 'stats-present'), ('auth.json', 'test-account')]:
+            (existing / name).write_text(value)
+        self.ui.write_text('#!' + sys.executable + '\n' + """
+import os, sys, time, pathlib, json
+state = pathlib.Path(sys.argv[sys.argv.index('--state-dir') + 1])
+home = pathlib.Path(os.environ['CODEX_HOME'])
+values = {name: (home / name).read_text() if (home / name).exists() else None
+          for name in ('history.json', 'stats.json', 'auth.json')}
+(state / 'page-inputs.json').write_text(json.dumps(values))
+while not (state / 'close-ui').exists(): time.sleep(.05)
+""")
+        with patch.dict(os.environ, {'CODEX_HOME': str(existing)}):
+            self.start()
+        for _ in range(100):
+            if (self.state / 'page-inputs.json').exists(): break
+            time.sleep(.05)
+        values = json.loads((self.state / 'page-inputs.json').read_text())
+        self.assertEqual(values, {'history.json': 'history-present', 'stats.json': 'stats-present', 'auth.json': 'test-account'})
+        self.launcher.stop(self.state)
+        self.assertEqual((existing / 'auth.json').read_text(), 'test-account')
+        self.assertFalse((self.state / 'ui-home/auth.json').exists())
+
     @unittest.skipUnless(sys.platform == 'darwin', 'macOS bundle signature')
     def test_generated_bundle_has_valid_signature_after_repeated_preparation(self):
         binary = self.root / 'apps/macos-overlay/bin/FlowPilot'

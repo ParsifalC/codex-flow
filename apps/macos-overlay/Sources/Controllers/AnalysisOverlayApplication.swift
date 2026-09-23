@@ -5,6 +5,7 @@ private final class ConversationAnalysisPreviewAppDelegate: NSObject, NSApplicat
     private let configuration: AnalysisPreviewConfiguration
     private var controller: OverlayWindowController?
     private var state: OverlayState?
+    private var watcher: TelemetryWatcher?
 
     init(configuration: AnalysisPreviewConfiguration) {
         self.configuration = configuration
@@ -18,6 +19,8 @@ private final class ConversationAnalysisPreviewAppDelegate: NSObject, NSApplicat
         state.attachAnalysis(service)
         let controller = OverlayWindowController(state: state)
         self.controller = controller
+        // Observe the existing telemetry without running recovery writes from a preview.
+        watcher = TelemetryWatcher(state: state, recoveryRunner: { _ in })
         controller.window.title = "FlowPilot"
         state.isPinned = true
         state.expand()
@@ -25,6 +28,7 @@ private final class ConversationAnalysisPreviewAppDelegate: NSObject, NSApplicat
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        watcher?.stopWatching()
         state?.analysisService?.stop()
         state?.stopPet()
     }

@@ -158,7 +158,7 @@ def start(args):
         command = [sys.executable, str(ANALYSIS), 'configure', '--state-dir', str(state), '--transcript', str(Path(transcript).expanduser().resolve()), '--session-id', session_id, '--model', model, '--codex-bin', codex, '--auth-home', str(Path(auth).expanduser().resolve())]
         configured = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         if configured.returncode: raise ValueError('analysis configuration failed: ' + configured.stderr[-500:])
-        atomic(state / 'preview-launch.json', {'state_dir': str(state), 'binary': str(binary), 'python': sys.executable, 'analysis': str(ANALYSIS), 'source_checkout': str(ROOT)})
+        atomic(state / 'preview-launch.json', {'state_dir': str(state), 'binary': str(binary), 'python': sys.executable, 'analysis': str(ANALYSIS), 'source_checkout': str(ROOT), 'ui_codex_home': str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex').expanduser().resolve()), 'codex_bin': codex})
         with open(state / 'preview.log', 'a') as log:
             os.chmod(str(state / 'preview.log'), 0o600)
             child = subprocess.Popen([sys.executable, str(SCRIPT), '_run', '--state-dir', str(state), '--lock-fd', str(fd)], stdin=subprocess.DEVNULL, stdout=log, stderr=log, pass_fds=(fd,), start_new_session=True)
@@ -203,11 +203,15 @@ def supervise(state, lock_fd):
         token = secrets.token_hex(32)
         home = state / 'ui-home'
         home.mkdir(exist_ok=True, mode=0o700)
-        env = dict(os.environ, CODEX_HOME=str(home))
+        worker_env = dict(os.environ, CODEX_HOME=str(home))
+        # Only analysis is isolated. The existing overlay pages must retain
+        # their real telemetry and account inputs. Never copy auth into ui-home.
+        ui_env = dict(os.environ, CODEX_HOME=config['ui_codex_home'],
+                      CODEX_FLOW_CODEX_PATH=config['codex_bin'])
         with open(state / 'worker.log', 'a') as log:
             os.chmod(str(state / 'worker.log'), 0o600)
-            worker = subprocess.Popen([config['python'], config['analysis'], 'watch', '--state-dir', str(state)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=env)
-            ui = subprocess.Popen([config['binary'], 'analysis-preview', '--state-dir', str(state), '--analysis-script', config['analysis'], '--python', config['python']], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=env)
+            worker = subprocess.Popen([config['python'], config['analysis'], 'watch', '--state-dir', str(state)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=worker_env)
+            ui = subprocess.Popen([config['binary'], 'analysis-preview', '--state-dir', str(state), '--analysis-script', config['analysis'], '--python', config['python']], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=ui_env)
             meta = {'schema_version': 1, 'pid': os.getpid(), 'worker_pid': worker.pid, 'ui_pid': ui.pid, 'state_dir': str(state), 'port': server.getsockname()[1], 'token': token}
             atomic(state / 'preview-runtime.json', meta)
             started = time.monotonic()

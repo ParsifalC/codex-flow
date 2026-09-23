@@ -92,3 +92,14 @@ The user's correction supersedes Unit 2's standalone UI. The standalone SwiftUI 
 - Real save-panel verification found that terminating after the last regular window closed also terminated the NSPanel-based app after export. The preview now terminates explicitly; a second successful export and alert dismissal left the same overlay process running.
 - Real privacy verification found selectable native text retained old accessibility content after becoming visually hidden. Recreating the detail subtree on privacy changes clears that cache; the final AX tree shows only hidden placeholders and disables analysis/copy actions.
 - The original popup is running, pinned and displaying the latest selected conversation turn for continued inspection. The installed app was not replaced. The existing source-classification finding above remains open; this UI correction does not claim unconditional end-to-end acceptance.
+
+
+## Original-page regression repair (2026-09-23)
+
+User feedback invalidated the previous integration acceptance for history, statistics and account. The launcher had passed an empty private CODEX_HOME to the whole UI, hiding the existing telemetry and login. The preview delegate also omitted the original telemetry watcher. The launcher now preserves the UI's actual CODEX_HOME and configured Codex executable while retaining the analysis worker's isolated environment. A passive telemetry watcher is restored without preview-triggered recovery writes or taking over the installed IPC endpoint.
+
+A launcher regression test reproduced missing history/statistics/account inputs through a subprocess boundary, then passed after the environment repair. Actual native UI verification showed the original history list, another project's full original turn details, populated 30-day statistics, and the existing account/limits including a successful refresh. No login data was copied into the temporary UI directory.
+
+A separate regression test added sixteen newer conversations ahead of the selected historical session and reproduced missing previous/next turns. The full telemetry chat collection is now retained for historical navigation; only the recent-conversation menu is limited to fifteen. The goal-continuation source-classification finding remains separate and unresolved.
+
+Validation after the repair: all 39 Python analysis tests, account snapshot fixtures (including custom CODEX_HOME and bounded failures), native turn navigation, analysis projection/guards, startup/IPC/capsule tests, and the full native build passed. The final build was reopened and history, statistics and account data were verified again in the actual popup.
