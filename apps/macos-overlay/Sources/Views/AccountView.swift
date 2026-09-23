@@ -7,8 +7,8 @@ public struct AccountView: View {
     public var isFullHeight: Bool = false
 
     @State private var snapshot: AccountSnapshot? = AccountSnapshotService.cached
-    @State private var preferencesExpanded = false
-    @State private var accountDetailsExpanded = false
+    @State private var preferencesExpanded = true
+    @State private var accountDetailsExpanded = true
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var hasLoaded = AccountSnapshotService.cached != nil

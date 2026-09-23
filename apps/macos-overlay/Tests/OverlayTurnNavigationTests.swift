@@ -71,7 +71,10 @@ struct OverlayTurnNavigationTests {
         let latest = makeRun(session: "session-a", turn: "turn-3", finishedAt: 300)
         let other = makeRun(session: "session-b", turn: "turn-1", finishedAt: 400)
         let otherLatest = makeRun(session: "session-b", turn: "turn-2", finishedAt: 500)
-        for run in [old, middle, latest, other, otherLatest] {
+        // Older conversations must retain their full turn navigation even when
+        // they fall outside the fifteen-item recent-conversation menu.
+        let newerChats = (1...16).map { makeRun(session: "newer-\($0)", turn: "one", finishedAt: 1000 + Double($0)) }
+        for run in [old, middle, latest, other, otherLatest] + newerChats {
             try! JSONEncoder().encode(run).write(to: runsDirectory.appendingPathComponent("\(run.id).json"))
         }
 

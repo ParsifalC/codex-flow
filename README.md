@@ -290,6 +290,7 @@ codex-flow overlay toggle
 
 | 模块 | 文档入口 | 核心内容 |
 | :--- | :--- | :--- |
+| **🛠️ 开发上手** | [docs/development-guide.md](docs/development-guide.md) | 项目结构、源码运行、阅读顺序、改动与测试对照 |
 | **🧠 多策略运行时** | [docs/strategy-runtime.md](docs/strategy-runtime.md) | TaskProfile、Quality Intent、WorkerBudget、Strategy Registry、ExecutionPlan v7、role-scoped resources |
 | **⚙️ 策略与配置** | [docs/configuration.md](docs/configuration.md) | policy schema v4、Worker-first reasoning、路由、Runtime ceiling |
 | **📈 确定性遥测** | [docs/telemetry.md](docs/telemetry.md) | Hook 生命周期、Token 差值归因、账户 Quota |

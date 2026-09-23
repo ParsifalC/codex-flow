@@ -19,7 +19,7 @@ public struct SummaryView: View {
     }
     private var conversationTitle: String {
         if state.isPrivacyMode { return L("Hidden conversation", "会话已隐藏") }
-        return currentRun?.thread?.name ?? L("Untitled conversation", "未命名会话")
+        return currentRun?.thread?.name ?? state.recentChats.first(where: { $0.sessionId == currentRun?.sessionId })?.title ?? L("Untitled conversation", "未命名会话")
     }
     private var currentRun: TaskRun? { state.selectedRun }
     public var body: some View {
@@ -31,6 +31,16 @@ public struct SummaryView: View {
             OverlayDivider()
             Group {
                 if state.activeTab == .inspector {
+                    HStack {
+                        Text(state.isInspectingHistory ? L("Viewing history", "正在查看历史") : L("Current task", "当前任务"))
+                            .foregroundStyle(OverlayTheme.secondary)
+                        Spacer()
+                        if state.isInspectingHistory {
+                            Button(L("Return to current task", "返回当前任务")) { state.jumpToLive() }
+                                .foregroundStyle(OverlayTheme.accent)
+                        }
+                    }.font(.system(size: 12)).buttonStyle(.plain)
+                        .padding(.horizontal, 20).padding(.vertical, 8)
                     inspector
                     turnFooter
                 } else {
@@ -70,10 +80,10 @@ public struct SummaryView: View {
                 .frame(width: 32, height: 32)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
                 .overlay(alignment: .bottomTrailing) {
-                    Circle().fill(state.latestRun?.isRunning == true ? OverlayTheme.good : OverlayTheme.muted)
+                    Circle().fill(state.currentTaskRun?.isRunning == true ? OverlayTheme.good : OverlayTheme.muted)
                         .frame(width: 6, height: 6)
                 }
-                .accessibilityLabel(state.latestRun?.isRunning == true ? L("Running", "运行中") : L("Ready", "就绪"))
+                .accessibilityLabel(state.currentTaskRun?.isRunning == true ? L("Running", "运行中") : L("Ready", "就绪"))
             Text("FlowPilot").font(.system(size: 16, weight: .semibold, design: .rounded))
             Button {
                 NSWorkspace.shared.open(URL(string: "https://github.com/ParsifalC/codex-flow")!)
@@ -199,14 +209,14 @@ public struct SummaryView: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 20).padding(.vertical, 12)
-        .accessibilityLabel(L("Switch completed turn", "切换已完成轮次"))
+        .accessibilityLabel(L("Switch conversation or turn", "切换会话或轮次"))
         .popover(isPresented: $showPicker, arrowEdge: .bottom) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    Text(L("Switch completed turn", "切换已完成轮次")).font(.headline)
+                    Text(L("Switch conversation or turn", "切换会话或轮次")).font(.headline)
 
-            if let latest = state.latestRun {
-                Button(L("Latest completed turn", "最近完成轮次") + " · " + (state.isPrivacyMode ? L("Hidden project", "项目已隐藏") : latest.projectName)) { state.jumpToLive(); showPicker = false }
+            if let latest = state.currentTaskRun {
+                Button(L("Current task", "当前任务") + " · " + (state.isPrivacyMode ? L("Hidden project", "项目已隐藏") : latest.projectName)) { state.jumpToLive(); showPicker = false }
             }
             ForEach(state.recentChats) { chat in
                 Section(state.isPrivacyMode ? L("Chat", "对话") : chat.projectName + " · " + chat.title) {
@@ -226,13 +236,18 @@ public struct SummaryView: View {
         ScrollView(.vertical) {
             if let run = currentRun {
                 VStack(alignment: .leading, spacing: 14) {
+                    if !state.isPrivacyMode,
+                       let warning = state.analysisService?.errorMessage ?? state.analysisService?.commandErrorMessage ?? state.analysisSnapshot?.sourceError?.message {
+                        Text(warning).font(.system(size: 11)).foregroundStyle(OverlayTheme.warning)
+                    }
                     HStack {
                         Circle().fill(run.isRunning ? Color.yellow : (run.isError ? Color.red : Color.green)).frame(width: 5, height: 5)
                         Text(state.isPrivacyMode ? L("Completed turn", "已完成轮次") : L("Turn", "轮次") + " · " + String((run.turnId ?? "—").prefix(8)))
                         Spacer()
                         Text(run.localizedFormattedDate)
                     }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
-                    TurnDetailView(run: run, isPrivacyMode: state.isPrivacyMode)
+                    TurnDetailView(run: run, isPrivacyMode: state.isPrivacyMode,
+                        analysis: state.analysis(for: run), analysisService: state.analysisService)
                         .simultaneousGesture(TapGesture().onEnded { state.markResultViewed(run) })
                     HStack {
                         Button { state.selectTab(.history) } label: { Label(L("History", "查看历史"), systemImage: "clock.arrow.circlepath") }
@@ -298,7 +313,12 @@ public struct SummaryView: View {
         guard let run = currentRun, !state.isPrivacyMode else { return }
         let goalLabel = run.isLegacyGoalFallback ? L("Goal (legacy): ", "本轮目标（历史兼容）：") : L("Goal: ", "本轮目标：")
         let resultLabel = run.isLegacyConclusionFallback ? L("Result (legacy): ", "结果（历史兼容）：") : L("Result: ", "结果：")
-        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + goalLabel + localizedResultText(run.publishedGoal) + "\n\n" + resultLabel + localizedResultText(run.publishedConclusion)
+        let analysis = state.analysis(for: run)
+        let goals: String
+        if let analysis, let turnGoal = analysis.selectedTurn?.requirement.turnGoal {
+            goals = L("Conversation goal: ", "会话目标：") + localizedResultText(analysis.requirementText) + "\n\n" + L("Turn goal: ", "本轮目标：") + turnGoal
+        } else { goals = goalLabel + localizedResultText(run.publishedGoal) }
+        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + goals + "\n\n" + resultLabel + localizedResultText(analysis?.summaryText ?? run.publishedConclusion)
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }

@@ -36,6 +36,19 @@ public struct BubbleView: View {
     private var petCompanion: some View {
         VStack(spacing: 4) {
             PetView(state: state, animator: state.petAnimator, reduceMotion: reduceMotion)
+                .overlay(alignment: .topTrailing) {
+                    if state.petUnreadCount > 0 {
+                        Text(state.petUnreadCount > 99 ? "99+" : "\(state.petUnreadCount)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .frame(minWidth: 20, minHeight: 20)
+                            .background(Color(red: 0.85, green: 0.25, blue: 0.24), in: Capsule())
+                            .overlay(Capsule().strokeBorder(.white.opacity(0.85), lineWidth: 1.5))
+                            .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                            .allowsHitTesting(false)
+                    }
+                }
             PetCaptionView(run: state.latestRun, reminder: state.petReminderRun,
                            privacy: state.isPrivacyMode, reduceMotion: reduceMotion)
                 .frame(height: 30)

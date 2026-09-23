@@ -87,15 +87,22 @@ public enum OverlayTab: String, CaseIterable, Identifiable {
 public struct TurnNavigation {
     public let runs: [TaskRun]
     public let selectedIndex: Int?
+    private let additionalVisibleIDs: Set<String>
+    private let sourceOrder: [String: Int]
 
-    public init(runs: [TaskRun], selectedIdentity: String? = nil) {
+    public init(runs: [TaskRun], selectedIdentity: String? = nil,
+                additionalVisibleIDs: Set<String> = [], sourceOrder: [String: Int] = [:]) {
+        self.additionalVisibleIDs = additionalVisibleIDs
+        self.sourceOrder = sourceOrder
         let selectedRun = selectedIdentity.flatMap { identity in
             runs.first { $0.id == identity }
         }
         let sessionId = selectedRun?.sessionId ?? runs.last?.sessionId
         self.runs = runs
-            .filter { $0.isHistoryVisible && (sessionId == nil || $0.sessionId == sessionId) }
+            .filter { ($0.isHistoryVisible || additionalVisibleIDs.contains($0.id)) && (sessionId == nil || $0.sessionId == sessionId) }
             .sorted {
+                if let lhs = sourceOrder[$0.id], let rhs = sourceOrder[$1.id] { return lhs < rhs }
+                if (sourceOrder[$0.id] != nil) != (sourceOrder[$1.id] != nil) { return sourceOrder[$0.id] == nil }
                 let lhs = $0.finishedAtMs ?? $0.startedAtMs ?? 0
                 let rhs = $1.finishedAtMs ?? $1.startedAtMs ?? 0
                 if lhs != rhs { return lhs < rhs }
@@ -127,7 +134,8 @@ public struct TurnNavigation {
     public func moved(by offset: Int) -> TurnNavigation {
         guard !runs.isEmpty, let selectedIndex else { return self }
         let index = min(max(selectedIndex + offset, runs.startIndex), runs.index(before: runs.endIndex))
-        return TurnNavigation(runs: runs, selectedIdentity: runs[index].id)
+        return TurnNavigation(runs: runs, selectedIdentity: runs[index].id,
+            additionalVisibleIDs: additionalVisibleIDs, sourceOrder: sourceOrder)
     }
 }
 

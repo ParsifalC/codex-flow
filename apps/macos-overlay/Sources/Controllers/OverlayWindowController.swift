@@ -10,7 +10,9 @@ public enum DockEdge: String, Codable {
 
 // MARK: - Shared Observable State
 public class OverlayState: ObservableObject {
-    @Published public var isExpanded: Bool = false
+    @Published public var isExpanded: Bool = false {
+        didSet { if isExpanded { dismissPetCompletionNotice() } }
+    }
     @Published public var isPinned: Bool = false {
         didSet {
             if isPinned {
@@ -32,7 +34,103 @@ public class OverlayState: ObservableObject {
     // event's content for the notification presentation while preserving the
     // latest snapshot used by the live bubble and history state.
     @Published public var notificationRun: TaskRun? = nil
-    @Published public var isPrivacyMode: Bool = false
+    @Published public private(set) var petCompletionNotice: TaskRun?
+    private var petNoticeDismissal: DispatchWorkItem?
+
+    public var petUnreadCount: Int {
+        var identities = Set(unreadNotificationRuns.keys)
+        if let run = latestRun, run.publication != nil, !viewedTurnIds.contains(run.id) {
+            identities.insert(run.id)
+        }
+        return identities.count
+    }
+
+    public func dismissPetCompletionNotice() {
+        petNoticeDismissal?.cancel()
+        petNoticeDismissal = nil
+        petCompletionNotice = nil
+    }
+
+    private func showPetCompletionNotice(_ run: TaskRun) {
+        guard !isExpanded, !viewedTurnIds.contains(run.id) else { return }
+        petNoticeDismissal?.cancel()
+        petCompletionNotice = run
+        let dismissal = DispatchWorkItem { [weak self] in self?.dismissPetCompletionNotice() }
+        petNoticeDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
+    }
+    @Published public var isPrivacyMode: Bool = false {
+        didSet { analysisService?.setPrivacyMode(isPrivacyMode) }
+    }
+    @Published public private(set) var analysisSnapshot: AnalysisSnapshot?
+    public private(set) var analysisService: ConversationAnalysisService?
+    private var analysisSubscription: AnyCancellable?
+    private var analysisErrorSubscription: AnyCancellable?
+    private var telemetryChats: [ChatSession] = []
+
+    public func analysis(for run: TaskRun) -> ConversationAnalysisProjection? {
+        analysisSnapshot?.projection(sessionID: run.sessionId, turnID: run.turnId, privacyMode: isPrivacyMode)
+    }
+
+    /// The analyzed conversation owns the task destination; global telemetry
+    /// can enrich matching turns but cannot move it to a different conversation.
+    public var currentTaskRun: TaskRun? {
+        guard let latest = analysisSnapshot?.overlayRuns.last else { return latestRun }
+        if latestRun?.id == latest.id { return latestRun }
+        return telemetryChats.flatMap(\.runs).first(where: { $0.id == latest.id }) ?? latest
+    }
+
+    public var isInspectingHistory: Bool {
+        currentTaskRun != nil && (inspectedRun != nil || notificationRun != nil || selectedRun?.id != currentTaskRun?.id)
+    }
+
+    public func attachAnalysis(_ service: ConversationAnalysisService) {
+        analysisSubscription?.cancel()
+        analysisService?.stop()
+        analysisService = service
+        analysisErrorSubscription = service.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        service.setPrivacyMode(isPrivacyMode)
+        analysisSubscription = service.$projection.sink { [weak self] projection in
+            guard let self else { return }
+            let followLatest = self.inspectedRun == nil && self.notificationRun == nil &&
+                (self.selectedTurnIdentity == nil || self.selectedTurnIdentity == self.currentTaskRun?.id)
+            self.analysisSnapshot = projection.snapshot
+            if let selected = self.selectedRun, projection.snapshot.excludes(selected) {
+                self.inspectedRun = nil
+                self.notificationRun = nil
+                self.selectedTurnIdentity = self.currentTaskRun?.id
+                self.selectedSessionRuns = self.currentTaskRun.map { [$0] } ?? []
+            }
+            if followLatest, let current = self.currentTaskRun {
+                self.selectedTurnIdentity = current.id
+                if !self.selectedSessionRuns.contains(where: { $0.id == current.id }) {
+                    self.selectedSessionRuns.append(current)
+                }
+            }
+            let chats = self.chatsWithAnalysis(self.telemetryChats)
+            self.recentChats = Array(chats.prefix(15))
+            self.refreshSelectedSessionRuns(from: chats)
+        }
+        service.start()
+    }
+
+    private func runsWithAnalysis(_ runs: [TaskRun]) -> [TaskRun] {
+        let known = Set(runs.map(\.id))
+        return runs.filter { analysisSnapshot?.excludes($0) != true } +
+            (analysisSnapshot?.overlayRuns ?? []).filter { !known.contains($0.id) }
+    }
+
+    private func chatsWithAnalysis(_ chats: [ChatSession]) -> [ChatSession] {
+        guard let snapshot = analysisSnapshot, let session = snapshot.sessionID, !snapshot.turns.isEmpty else { return chats }
+        var result = chats
+        if let index = result.firstIndex(where: { $0.sessionId == session }) {
+            result[index].runs = runsWithAnalysis(result[index].runs)
+        } else {
+            result.insert(ChatSession(sessionId: session, projectName: "codex-flow",
+                title: L("Current conversation", "当前会话"), runs: snapshot.overlayRuns), at: 0)
+        }
+        return result
+    }
 
     @Published public var activeTab: OverlayTab = .inspector
     @Published public var inspectedRun: TaskRun? = nil
@@ -91,21 +189,25 @@ public class OverlayState: ObservableObject {
             if let run = selectedSessionRuns.first(where: { $0.id == selectedTurnIdentity }) {
                 return run
             }
-            if let run = [notificationRun, inspectedRun, latestRun].compactMap({ $0 }).first(where: { $0.id == selectedTurnIdentity }) {
+            if let run = [notificationRun, inspectedRun, currentTaskRun, latestRun].compactMap({ $0 }).first(where: { $0.id == selectedTurnIdentity }) {
                 return run
             }
             return nil
         }
-        return notificationRun ?? inspectedRun ?? latestRun
+        return notificationRun ?? inspectedRun ?? currentTaskRun
     }
 
     public var turnNavigation: TurnNavigation {
         let runs = selectedSessionRuns.isEmpty ? selectedRun.map { [$0] } ?? [] : selectedSessionRuns
-        return TurnNavigation(runs: runs, selectedIdentity: selectedTurnIdentity)
+        let source = analysisSnapshot?.overlayRuns ?? []
+        return TurnNavigation(runs: runs.filter { analysisSnapshot?.excludes($0) != true }, selectedIdentity: selectedTurnIdentity,
+            additionalVisibleIDs: Set(source.map(\.id)),
+            sourceOrder: Dictionary(uniqueKeysWithValues: source.enumerated().map { ($0.element.id, $0.offset) }))
     }
 
     public func markResultViewed(_ run: TaskRun?) {
         guard let run, run.publication != nil else { return }
+        if petCompletionNotice?.id == run.id { dismissPetCompletionNotice() }
         unreadNotificationRuns.removeValue(forKey: run.id)
         guard !viewedTurnIds.contains(run.id) else { return }
         viewedTurnIds.append(run.id)
@@ -303,8 +405,10 @@ public class OverlayState: ObservableObject {
             let chats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 0)
             DispatchQueue.main.async {
                 guard generation == self.menuLoadGeneration else { return }
-                self.recentChats = Array(chats.prefix(15))
-                self.refreshSelectedSessionRuns(from: chats)
+                self.telemetryChats = chats
+                let mergedChats = self.chatsWithAnalysis(chats)
+                self.recentChats = Array(mergedChats.prefix(15))
+                self.refreshSelectedSessionRuns(from: mergedChats)
             }
         }
     }
@@ -409,6 +513,7 @@ public class OverlayState: ObservableObject {
     }
 
     public func inspect(run: TaskRun) {
+        if analysisSnapshot?.excludes(run) == true { jumpToLive(); return }
         DispatchQueue.main.async {
             self.notificationRun = nil
             self.inspectedRun = run
@@ -431,12 +536,10 @@ public class OverlayState: ObservableObject {
         DispatchQueue.main.async {
             self.notificationRun = nil
             self.inspectedRun = nil
-            self.selectedTurnIdentity = self.latestRun?.id
-            if let latestRun = self.latestRun,
-               !self.selectedSessionRuns.contains(where: { $0.id == latestRun.id }) {
-                self.selectedSessionRuns = [latestRun]
-            }
-            self.markResultViewed(self.latestRun)
+            let current = self.currentTaskRun
+            self.selectedTurnIdentity = current?.id
+            self.selectedSessionRuns = current.map { [$0] } ?? []
+            self.markResultViewed(current)
             self.activeTab = .inspector
             self.windowController?.updateWindowFrame(animated: true)
             self.loadMenuData()
@@ -477,7 +580,11 @@ public class OverlayState: ObservableObject {
             )
             DispatchQueue.main.async {
                 guard generation == self.historyLoadGeneration else { return }
-                self.historyRuns = runs
+                self.historyRuns = self.runsWithAnalysis(runs).filter { run in
+                    guard !runs.contains(where: { $0.id == run.id }) else { return true }
+                    return !todayOnly && (project == nil || run.projectName == project) &&
+                        (search.isEmpty || run.turnPreview.localizedCaseInsensitiveContains(search))
+                }
             }
         }
     }
@@ -522,13 +629,16 @@ public class OverlayState: ObservableObject {
             } else if decision.notify && !self.viewedTurnIds.contains(run.id) {
                 self.unreadNotificationRuns[run.id] = run
             }
-            if decision.notify && !(self.isExpanded && self.inspectedRun != nil) {
+            if decision.notify && self.analysisSnapshot?.overlayRuns.isEmpty != false && !(self.isExpanded && self.inspectedRun != nil) {
                 self.notificationRun = run
                 self.selectedTurnIdentity = run.id
                 self.selectedSessionRuns = [run]
                 if self.petResource == nil {
                     self.expand(notificationTriggered: true)
                 }
+            }
+            if decision.notify, self.petResource != nil {
+                self.showPetCompletionNotice(run)
             }
             if decision.notify, self.petResource != nil,
                let session = run.sessionId, let turn = run.turnId {
@@ -896,6 +1006,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         runtime.pointerInteractionActive
     }
 
+    private var petCompletionPresenter: PetCompletionPresenter?
     private var hoverDwellTimer: Timer?
     private var collapseTimer: Timer?
     private var notificationCollapseTimer: Timer?
@@ -918,6 +1029,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         super.init()
         state.windowController = self
         setupWindow()
+        petCompletionPresenter = PetCompletionPresenter(state: state, anchor: window)
     }
 
     private var visibleFrames: [NSRect] {

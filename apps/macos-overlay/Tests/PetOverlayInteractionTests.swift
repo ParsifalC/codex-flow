@@ -95,6 +95,8 @@ struct PetOverlayInteractionTests {
         state.update(run: result, notificationTriggered: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         precondition(!state.isExpanded && state.petAnimator.state == .jumping, "Pet completion should jump without opening the panel")
+        precondition(state.petUnreadCount == 1 && state.petCompletionNotice?.id == result.id, "A completion must show a notice and retain an unread badge")
+        let firstNotice = state.petCompletionNotice?.id
         state.petAnimator.advance(by: 180)
         let completed = PetActivityEvent(schemaVersion: 1, event: "completed", sessionID: "result-session", turnID: "result-turn", sequence: 1, timestampMilliseconds: now, startedAtMilliseconds: now, source: "test")
         let beforeLive = state.petAnimator.frameIndex
@@ -110,6 +112,8 @@ struct PetOverlayInteractionTests {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         precondition(state.petAnimator.state == .idle, "Repeated publication must not celebrate twice")
 
+        precondition(state.petUnreadCount == 1 && state.petCompletionNotice?.id == firstNotice, "Duplicate publication must not create another unread item")
+
         let second = PetActivityEvent(schemaVersion: 1, event: "succeeded", sessionID: "second", turnID: "second", sequence: 1, timestampMilliseconds: now + 1, startedAtMilliseconds: now + 1, source: "test")
         _ = state.handlePetActivity(second)
         state.petAnimator.advance(by: 180)
@@ -124,6 +128,25 @@ struct PetOverlayInteractionTests {
         precondition(state.petAnimator.state == .jumping, "Hover must not replace a completion reminder")
         state.petAnimator.advance(by: 5_000)
         precondition(state.petAnimator.state == .idle)
+
+        precondition(state.petUnreadCount == 2, "Concurrent completions must accumulate")
+        state.markResultViewed(secondRun)
+        precondition(state.petUnreadCount == 1, "Reading one result must preserve the other unread result")
+        precondition(state.petCompletionNotice == nil, "Reading the displayed notice must dismiss it")
+        state.markResultViewed(result)
+        precondition(state.petUnreadCount == 0, "Reading all results must clear the badge")
+
+        let expiring = TaskRun(sessionId: "expiry", turnId: "expiry", finishedAtMs: Double(now + 2),
+                               publication: PublicationInfo(revision: 1, completedAtMs: Double(now + 2)))
+        state.update(run: expiring, notificationTriggered: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        precondition(state.petCompletionNotice?.id == expiring.id)
+        RunLoop.main.run(until: Date().addingTimeInterval(8.1))
+        precondition(state.petCompletionNotice == nil && state.petUnreadCount == 1,
+                     "Expiry must hide the bubble without marking the result read")
+        state.update(run: expiring, notificationTriggered: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        precondition(state.petCompletionNotice == nil, "Duplicate delivery after expiry must not reopen the bubble")
 
         try Data("../synthetic-v2".utf8).write(to: current)
         let rejected = send("pet reload", socketPath: socketPath, box: ResponseBox())
