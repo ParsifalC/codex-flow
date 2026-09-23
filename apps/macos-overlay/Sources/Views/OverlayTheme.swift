@@ -64,7 +64,7 @@ struct OverlayDisclosureStyle: DisclosureGroupStyle {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(OverlayButtonStyle())
+            .buttonStyle(.plain)
             .accessibilityValue(configuration.isExpanded ? L("Expanded", "已展开") : L("Collapsed", "已收起"))
             if configuration.isExpanded { configuration.content }
         }
