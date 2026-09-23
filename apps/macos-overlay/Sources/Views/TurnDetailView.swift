@@ -28,17 +28,18 @@ public struct TurnDetailView: View {
                 if let analysis {
                     let need = analysis.selectedTurn?.requirement
                     let ready = need?.status == "succeeded" && need?.turnGoal != nil
-                    narrative(L("Conversation goal", "会话目标"), hint: L("As of this turn", "截至本轮"),
+                    narrative(L("Conversation goal", "会话目标"), hint: nil,
                         text: ready ? analysis.requirementText : stateText(need?.status == "succeeded" ? nil : need?.status), accent: false)
+                        .help(L("Conversation goal as of the selected turn", "截至所选轮次的会话目标"))
                     OverlayDivider()
                     narrative(L("Turn goal", "本轮目标"), hint: nil,
-                        text: ready ? need?.turnGoal : L("Awaiting requirement extraction", "等待提炼本轮目标"), accent: true)
+                        text: ready ? need?.turnGoal : L("Awaiting extraction", "待提炼"), accent: true)
                     DisclosureGroup(L("Need details", "需求详情"), isExpanded: $needExpanded) {
                         needDetails(need)
                     }.font(.system(size: 12)).disclosureGroupStyle(OverlayDisclosureStyle())
                     OverlayDivider()
                     narrative(L("Turn result", "本轮结果"), hint: nil,
-                        text: analysis.summaryText ?? (analysis.currentTurnWaitingForFinal ? L("Waiting for this turn's reply", "等待本轮回复") : stateText(analysis.selectedTurn?.summary.status)),
+                        text: analysis.summaryText ?? (analysis.currentTurnWaitingForFinal ? L("Awaiting reply", "待回复") : stateText(analysis.selectedTurn?.summary.status)),
                         expanded: (analysis.summaryText?.count ?? 0) > 120 ? $summaryExpanded : nil, accent: false)
                     if !isPrivacyMode, !(analysis.selectedTurn?.summary.caveats.isEmpty ?? true) {
                         DisclosureGroup(L("Result qualifications", "结果说明")) { analysisNotes(analysis.selectedTurn?.summary) }
@@ -95,10 +96,7 @@ public struct TurnDetailView: View {
                 }.padding(.top, 14)
             } label: {
                 HStack {
-                    Text(L("Usage and execution", "用量与执行详情")).fontWeight(.semibold)
-                    Spacer()
-                    Text(run.turnContext?.orchestration == nil ? L("Not recorded", "未记录") : L("Orchestration", "编排计划"))
-                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
+                    Text(L("Execution details", "执行详情")).fontWeight(.semibold)
                 }
             }
             .disclosureGroupStyle(OverlayDisclosureStyle())
@@ -129,11 +127,11 @@ public struct TurnDetailView: View {
                 needNotes(L("Conflict", "矛盾"), need?.conflicts ?? [])
                 needNotes(L("Gap", "缺口"), need?.gaps ?? [])
                 Text(L("Better wording", "更好说法")).fontWeight(.semibold)
-                Text(need?.betterPrompt ?? L("Update extraction to see this", "更新提炼后显示"))
+                Text(need?.betterPrompt ?? L("Awaiting update", "待更新"))
                 Text(L("Next step", "下一步")).fontWeight(.semibold)
-                Text(need?.nextStep ?? L("Update extraction to see this", "更新提炼后显示"))
+                Text(need?.nextStep ?? L("Awaiting update", "待更新"))
                 analysisNotes(need)
-                DisclosureGroup(L("Original goal and request", "原始目标与发言"), isExpanded: $sourceExpanded) {
+                DisclosureGroup(L("Original request", "原始发言"), isExpanded: $sourceExpanded) {
                     if let goal = run.publishedGoal { Text(goal) }
                     Text(analysis?.selectedTurn?.userText ?? "")
                 }.disclosureGroupStyle(OverlayDisclosureStyle())
@@ -155,7 +153,7 @@ public struct TurnDetailView: View {
         switch status {
         case "pending": return L("Queued for analysis…", "等待提炼…")
         case "running": return L("Analyzing…", "正在提炼…")
-        case "failed": return L("Analysis failed. Original content is available below.", "提炼失败，可查看原文或重试。")
+        case "failed": return L("Extraction failed", "提炼失败")
         default: return L("Not analyzed yet", "尚未提炼")
         }
     }
@@ -172,9 +170,8 @@ public struct TurnDetailView: View {
     private var skillSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(L("Reusable skill", "可复用技能")).font(.system(size: 12, weight: .medium))
-                Spacer()
                 Button(L("Extract skill", "提炼技能")) { skillExpanded = true; perform("extract-skill") }
+                    .help(L("Extract from the conversation through this turn", "从会话开始至本轮提炼技能"))
                     .disabled(isPrivacyMode || analysis?.canExtractSkill != true || ["pending", "running"].contains(analysis?.selectedSkill?.status ?? ""))
             }
             if let skill = analysis?.selectedSkill {
@@ -193,9 +190,6 @@ public struct TurnDetailView: View {
                         if skill.status == "failed" { Button(L("Retry", "重试")) { perform("retry", kind: .skill) } }
                     }
                 }.disclosureGroupStyle(OverlayDisclosureStyle()).font(.system(size: 12))
-            } else {
-                Text(L("Extract from this conversation through the selected turn.", "手动提炼从会话开始到所选轮次的内容。"))
-                    .font(.system(size: 11)).foregroundStyle(OverlayTheme.muted)
             }
         }.buttonStyle(.plain).tint(OverlayTheme.accent)
     }
