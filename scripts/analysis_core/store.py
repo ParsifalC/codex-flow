@@ -612,6 +612,8 @@ class AnalysisStore:
         }
         if kind == "requirement":
             value["revision"] = job.get("source_index") if status == "succeeded" else None
+            for key in ("turn_goal", "better_prompt", "next_step", "evidence", "conflicts", "gaps"):
+                value[key] = result.get(key) if status == "succeeded" else None
         return value
 
     def _job_coverage(self, job_id: Any) -> Optional[Dict[str, Any]]:

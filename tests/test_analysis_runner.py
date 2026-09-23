@@ -47,8 +47,28 @@ class RunnerTests(unittest.TestCase):
 
     def fake_popen(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
-        self.process = FakeProcess(b'{"text":"need","caveats":[]}', 0)
+        self.process = FakeProcess(json.dumps({"text":"need", "turn_goal":"turn", "better_prompt":"request",
+            "next_step":"act", "evidence":[], "conflicts":[], "gaps":[], "caveats":[]}).encode(), 0)
         return self.process
+
+    def test_concise_need_preserves_distinct_session_and_turn_goals(self):
+        runner = CodexExecRunner(self.root / "state", "fake")
+        need = {"text": "在原弹框中看懂对话目标和结果。", "turn_goal": "分清三层信息并缩短文案。",
+                "better_prompt": "保留现有功能，将会话目标、本轮目标和结果分开展示。",
+                "next_step": "调整三块内容并检查首屏。", "evidence": ["用户说界面不清晰"],
+                "conflicts": [], "gaps": [], "caveats": []}
+        self.assertEqual(runner._parse_output(json.dumps(need), "requirement"), need)
+        with self.assertRaises(ModelError):
+            runner._parse_output(json.dumps(dict(need, turn_goal="长" * 41)), "requirement")
+        with self.assertRaises(ModelError):
+            runner._parse_output(json.dumps({"text": "长" * 81, "caveats": []}), "summary")
+
+    def test_schema_refreshes_in_existing_preview_state(self):
+        runner = CodexExecRunner(self.root / "state", "fake")
+        path = runner.schema_dir / "requirement.json"
+        path.write_text('{"stale": true}')
+        schema = json.loads(runner._schema_path("requirement").read_text())
+        self.assertIn("turn_goal", schema["required"])
 
     def test_runner_uses_isolated_read_only_exec_and_validates_schema(self):
         auth = self.root / "auth"
@@ -206,7 +226,7 @@ class RunnerTests(unittest.TestCase):
             "#!/usr/bin/env python3\n"
             "import json,sys\n"
             "kind='skill' if any('skill.json' in x for x in sys.argv) else ('summary' if any('summary.json' in x for x in sys.argv) else 'requirement')\n"
-            "print(json.dumps({'text': kind+' result','caveats':[]} if kind != 'skill' else {'name':'x','description':'y','markdown':'# x','caveats':[]}))\n",
+            "print(json.dumps(dict({'text': kind+' result','caveats':[]}, **({'turn_goal':'turn','better_prompt':'request','next_step':'act','evidence':[],'conflicts':[],'gaps':[]} if kind == 'requirement' else {})) if kind != 'skill' else {'name':'x','description':'y','markdown':'# x','caveats':[]}))\n",
             encoding="utf-8",
         )
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)

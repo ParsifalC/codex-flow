@@ -32,6 +32,33 @@ class RecoveryTests(unittest.TestCase):
     def service(self):
         return AnalysisService.configure(self.root / 'state', self.source, 'session-a', 'fake')
 
+    def test_model_input_retains_turn_boundaries_for_goal_scopes(self):
+        service = self.service()
+        self.addCleanup(service.close)
+        job = next(j for t in service.store.turns() for j in service.store.jobs_for_turn(t['turn_id']) if j['kind'] == 'requirement')
+        self.assertEqual(job['input']['turn_id'], 't2')
+        self.assertEqual(job['input']['session_start_request'], 'old')
+        self.assertEqual([m['turn_id'] for m in job['input']['messages']], ['t1', 't1', 't2'])
+
+    def test_snapshot_preserves_need_details_without_leaking_pending_values(self):
+        service = self.service()
+        self.addCleanup(service.close)
+        job = service.store.claim_job()
+        while job['kind'] != 'requirement':
+            service.store.complete_job(job['job_id'], {'text': 'summary', 'caveats': []})
+            job = service.store.claim_job()
+        result = {'text': 'Session goal', 'turn_goal': 'Turn goal', 'better_prompt': 'Reusable request',
+                  'next_step': 'Small step', 'evidence': ['Source'], 'conflicts': [], 'gaps': [], 'caveats': []}
+        service.store.complete_job(job['job_id'], result)
+        need = service.store.snapshot()['turns'][-1]['requirement']
+        self.assertEqual(need['turn_goal'], 'Turn goal')
+        self.assertEqual(need['better_prompt'], 'Reusable request')
+        self.rows.append(message('u3', 't2', 'user', 'new correction'))
+        write_jsonl(self.source, self.rows)
+        service.sync()
+        need = service.store.snapshot()['turns'][-1]['requirement']
+        self.assertIsNone(need['turn_goal'])
+
     def test_sync_recovers_crash_after_source_commit_without_backfilling_history(self):
         with patch.object(AnalysisService, '_enqueue_message_job', side_effect=RuntimeError('crash')):
             with self.assertRaises(RuntimeError):

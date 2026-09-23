@@ -12,6 +12,36 @@ from .source import SourceError, Transcript, TranscriptMessage, parse_transcript
 from .store import AnalysisStore
 
 
+ANALYSIS_INSTRUCTIONS = {
+    "requirement": (
+        "Use the true-need method: diagnose what the user is trying to accomplish, not a conversation summary. "
+        "Each quoted message has a turn_id. The payload turn_id identifies the current round; other rounds are context only. "
+        "session_start_request is the initial overall request. text must state that overall capability/outcome, updated only "
+        "by explicit user changes of scope. Later debugging or UI polishing requests belong ONLY in turn_goal. "
+        "Do not collapse these two scopes into paraphrases of the latest message. "
+        "Stay close to user evidence; never invent hidden motives or treat assistant claims as verified facts. "
+        "Return JSON in the user's language. text: the overall SESSION goal as ONE sentence, target 16-30 Chinese "
+        "characters, maximum 48 characters. Keep the broader session objective from earlier turns unless the user explicitly replaces it. "
+        "A request to fix layout is the turn goal, not a replacement for the whole session purpose. Put constraints in better_prompt. turn_goal: the action requested in the CURRENT turn_id, ONE sentence, "
+        "target 12-25 Chinese characters, maximum 40. Do not repeat the session goal in turn_goal. "
+        "better_prompt: a reusable concise paragraph with goal, context, constraints and expected output, maximum 240. "
+        "next_step: the smallest useful action, maximum 80; if blocked by missing information, exactly one key question. "
+        "evidence, conflicts, gaps: arrays, empty unless useful, at most two short items each. caveats: only material "
+        "uncertainty affecting this need. Do not routinely repeat generic unverified disclaimers. "
+        "These map to exactly three expanded sections: 真正需求 (text and optional evidence/conflicts/gaps), "
+        "更好说法 (better_prompt), 下一步 (next_step). Keep history and implementation details out of goal sentences."
+    ),
+    "summary": (
+        "Summarize ONLY the parent final answer of the selected turn. Return JSON text and caveats in the user's language. "
+        "text: one or two short sentences, target 25-50 Chinese characters, maximum 80 characters. State the main actual "
+        "result and the most important unresolved item. Preserve whether something is suggested, completed or unverified. "
+        "If the final reply names an unresolved bug, include it in text itself, not only in caveats. "
+        "Do not repeat the request, implementation chronology, filenames, commit hashes or test counts. "
+        "Put secondary qualifications in caveats; never omit a material failure just to shorten text."
+    ),
+}
+
+
 class AnalysisError(RuntimeError):
     def __init__(self, code: str):
         self.code = code
@@ -131,20 +161,11 @@ class AnalysisService:
     def _enqueue_message_job(self, kind: str, message: TranscriptMessage, transcript: Transcript) -> Dict[str, Any]:
         source_limit = message.source_index
         context, coverage = self._context(source_limit)
-        instruction = {
-            "requirement": (
-                "Extract the user's confirmed need about the concrete object, requested action, and confirmed constraints "
-                "from the conversation up through this user message. Use the user's language in one or two concise "
-                "sentences; distinguish user-confirmed requirements from assistant suggestions and do not claim work "
-                "is complete when it is not verified. Return JSON with text and caveats."
-            ),
-            "summary": (
-                "Summarize the parent assistant final answer in two to four concise sentences using only conversation "
-                "content up through this final answer. Distinguish suggestions, completed work, and unverified work; "
-                "preserve material caveats. Return JSON with text and caveats."
-            ),
-        }[kind]
+        instruction = ANALYSIS_INSTRUCTIONS[kind]
+        session_start = next((m for m in self.store.messages_before(source_limit) if m["role"] == "user"), None)
         payload = {
+            "session_start_request": session_start["text"][:1200] if session_start else None,
+            "format_version": 5,
             "kind": kind,
             "session_id": self.store.session_id,
             "turn_id": message.turn_id,
@@ -187,16 +208,12 @@ class AnalysisService:
         return self.store.snapshot()
 
     def _enqueue_stored_job(self, kind: str, message: Dict[str, Any]) -> Dict[str, Any]:
-        instruction = (
-            "Extract the user's confirmed need about the concrete object, requested action, and confirmed constraints "
-            "in one or two concise sentences using the user's language; distinguish user-confirmed requirements from "
-            "assistant suggestions and do not claim unverified work is complete. Return JSON with text and caveats."
-            if kind == "requirement"
-            else "Summarize the parent final answer in two to four concise sentences, distinguishing suggestions, "
-            "completed work, and unverified work while preserving material caveats. Return JSON with text and caveats."
-        )
+        instruction = ANALYSIS_INSTRUCTIONS[kind]
         context, coverage = self._context(message["source_index"])
+        session_start = next((m for m in self.store.messages_before(message["source_index"]) if m["role"] == "user"), None)
         payload = {
+            "session_start_request": session_start["text"][:1200] if session_start else None,
+            "format_version": 5,
             "kind": kind,
             "session_id": self.store.session_id,
             "turn_id": message["turn_id"],
@@ -206,12 +223,16 @@ class AnalysisService:
             "instruction": instruction,
             "messages": context,
         }
+        turn = self.store.turn(message["turn_id"]) or {}
+        existing = self.store.get_job(turn.get(kind + "_job_id")) or {}
+        version = existing.get("analyzer_version", "analysis-v1") if existing.get("input", {}).get("format_version") == 5 else "analysis-ui-v5"
         return self.store.enqueue_job(
             kind,
             message["message_id"],
             message["turn_id"],
             message["source_index"],
             payload,
+            analyzer_version=version,
             max_attempts=int(self.config().get("max_attempts", 2)),
         )
 
@@ -265,7 +286,7 @@ class AnalysisService:
                 break
             text = item["text"]
             clipped = text[:remaining]
-            selected.append({"role": item["role"], "text": clipped})
+            selected.append({"role": item["role"], "turn_id": item["turn_id"], "text": clipped})
             remaining -= len(clipped)
         selected.reverse()
         included_chars = sum(len(item["text"]) for item in selected)

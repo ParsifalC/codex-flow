@@ -314,7 +314,11 @@ public struct SummaryView: View {
         let goalLabel = run.isLegacyGoalFallback ? L("Goal (legacy): ", "本轮目标（历史兼容）：") : L("Goal: ", "本轮目标：")
         let resultLabel = run.isLegacyConclusionFallback ? L("Result (legacy): ", "结果（历史兼容）：") : L("Result: ", "结果：")
         let analysis = state.analysis(for: run)
-        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + goalLabel + localizedResultText(analysis?.requirementText ?? run.publishedGoal) + "\n\n" + resultLabel + localizedResultText(analysis?.summaryText ?? run.publishedConclusion)
+        let goals: String
+        if let analysis, let turnGoal = analysis.selectedTurn?.requirement.turnGoal {
+            goals = L("Conversation goal: ", "会话目标：") + localizedResultText(analysis.requirementText) + "\n\n" + L("Turn goal: ", "本轮目标：") + turnGoal
+        } else { goals = goalLabel + localizedResultText(run.publishedGoal) }
+        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + goals + "\n\n" + resultLabel + localizedResultText(analysis?.summaryText ?? run.publishedConclusion)
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }

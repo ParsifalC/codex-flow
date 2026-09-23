@@ -17,7 +17,7 @@ OUTPUT_SCHEMAS = {
         "additionalProperties": False,
         "required": ["text", "caveats"],
         "properties": {
-            "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "text": {"type": "string", "minLength": 1, "maxLength": 48},
             "caveats": {"type": "array", "items": {"type": "string"}},
         },
     },
@@ -26,7 +26,7 @@ OUTPUT_SCHEMAS = {
         "additionalProperties": False,
         "required": ["text", "caveats"],
         "properties": {
-            "text": {"type": "string", "minLength": 1, "maxLength": 5000},
+            "text": {"type": "string", "minLength": 1, "maxLength": 80},
             "caveats": {"type": "array", "items": {"type": "string"}},
         },
     },
@@ -42,6 +42,15 @@ OUTPUT_SCHEMAS = {
         },
     },
 }
+
+
+NEED_TEXT_LIMITS = {"turn_goal": 40, "better_prompt": 240, "next_step": 80}
+NEED_LIST_FIELDS = ("evidence", "conflicts", "gaps")
+for field, limit in NEED_TEXT_LIMITS.items():
+    OUTPUT_SCHEMAS["requirement"]["properties"][field] = {"type": "string", "minLength": 1, "maxLength": limit}
+for field in NEED_LIST_FIELDS:
+    OUTPUT_SCHEMAS["requirement"]["properties"][field] = {"type": "array", "maxItems": 2, "items": {"type": "string", "maxLength": 120}}
+OUTPUT_SCHEMAS["requirement"]["required"] += list(NEED_TEXT_LIMITS) + list(NEED_LIST_FIELDS)
 
 
 def normalize_skill(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -142,8 +151,9 @@ web_search = "disabled"
 
     def _schema_path(self, kind: str) -> Path:
         path = self.schema_dir / (kind + ".json")
-        if not path.exists():
-            path.write_text(json.dumps(OUTPUT_SCHEMAS[kind], sort_keys=True), encoding="utf-8")
+        schema = json.dumps(OUTPUT_SCHEMAS[kind], sort_keys=True)
+        if not path.exists() or path.read_text(encoding="utf-8") != schema:
+            path.write_text(schema, encoding="utf-8")
             _safe_mode(path, 0o600)
         return path
 
@@ -312,10 +322,18 @@ web_search = "disabled"
 
     def _valid_result(self, value: Dict[str, Any], kind: str) -> bool:
         if kind in ("requirement", "summary"):
+            if kind == "requirement":
+                if not all(isinstance(value.get(key), str) and value[key].strip() and len(value[key]) <= limit
+                           for key, limit in NEED_TEXT_LIMITS.items()):
+                    return False
+                if not all(isinstance(value.get(key), list) and len(value[key]) <= 2 and
+                           all(isinstance(item, str) and len(item) <= 120 for item in value[key])
+                           for key in NEED_LIST_FIELDS):
+                    return False
             return (
                 isinstance(value.get("text"), str)
                 and bool(value["text"].strip())
-                and len(value["text"]) <= (4000 if kind == "requirement" else 5000)
+                and len(value["text"]) <= (48 if kind == "requirement" else 80)
                 and isinstance(value.get("caveats"), list)
                 and all(isinstance(item, str) for item in value["caveats"])
             )
@@ -331,6 +349,8 @@ web_search = "disabled"
     def _clean_result(self, value: Dict[str, Any], kind: str) -> Dict[str, Any]:
         if kind in ("requirement", "summary"):
             result: Dict[str, Any] = {"text": value["text"], "caveats": list(value["caveats"])}
+            if kind == "requirement":
+                result.update({key: value[key] for key in list(NEED_TEXT_LIMITS) + list(NEED_LIST_FIELDS)})
             return result
         result = {key: value[key] for key in ("name", "description", "markdown")}
         result["caveats"] = list(value["caveats"])

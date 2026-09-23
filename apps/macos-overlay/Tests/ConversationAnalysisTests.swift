@@ -3,6 +3,7 @@ import Foundation
 @main
 struct ConversationAnalysisTests {
     static func main() throws {
+        try testStructuredNeedKeepsGoalScopesDistinct()
         testOverlayBindingUsesSessionAndTurn()
         testOverlayNavigationIncludesUnfinishedAnalysisTurn()
         try testOverlayKeepsSelectionAndScopesActions()
@@ -15,6 +16,16 @@ struct ConversationAnalysisTests {
         try testPrivacyGuardsActionsAndExport()
         try testLaunchConfigurationRequiresExplicitAbsolutePaths()
         print("Conversation analysis projection and command guard tests passed")
+    }
+
+    private static func testStructuredNeedKeepsGoalScopesDistinct() throws {
+        let raw = #"{"status":"succeeded","text":"会话最终目标","turn_goal":"本轮具体任务","better_prompt":"可复用说法","next_step":"最小行动","evidence":["用户原话"],"conflicts":[],"gaps":[],"caveats":[]}"#
+        let need = try JSONDecoder().decode(AnalysisJobState.self, from: Data(raw.utf8))
+        precondition(need.text == "会话最终目标" && need.turnGoal == "本轮具体任务")
+        precondition(need.betterPrompt == "可复用说法" && need.nextStep == "最小行动")
+        precondition(need.evidence == ["用户原话"])
+        let legacy = try JSONDecoder().decode(AnalysisJobState.self, from: Data(#"{"status":"succeeded","text":"旧版混合需求"}"#.utf8))
+        precondition(legacy.turnGoal == nil && legacy.evidence.isEmpty)
     }
 
     private static func testOverlayBindingUsesSessionAndTurn() {

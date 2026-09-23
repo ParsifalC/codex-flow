@@ -186,6 +186,12 @@ public struct AnalysisModelCoverage: Codable, Equatable {
 }
 
 public struct AnalysisJobState: Codable, Equatable {
+    public var turnGoal: String?
+    public var betterPrompt: String?
+    public var nextStep: String?
+    public var evidence: [String]
+    public var conflicts: [String]
+    public var gaps: [String]
     public var status: String
     public var text: String?
     public var revision: Int?
@@ -201,8 +207,20 @@ public struct AnalysisJobState: Codable, Equatable {
         jobID: String? = nil,
         error: String? = nil,
         caveats: [String] = [],
-        coverage: AnalysisModelCoverage? = nil
+        coverage: AnalysisModelCoverage? = nil,
+        turnGoal: String? = nil,
+        betterPrompt: String? = nil,
+        nextStep: String? = nil,
+        evidence: [String] = [],
+        conflicts: [String] = [],
+        gaps: [String] = []
     ) {
+        self.turnGoal = turnGoal
+        self.betterPrompt = betterPrompt
+        self.nextStep = nextStep
+        self.evidence = evidence
+        self.conflicts = conflicts
+        self.gaps = gaps
         self.status = status
         self.text = text
         self.revision = revision
@@ -213,6 +231,12 @@ public struct AnalysisJobState: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case turnGoal = "turn_goal"
+        case betterPrompt = "better_prompt"
+        case nextStep = "next_step"
+        case evidence
+        case conflicts
+        case gaps
         case status
         case text
         case revision
@@ -224,6 +248,12 @@ public struct AnalysisJobState: Codable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        turnGoal = try values.decodeIfPresent(String.self, forKey: .turnGoal)
+        betterPrompt = try values.decodeIfPresent(String.self, forKey: .betterPrompt)
+        nextStep = try values.decodeIfPresent(String.self, forKey: .nextStep)
+        evidence = try values.decodeIfPresent([String].self, forKey: .evidence) ?? []
+        conflicts = try values.decodeIfPresent([String].self, forKey: .conflicts) ?? []
+        gaps = try values.decodeIfPresent([String].self, forKey: .gaps) ?? []
         status = try values.decodeIfPresent(String.self, forKey: .status) ?? "not_analyzed"
         text = try values.decodeIfPresent(String.self, forKey: .text)
         revision = try values.decodeIfPresent(Int.self, forKey: .revision)
