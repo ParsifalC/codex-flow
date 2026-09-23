@@ -10,6 +10,7 @@ import json
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +42,17 @@ def get_db(db_path: Path = QUOTA_LEDGER_DB) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 5000;")
     init_db(conn)
     return conn
+
+
+@contextmanager
+def db_session(db_path: Path = QUOTA_LEDGER_DB):
+    """Open a ledger connection, commit its work, and always release it."""
+    conn = get_db(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db(conn: sqlite3.Connection) -> None:

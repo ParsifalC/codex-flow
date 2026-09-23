@@ -233,8 +233,8 @@ def _backfill_and_hydrate_quota_history() -> None:
     from .quota_ledger import (
         allocate_quota_segments,
         backfill_historical_observations,
+        db_session,
         export_quota_summary,
-        get_db,
     )
 
     snapshots: dict[str, dict[str, Any]] = {}
@@ -243,7 +243,7 @@ def _backfill_and_hydrate_quota_history() -> None:
         if isinstance(value, dict):
             snapshots[path.stem] = value
     db_path = _common.STATE_ROOT / "quota_ledger.db"
-    with get_db(db_path) as conn:
+    with db_session(db_path) as conn:
         backfill_historical_observations(conn, snapshots)
         updates = allocate_quota_segments(
             conn,

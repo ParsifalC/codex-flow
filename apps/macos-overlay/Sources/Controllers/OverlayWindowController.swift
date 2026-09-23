@@ -670,6 +670,17 @@ public struct OverlayRootView: View {
     }
 }
 
+// MARK: - Keyable Overlay Panel
+//
+// The overlay uses a non-activating panel so it can float above other apps,
+// but the history search field still needs a key window to receive keyboard
+// input.  NSPanel's default key-window policy otherwise leaves the field
+// visible but unable to become the first responder.
+final class OverlayPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 // MARK: - Custom Tracking Hosting View
 class TrackingHostingView<Content: View>: NSHostingView<Content> {
     weak var windowController: OverlayWindowController?
@@ -1014,12 +1025,13 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         let restored = loadSavedPosition() ?? defaultPosition(for: bubbleSize)
         let initialRect = normalizedCollapsedFrame(restored)
 
-        window = NSPanel(
+        window = OverlayPanel(
             contentRect: initialRect,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        window.becomesKeyOnlyIfNeeded = true
         window.level = .floating
         window.isFloatingPanel = true
         window.isOpaque = false

@@ -68,8 +68,18 @@ struct OverlayStateStartupTests {
         let host = NSRect(origin: .zero, size: OverlayCompactLayout.hostSize)
         precondition(OverlayCompactHitRegion.contains(NSPoint(x: 20, y: 32), in: host, expanded: false, docked: false), "Capsule text/icon sides must be clickable")
         precondition(!OverlayCompactHitRegion.contains(NSPoint(x: 2, y: 2), in: host, expanded: false, docked: false))
+        let panel = OverlayPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.becomesKeyOnlyIfNeeded = true
+        precondition(panel.canBecomeKey, "The non-activating overlay must accept keyboard focus")
+        precondition(!panel.canBecomeMain, "The overlay must not become the application's main window")
+        precondition(panel.becomesKeyOnlyIfNeeded, "The overlay must become key only for interactive controls")
         try testRefreshIsQuietThenUpdateExpandsOnce()
-        print("Overlay startup, IPC refresh, unread result and capsule hit-region tests passed")
+        print("Overlay startup, IPC refresh, unread result, capsule hit-region and panel focus tests passed")
     }
 
     private static func testRefreshIsQuietThenUpdateExpandsOnce() throws {
