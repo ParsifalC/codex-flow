@@ -78,3 +78,17 @@ The earlier lock-screen blocker is resolved. Acceptance is **not fully passed**:
 The live transcript contains two messages with authoritative content kind `goal.internal_context`. They appear in the history as user messages containing `<codex_internal_context source="goal">` and caused requirement calls. `source.py` currently excludes other host wrappers but not this kind. This does not satisfy the requirement to analyze genuine user messages. Repair must cover both future parsing and already imported preview state, while preserving message order, job identity, and historical results; adding a filter alone would leave persisted input and indexes inconsistent. This finding remains unimplemented and prevents an unconditional acceptance claim.
 
 During UI automation, Stage Manager background thumbnails and native save-panel transitions caused intermittent timeouts. The completed checks above are based on final AX states, actual exported bytes and owned-process checks, rather than attempted clicks.
+
+
+## Original popup integration (2026-09-23)
+
+The user's correction supersedes Unit 2's standalone UI. The standalone SwiftUI page and window controller were removed. The isolated launcher now creates the existing `OverlayWindowController`, with analysis integrated into `SummaryView` and `TurnDetailView`; existing tabs, navigation, history, pinning and capsule behavior remain.
+
+- Requirement and summary are resolved by both session ID and turn ID, including unfinished turns. Display-only transcript runs do not publish telemetry or fabricate timestamps and metrics. Historical selection survives live snapshot updates.
+- The manual skill button, editable draft and export live inside the existing detail view. Export captures and validates the source session, turn and job, including privacy changes while the save panel is open.
+- Native checks passed: `overlay-analysis.sh`, `overlay-turn-navigation.sh`, and `overlay-startup.sh`; the full isolated native build succeeded. Analysis tests passed again after the final privacy repair.
+- Actual original-popup UI verification passed: current requirement includes the user's existing-popup constraint; previous-turn summary and full original reply expand; skill draft edits export correctly; collapse returns to the original capsule and reopening retains the selected turn.
+- Edited export bytes contain `<!-- 原弹框导出验收 2026-09-23 -->` (4817 bytes, SHA-256 `b64a513ad8e5f5d4fcfacb4e7b109b2f30e47879e3463539f0848be74f9faecf`). Test files were moved to the private state's acceptance-export directory.
+- Real save-panel verification found that terminating after the last regular window closed also terminated the NSPanel-based app after export. The preview now terminates explicitly; a second successful export and alert dismissal left the same overlay process running.
+- Real privacy verification found selectable native text retained old accessibility content after becoming visually hidden. Recreating the detail subtree on privacy changes clears that cache; the final AX tree shows only hidden placeholders and disables analysis/copy actions.
+- The original popup is running, pinned and displaying the latest selected conversation turn for continued inspection. The installed app was not replaced. The existing source-classification finding above remains open; this UI correction does not claim unconditional end-to-end acceptance.

@@ -323,6 +323,27 @@ public final class ConversationAnalysisService: ObservableObject {
         applyOnMain { [weak self] in self?.projection.selectLatest() }
     }
 
+    @discardableResult
+    public func performForTurn(_ command: String, sessionID: String?, turnID: String?, kind: AnalysisJobKind? = nil) -> Bool {
+        guard let scoped = projection.snapshot.projection(sessionID: sessionID, turnID: turnID,
+                    privacyMode: projection.privacyMode), !scoped.privacyMode, scoped.snapshot.enabled,
+              let turnID else { return false }
+        if command == "retry", let kind, let jobID = scoped.retryJobID(for: kind) {
+            execute(["retry", "--state-dir", configuration.stateDirectory.path, "--job-id", jobID], completion: nil)
+        } else if command == "extract-skill" || command == "analyze-turn" {
+            execute([command, "--state-dir", configuration.stateDirectory.path, "--turn-id", turnID], completion: nil)
+        } else { return false }
+        return true
+    }
+
+    public func exportDraft(_ markdown: String, sessionID: String?, turnID: String?, jobID: String?, to url: URL) -> Bool {
+        guard let scoped = projection.snapshot.projection(sessionID: sessionID, turnID: turnID,
+                    privacyMode: projection.privacyMode), scoped.canExportSkill,
+              scoped.selectedSkill?.jobID == jobID, !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        do { try Data(markdown.utf8).write(to: url, options: .atomic); return true }
+        catch { return false }
+    }
+
     public func setPrivacyMode(_ enabled: Bool) {
         applyOnMain { [weak self] in self?.projection.setPrivacyMode(enabled) }
     }

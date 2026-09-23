@@ -226,13 +226,18 @@ public struct SummaryView: View {
         ScrollView(.vertical) {
             if let run = currentRun {
                 VStack(alignment: .leading, spacing: 14) {
+                    if !state.isPrivacyMode,
+                       let warning = state.analysisService?.errorMessage ?? state.analysisService?.commandErrorMessage ?? state.analysisSnapshot?.sourceError?.message {
+                        Text(warning).font(.system(size: 11)).foregroundStyle(OverlayTheme.warning)
+                    }
                     HStack {
                         Circle().fill(run.isRunning ? Color.yellow : (run.isError ? Color.red : Color.green)).frame(width: 5, height: 5)
                         Text(state.isPrivacyMode ? L("Completed turn", "已完成轮次") : L("Turn", "轮次") + " · " + String((run.turnId ?? "—").prefix(8)))
                         Spacer()
                         Text(run.localizedFormattedDate)
                     }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
-                    TurnDetailView(run: run, isPrivacyMode: state.isPrivacyMode)
+                    TurnDetailView(run: run, isPrivacyMode: state.isPrivacyMode,
+                        analysis: state.analysis(for: run), analysisService: state.analysisService)
                         .simultaneousGesture(TapGesture().onEnded { state.markResultViewed(run) })
                     HStack {
                         Button { state.selectTab(.history) } label: { Label(L("History", "查看历史"), systemImage: "clock.arrow.circlepath") }
@@ -298,7 +303,8 @@ public struct SummaryView: View {
         guard let run = currentRun, !state.isPrivacyMode else { return }
         let goalLabel = run.isLegacyGoalFallback ? L("Goal (legacy): ", "本轮目标（历史兼容）：") : L("Goal: ", "本轮目标：")
         let resultLabel = run.isLegacyConclusionFallback ? L("Result (legacy): ", "结果（历史兼容）：") : L("Result: ", "结果：")
-        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + goalLabel + localizedResultText(run.publishedGoal) + "\n\n" + resultLabel + localizedResultText(run.publishedConclusion)
+        let analysis = state.analysis(for: run)
+        let text = "\(run.projectName) / \(run.sessionId ?? "—") / \(run.turnId ?? "—")\n\n" + goalLabel + localizedResultText(analysis?.requirementText ?? run.publishedGoal) + "\n\n" + resultLabel + localizedResultText(analysis?.summaryText ?? run.publishedConclusion)
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }

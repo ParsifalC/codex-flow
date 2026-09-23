@@ -1,5 +1,28 @@
 import Foundation
 
+public extension AnalysisSnapshot {
+    /// Never fall back to the latest analysis when another chat/turn is inspected.
+    func projection(sessionID: String?, turnID: String?, privacyMode: Bool = false) -> ConversationAnalysisProjection? {
+        guard let sessionID, sessionID == self.sessionID, let turnID,
+              turns.contains(where: { $0.turnID == turnID }) else { return nil }
+        var value = ConversationAnalysisProjection(snapshot: self, privacyMode: privacyMode)
+        _ = value.select(turnID: turnID)
+        return value
+    }
+
+    /// Display-only identities for turns not yet available in telemetry history.
+    /// No timestamps, usage, goals or publication events are invented.
+    var overlayRuns: [TaskRun] {
+        guard let sessionID else { return [] }
+        return turns.sorted { $0.sequence < $1.sequence }.map { turn in
+            TaskRun(sessionId: sessionID, turnId: turn.turnID,
+                status: turn.originalResult == nil ? "running" : "completed",
+                thread: ThreadInfo(preview: turn.userText),
+                result: turn.originalResult.map { TurnResult(text: $0, source: "transcript", turnId: turn.turnID) })
+        }
+    }
+}
+
 /// The durable JSON written by the analysis backend. The native preview keeps
 /// this model tolerant of fields added by the backend so a partially upgraded
 /// installation can still show the turns it knows about.

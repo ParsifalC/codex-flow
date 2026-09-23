@@ -3,6 +3,9 @@ import Foundation
 @main
 struct ConversationAnalysisTests {
     static func main() throws {
+        testOverlayBindingUsesSessionAndTurn()
+        testOverlayNavigationIncludesUnfinishedAnalysisTurn()
+        try testOverlayKeepsSelectionAndScopesActions()
         testLatestSkillAndEditableDraft()
         testDecodeBackendSnapshotAndCaveats()
         testHistoricalSelectionDoesNotJumpWhenLatestTurnArrives()
@@ -12,6 +15,85 @@ struct ConversationAnalysisTests {
         try testPrivacyGuardsActionsAndExport()
         try testLaunchConfigurationRequiresExplicitAbsolutePaths()
         print("Conversation analysis projection and command guard tests passed")
+    }
+
+    private static func testOverlayBindingUsesSessionAndTurn() {
+        let snapshot = decode(snapshotJSON)
+        precondition(snapshot.projection(sessionID: "another-chat", turnID: "turn-2") == nil)
+        precondition(snapshot.projection(sessionID: "session-a", turnID: "missing") == nil)
+        precondition(snapshot.projection(sessionID: "session-a", turnID: "turn-1")?.selectedTurnID == "turn-1")
+        let hidden = snapshot.projection(sessionID: "session-a", turnID: "turn-2", privacyMode: true)
+        precondition(hidden?.requirementText == nil && hidden?.canExtractSkill == false)
+    }
+
+    private static func testOverlayNavigationIncludesUnfinishedAnalysisTurn() {
+        var snapshot = decode(snapshotJSON)
+        snapshot.turns[1].originalResult = nil
+        let runs = snapshot.overlayRuns
+        precondition(runs.count == 2)
+        precondition(runs[1].isRunning && runs[1].startedAtMs == nil)
+        precondition(runs[1].publication == nil, "analysis must not fabricate published telemetry")
+        let order = Dictionary(uniqueKeysWithValues: runs.enumerated().map { ($0.element.id, $0.offset) })
+        let navigation = TurnNavigation(runs: runs, selectedIdentity: runs[1].id,
+            additionalVisibleIDs: Set(runs.map(\.id)), sourceOrder: order)
+        precondition(navigation.runs.count == 2 && navigation.canMovePrevious)
+        precondition(navigation.moved(by: -1).currentRun?.id == runs[0].id)
+    }
+
+    private static func testOverlayKeepsSelectionAndScopesActions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("overlay-analysis-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let previousHome = getenv("CODEX_HOME").map { String(cString: $0) }
+        setenv("CODEX_HOME", root.path, 1)
+        defer {
+            if let previousHome { setenv("CODEX_HOME", previousHome, 1) } else { unsetenv("CODEX_HOME") }
+            try? FileManager.default.removeItem(at: root)
+        }
+        try Data("{}".utf8).write(to: root.appendingPathComponent("config.json"))
+        let view = root.appendingPathComponent("view.json")
+        var snapshot = decode(snapshotJSON)
+        try JSONEncoder().encode(snapshot).write(to: view)
+        let runner = RecordingAnalysisRunner()
+        let service = ConversationAnalysisService(configuration: AnalysisPreviewConfiguration(stateDirectory: root,
+            analysisScript: view, pythonExecutable: URL(fileURLWithPath: "/usr/bin/true")), runner: runner)
+        defer { service.stop() }
+        let suite = "overlay-analysis-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let state = OverlayState(readDefaults: defaults)
+        state.attachAnalysis(service)
+        waitUntil { state.selectedRun?.turnId == "turn-2" }
+        state.moveTurn(by: -1)
+        waitUntil { state.selectedRun?.turnId == "turn-1" }
+        snapshot.turns.append(AnalysisTurn(turnID: "turn-3", sequence: 3, userText: "next",
+            requirement: AnalysisJobState(status: "pending"), summary: AnalysisJobState(status: "not_analyzed"),
+            originalResult: nil, skills: []))
+        try JSONEncoder().encode(snapshot).write(to: view, options: .atomic)
+        service.reloadNow()
+        waitUntil { state.turnNavigation.runs.count == 3 }
+        precondition(state.selectedRun?.turnId == "turn-1")
+        precondition(!service.performForTurn("extract-skill", sessionID: "wrong", turnID: "turn-1"))
+        precondition(runner.commands.isEmpty)
+        precondition(service.performForTurn("extract-skill", sessionID: "session-a", turnID: "turn-1"))
+        precondition(runner.commands.last?.last == "turn-1")
+        state.isPrivacyMode = true
+        precondition(!service.performForTurn("extract-skill", sessionID: "session-a", turnID: "turn-1"))
+        let export = root.appendingPathComponent("SKILL.md")
+        precondition(!service.exportDraft("edited", sessionID: "session-a", turnID: "turn-2", jobID: "job-skill-2", to: export))
+        state.isPrivacyMode = false
+        precondition(!service.exportDraft("edited", sessionID: "wrong", turnID: "turn-2", jobID: "job-skill-2", to: export))
+        precondition(!service.exportDraft("edited", sessionID: "session-a", turnID: "turn-2", jobID: "stale", to: export))
+        precondition(service.exportDraft("edited", sessionID: "session-a", turnID: "turn-2", jobID: "job-skill-2", to: export))
+        let saved = try String(contentsOf: export, encoding: .utf8)
+        precondition(saved == "edited")
+        state.jumpToLive()
+        waitUntil { state.selectedRun?.turnId == "turn-3" }
+    }
+
+    private static func waitUntil(_ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(3)
+        while !condition() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        precondition(condition(), "asynchronous overlay state did not converge")
     }
 
     private static func testLatestSkillAndEditableDraft() {
@@ -183,4 +265,13 @@ struct ConversationAnalysisTests {
       ]
     }
     """#
+}
+
+private final class RecordingAnalysisRunner: ConversationAnalysisCommandRunning {
+    var commands: [[String]] = []
+    func run(arguments: [String], completion: @escaping (Result<AnalysisCommandResult, Error>) -> Void) {
+        commands.append(arguments)
+        completion(.success(AnalysisCommandResult(exitCode: 0)))
+    }
+    func cancel() {}
 }

@@ -32,7 +32,57 @@ public class OverlayState: ObservableObject {
     // event's content for the notification presentation while preserving the
     // latest snapshot used by the live bubble and history state.
     @Published public var notificationRun: TaskRun? = nil
-    @Published public var isPrivacyMode: Bool = false
+    @Published public var isPrivacyMode: Bool = false {
+        didSet { analysisService?.setPrivacyMode(isPrivacyMode) }
+    }
+    @Published public private(set) var analysisSnapshot: AnalysisSnapshot?
+    public private(set) var analysisService: ConversationAnalysisService?
+    private var analysisSubscription: AnyCancellable?
+    private var analysisErrorSubscription: AnyCancellable?
+    private var telemetryChats: [ChatSession] = []
+
+    public func analysis(for run: TaskRun) -> ConversationAnalysisProjection? {
+        analysisSnapshot?.projection(sessionID: run.sessionId, turnID: run.turnId, privacyMode: isPrivacyMode)
+    }
+
+    public func attachAnalysis(_ service: ConversationAnalysisService) {
+        analysisSubscription?.cancel()
+        analysisService?.stop()
+        analysisService = service
+        analysisErrorSubscription = service.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        service.setPrivacyMode(isPrivacyMode)
+        analysisSubscription = service.$projection.sink { [weak self] projection in
+            guard let self else { return }
+            let followLatest = self.inspectedRun == nil && self.notificationRun == nil &&
+                (self.selectedTurnIdentity == nil || self.selectedTurnIdentity == self.latestRun?.id)
+            self.analysisSnapshot = projection.snapshot
+            if let latest = projection.snapshot.overlayRuns.last,
+               self.latestRun == nil || self.latestRun?.sessionId == latest.sessionId {
+                self.latestRun = self.telemetryChats.flatMap(\.runs).first(where: { $0.id == latest.id }) ?? latest
+                if followLatest { self.selectedTurnIdentity = latest.id }
+            }
+            self.recentChats = self.chatsWithAnalysis(self.telemetryChats)
+            self.refreshSelectedSessionRuns(from: self.recentChats)
+        }
+        service.start()
+    }
+
+    private func runsWithAnalysis(_ runs: [TaskRun]) -> [TaskRun] {
+        let known = Set(runs.map(\.id))
+        return runs + (analysisSnapshot?.overlayRuns ?? []).filter { !known.contains($0.id) }
+    }
+
+    private func chatsWithAnalysis(_ chats: [ChatSession]) -> [ChatSession] {
+        guard let snapshot = analysisSnapshot, let session = snapshot.sessionID, !snapshot.turns.isEmpty else { return chats }
+        var result = chats
+        if let index = result.firstIndex(where: { $0.sessionId == session }) {
+            result[index].runs = runsWithAnalysis(result[index].runs)
+        } else {
+            result.insert(ChatSession(sessionId: session, projectName: "codex-flow",
+                title: L("Current conversation", "当前会话"), runs: snapshot.overlayRuns), at: 0)
+        }
+        return result
+    }
 
     @Published public var activeTab: OverlayTab = .inspector
     @Published public var inspectedRun: TaskRun? = nil
@@ -101,7 +151,10 @@ public class OverlayState: ObservableObject {
 
     public var turnNavigation: TurnNavigation {
         let runs = selectedSessionRuns.isEmpty ? selectedRun.map { [$0] } ?? [] : selectedSessionRuns
-        return TurnNavigation(runs: runs, selectedIdentity: selectedTurnIdentity)
+        let source = analysisSnapshot?.overlayRuns ?? []
+        return TurnNavigation(runs: runs, selectedIdentity: selectedTurnIdentity,
+            additionalVisibleIDs: Set(source.map(\.id)),
+            sourceOrder: Dictionary(uniqueKeysWithValues: source.enumerated().map { ($0.element.id, $0.offset) }))
     }
 
     public func markResultViewed(_ run: TaskRun?) {
@@ -303,8 +356,9 @@ public class OverlayState: ObservableObject {
             let chats = TelemetryQueryEngine.shared.fetchChatHistory(limit: 0)
             DispatchQueue.main.async {
                 guard generation == self.menuLoadGeneration else { return }
-                self.recentChats = Array(chats.prefix(15))
-                self.refreshSelectedSessionRuns(from: chats)
+                self.telemetryChats = Array(chats.prefix(15))
+                self.recentChats = self.chatsWithAnalysis(self.telemetryChats)
+                self.refreshSelectedSessionRuns(from: self.recentChats)
             }
         }
     }
@@ -477,7 +531,11 @@ public class OverlayState: ObservableObject {
             )
             DispatchQueue.main.async {
                 guard generation == self.historyLoadGeneration else { return }
-                self.historyRuns = runs
+                self.historyRuns = self.runsWithAnalysis(runs).filter { run in
+                    guard !runs.contains(where: { $0.id == run.id }) else { return true }
+                    return !todayOnly && (project == nil || run.projectName == project) &&
+                        (search.isEmpty || run.turnPreview.localizedCaseInsensitiveContains(search))
+                }
             }
         }
     }

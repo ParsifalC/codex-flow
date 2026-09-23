@@ -1,38 +1,81 @@
 import SwiftUI
+import AppKit
 
 /// Shared completed-turn details with explicit provenance for request fallbacks.
 public struct TurnDetailView: View {
     public let run: TaskRun
     public let isPrivacyMode: Bool
+    public var analysis: ConversationAnalysisProjection?
+    public var analysisService: ConversationAnalysisService?
     @State private var resultExpanded = false
     @State private var planExpanded = false
     @State private var jsonExpanded = false
+    @State private var sourceExpanded = false
+    @State private var skillExpanded = false
+    @State private var skillDraft = AnalysisSkillDraftState()
+    @State private var exportMessage: String?
 
-    public init(run: TaskRun, isPrivacyMode: Bool = false) {
+    public init(run: TaskRun, isPrivacyMode: Bool = false,
+                analysis: ConversationAnalysisProjection? = nil, analysisService: ConversationAnalysisService? = nil) {
         self.run = run; self.isPrivacyMode = isPrivacyMode
+        self.analysis = analysis; self.analysisService = analysisService
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 16) {
                 narrative(
                     L("This turn’s goal", "本轮目标"),
-                    hint: goalHint,
-                    text: run.publishedGoal,
+                    hint: analysis == nil ? goalHint : L("Independent requirement", "独立需求提炼"),
+                    text: analysis.map { $0.requirementText ?? stateText($0.selectedTurn?.requirement.status) } ?? run.publishedGoal,
                     accent: true
                 )
+                if let analysis {
+                    analysisNotes(analysis.selectedTurn?.requirement)
+                    DisclosureGroup(L("Original goal and request", "原始目标与发言"), isExpanded: $sourceExpanded) {
+                        if isPrivacyMode { Text(L("Hidden", "已隐藏")) }
+                        else {
+                            if let goal = run.publishedGoal { Text(goal) }
+                            Text(analysis.selectedTurn?.userText ?? "")
+                        }
+                    }.font(.system(size: 12)).foregroundStyle(OverlayTheme.secondary)
+                        .disclosureGroupStyle(OverlayDisclosureStyle())
+                }
                 OverlayDivider()
-                narrative(
-                    L("Result", "结果"),
-                    hint: run.isLegacyConclusionFallback ? L("Legacy history", "历史兼容") : nil,
-                    text: run.publishedConclusion,
-                    expanded: $resultExpanded,
-                    accent: false
-                )
+                if let analysis {
+                    narrative(L("Result", "结果"), hint: L("Reply summary", "回复摘要"),
+                        text: analysis.summaryText ?? stateText(analysis.selectedTurn?.summary.status), accent: false)
+                    analysisNotes(analysis.selectedTurn?.summary)
+                    if let original = analysis.originalResult ?? run.publishedConclusion {
+                        DisclosureGroup(L("Full original reply", "完整原始回复"), isExpanded: $resultExpanded) {
+                            Text(isPrivacyMode ? L("Hidden", "已隐藏") : original)
+                                .font(.system(size: 13)).textSelection(.enabled)
+                        }.disclosureGroupStyle(OverlayDisclosureStyle()).font(.system(size: 12))
+                    }
+                    if analysis.selectedTurn?.summary.status == "not_analyzed" || analysis.selectedTurn?.requirement.status == "not_analyzed" {
+                        Button(L("Analyze this turn", "分析此轮")) { perform("analyze-turn") }
+                            .disabled(isPrivacyMode || !analysis.snapshot.enabled)
+                    }
+                    if analysis.retryJobID(for: .requirement) != nil {
+                        Button(L("Retry requirement", "重试需求")) { perform("retry", kind: .requirement) }.disabled(isPrivacyMode)
+                    }
+                    if analysis.retryJobID(for: .summary) != nil {
+                        Button(L("Retry summary", "重试摘要")) { perform("retry", kind: .summary) }.disabled(isPrivacyMode)
+                    }
+                } else {
+                    narrative(
+                        L("Result", "结果"),
+                        hint: run.isLegacyConclusionFallback ? L("Legacy history", "历史兼容") : nil,
+                        text: run.publishedConclusion,
+                        expanded: $resultExpanded,
+                        accent: false
+                    )
+                }
                 if run.result?.truncated == true {
                     Text(L("Recorded result was truncated", "源结果已截断")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.52))
                 }
             }
             .padding(.vertical, 2)
+            if analysis != nil { OverlayDivider(); skillSection }
             OverlayDivider()
             taskMetrics
             DisclosureGroup(isExpanded: $planExpanded) {
@@ -65,8 +108,87 @@ public struct TurnDetailView: View {
             .font(.system(size: 14)).tint(OverlayTheme.secondary)
             .overlay(alignment: .top) { OverlayDivider() }
         }
+        // Recreate selectable native text views so accessibility drops cached private text.
+        .id(isPrivacyMode)
         .onChange(of: run.id) { _, _ in
             resultExpanded = false; planExpanded = false; jsonExpanded = false
+            sourceExpanded = false; skillExpanded = false; skillDraft = AnalysisSkillDraftState(); loadDraft()
+        }
+        .onAppear { loadDraft() }
+        .onChange(of: analysis?.selectedSkill) { _, _ in loadDraft() }
+        .onChange(of: isPrivacyMode) { _, hidden in if !hidden { loadDraft() } }
+        .alert(L("Export skill", "导出 Skill"), isPresented: Binding(get: { exportMessage != nil }, set: { if !$0 { exportMessage = nil } })) {
+            Button(L("OK", "好")) { exportMessage = nil }
+        } message: { Text(exportMessage ?? "") }
+    }
+
+    private func loadDraft() {
+        if !isPrivacyMode { skillDraft.load(skill: analysis?.selectedSkill) }
+    }
+    private func perform(_ command: String, kind: AnalysisJobKind? = nil) {
+        guard !isPrivacyMode else { return }
+        _ = analysisService?.performForTurn(command, sessionID: run.sessionId, turnID: run.turnId, kind: kind)
+    }
+    private func stateText(_ status: String?) -> String {
+        switch status {
+        case "pending": return L("Queued for analysis…", "等待提炼…")
+        case "running": return L("Analyzing…", "正在提炼…")
+        case "failed": return L("Analysis failed. Original content is available below.", "提炼失败，可查看原文或重试。")
+        default: return L("Not analyzed yet", "尚未提炼")
+        }
+    }
+    @ViewBuilder private func analysisNotes(_ job: AnalysisJobState?) -> some View {
+        if !isPrivacyMode {
+            if let revision = job?.revision {
+                Text(L("Revision \(revision)", "修订 \(revision)")).font(.system(size: 10)).foregroundStyle(OverlayTheme.muted)
+            }
+            ForEach(job?.caveats ?? [], id: \.self) { text in
+                Text(text).font(.system(size: 11)).foregroundStyle(OverlayTheme.warning)
+            }
+        }
+    }
+    private var skillSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(L("Reusable skill", "可复用技能")).font(.system(size: 12, weight: .medium))
+                Spacer()
+                Button(L("Extract skill", "提炼技能")) { skillExpanded = true; perform("extract-skill") }
+                    .disabled(isPrivacyMode || analysis?.canExtractSkill != true || ["pending", "running"].contains(analysis?.selectedSkill?.status ?? ""))
+            }
+            if let skill = analysis?.selectedSkill {
+                DisclosureGroup(L("Skill draft", "技能草稿"), isExpanded: $skillExpanded) {
+                    if isPrivacyMode { Text(L("Hidden in privacy mode", "隐私模式已隐藏")) }
+                    else if skill.status == "succeeded" {
+                        Text(skill.description ?? "").font(.system(size: 12)).foregroundStyle(OverlayTheme.secondary)
+                        TextEditor(text: $skillDraft.text)
+                            .font(.system(size: 12, design: .monospaced)).frame(height: 180)
+                            .accessibilityLabel(L("Edit skill draft", "编辑技能草稿"))
+                        ForEach(skill.caveats, id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(OverlayTheme.warning) }
+                        Button(L("Export SKILL.md", "导出 SKILL.md")) { exportSkill() }
+                            .disabled(skillDraft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } else {
+                        Text(stateText(skill.status)).font(.system(size: 12))
+                        if skill.status == "failed" { Button(L("Retry", "重试")) { perform("retry", kind: .skill) } }
+                    }
+                }.disclosureGroupStyle(OverlayDisclosureStyle()).font(.system(size: 12))
+            } else {
+                Text(L("Extract from this conversation through the selected turn.", "手动提炼从会话开始到所选轮次的内容。"))
+                    .font(.system(size: 11)).foregroundStyle(OverlayTheme.muted)
+            }
+        }.buttonStyle(.plain).tint(OverlayTheme.accent)
+    }
+    private func exportSkill() {
+        guard !isPrivacyMode, analysis?.canExportSkill == true else { return }
+        let draft = skillDraft.text
+        let job = analysis?.selectedSkill?.jobID
+        let session = run.sessionId, turn = run.turnId
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "SKILL.md"
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let saved = analysisService?.exportDraft(draft, sessionID: session, turnID: turn, jobID: job, to: url) == true
+            exportMessage = saved ? L("Skill draft exported.", "技能草稿已导出。") : L("Could not export the draft.", "无法导出草稿，请重试。")
         }
     }
     private var goalHint: String? {

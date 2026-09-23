@@ -27,3 +27,7 @@ Native SwiftUI preview selects turn, displays latest requirement with status and
 
 ## Delivery
 Source launcher starts dedicated Python watcher and native preview with private state, supplies explicit transcript/session/model paths, handles stop and prevents duplicate workers. Live verification on selected conversation uses a bounded number of model calls. Tests use fixtures/fake external runner, not credentials. Include regression tests for same-turn repeated text, restart deduplication, late results, malformed/partial source, child isolation, failing model, manual-only skill jobs, and UI history projection. Build with temporary CODEX_HOME because existing build script syncs installed binaries. No dependency installation required.
+
+## User-confirmed UI correction (2026-09-23)
+
+The standalone window is superseded. Use the existing OverlayWindowController, SummaryView and TurnDetailView. Preserve the original chrome, tabs, history and turn footer. Present the independent need in the goal region, reply summary in the result region with expandable original text, and manual skill extraction in an inline collapsible editor/export. The isolated launcher remains a test harness that renders the actual original overlay. Unfinished transcript turns have display-only identities; do not fabricate timestamps, token usage or publication events. Bind every result and action to both session and turn.

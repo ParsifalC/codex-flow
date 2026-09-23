@@ -1,48 +1,10 @@
 import Cocoa
 import SwiftUI
 
-public final class ConversationAnalysisWindowController: NSWindowController, NSWindowDelegate {
-    public let service: ConversationAnalysisService
-
-    public init(service: ConversationAnalysisService) {
-        self.service = service
-        let content = ConversationAnalysisPreview(service: service)
-        let hostingView = NSHostingView(rootView: content)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 740),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = hostingView
-        window.title = "FlowPilot · " + L("Conversation Analysis Preview", "对话分析预览")
-        window.minSize = NSSize(width: 820, height: 560)
-        window.isReleasedWhenClosed = false
-        super.init(window: window)
-        window.delegate = self
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    public func showPreview() {
-        NSApp.setActivationPolicy(.regular)
-        window?.center()
-        showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    public func windowWillClose(_ notification: Notification) {
-        service.stop()
-        NSApp.terminate(nil)
-    }
-}
-
 private final class ConversationAnalysisPreviewAppDelegate: NSObject, NSApplicationDelegate {
     private let configuration: AnalysisPreviewConfiguration
-    private var controller: ConversationAnalysisWindowController?
+    private var controller: OverlayWindowController?
+    private var state: OverlayState?
 
     init(configuration: AnalysisPreviewConfiguration) {
         self.configuration = configuration
@@ -51,17 +13,25 @@ private final class ConversationAnalysisPreviewAppDelegate: NSObject, NSApplicat
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let service = ConversationAnalysisService(configuration: configuration)
-        let controller = ConversationAnalysisWindowController(service: service)
+        let state = OverlayState()
+        self.state = state
+        state.attachAnalysis(service)
+        let controller = OverlayWindowController(state: state)
         self.controller = controller
-        controller.showPreview()
+        controller.window.title = "FlowPilot"
+        state.isPinned = true
+        state.expand()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        controller?.service.stop()
+        state?.analysisService?.stop()
+        state?.stopPet()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        // The overlay is an NSPanel; closing NSSavePanel must not quit the app.
+        false
     }
 }
 
