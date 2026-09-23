@@ -10,7 +10,9 @@ public enum DockEdge: String, Codable {
 
 // MARK: - Shared Observable State
 public class OverlayState: ObservableObject {
-    @Published public var isExpanded: Bool = false
+    @Published public var isExpanded: Bool = false {
+        didSet { if isExpanded { dismissPetCompletionNotice() } }
+    }
     @Published public var isPinned: Bool = false {
         didSet {
             if isPinned {
@@ -32,6 +34,31 @@ public class OverlayState: ObservableObject {
     // event's content for the notification presentation while preserving the
     // latest snapshot used by the live bubble and history state.
     @Published public var notificationRun: TaskRun? = nil
+    @Published public private(set) var petCompletionNotice: TaskRun?
+    private var petNoticeDismissal: DispatchWorkItem?
+
+    public var petUnreadCount: Int {
+        var identities = Set(unreadNotificationRuns.keys)
+        if let run = latestRun, run.publication != nil, !viewedTurnIds.contains(run.id) {
+            identities.insert(run.id)
+        }
+        return identities.count
+    }
+
+    public func dismissPetCompletionNotice() {
+        petNoticeDismissal?.cancel()
+        petNoticeDismissal = nil
+        petCompletionNotice = nil
+    }
+
+    private func showPetCompletionNotice(_ run: TaskRun) {
+        guard !isExpanded, !viewedTurnIds.contains(run.id) else { return }
+        petNoticeDismissal?.cancel()
+        petCompletionNotice = run
+        let dismissal = DispatchWorkItem { [weak self] in self?.dismissPetCompletionNotice() }
+        petNoticeDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
+    }
     @Published public var isPrivacyMode: Bool = false
 
     @Published public var activeTab: OverlayTab = .inspector
@@ -106,6 +133,7 @@ public class OverlayState: ObservableObject {
 
     public func markResultViewed(_ run: TaskRun?) {
         guard let run, run.publication != nil else { return }
+        if petCompletionNotice?.id == run.id { dismissPetCompletionNotice() }
         unreadNotificationRuns.removeValue(forKey: run.id)
         guard !viewedTurnIds.contains(run.id) else { return }
         viewedTurnIds.append(run.id)
@@ -530,6 +558,9 @@ public class OverlayState: ObservableObject {
                     self.expand(notificationTriggered: true)
                 }
             }
+            if decision.notify, self.petResource != nil {
+                self.showPetCompletionNotice(run)
+            }
             if decision.notify, self.petResource != nil,
                let session = run.sessionId, let turn = run.turnId {
                 self.celebratePetResult(session: session, turn: turn)
@@ -896,6 +927,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         runtime.pointerInteractionActive
     }
 
+    private var petCompletionPresenter: PetCompletionPresenter?
     private var hoverDwellTimer: Timer?
     private var collapseTimer: Timer?
     private var notificationCollapseTimer: Timer?
@@ -918,6 +950,7 @@ public class OverlayWindowController: NSObject, NSWindowDelegate {
         super.init()
         state.windowController = self
         setupWindow()
+        petCompletionPresenter = PetCompletionPresenter(state: state, anchor: window)
     }
 
     private var visibleFrames: [NSRect] {
